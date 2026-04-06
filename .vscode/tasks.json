@@ -10,14 +10,9 @@
           "DYLD_LIBRARY_PATH": "${env:HOME}/.local/lib:/opt/homebrew/opt/freetype/lib:${env:DYLD_LIBRARY_PATH}"
         }
       },
-      "args": [
-        "build",
-        "src/BaseballManager.Game/BaseballManager.Game.csproj"
-      ],
+      "args": ["build", "src/BaseballManager.Game/BaseballManager.Game.csproj"],
       "group": "build",
-      "problemMatcher": [
-        "$msCompile"
-      ]
+      "problemMatcher": ["$msCompile"]
     },
     {
       "label": "run-game",
@@ -33,6 +28,13 @@
         "--project",
         "src/BaseballManager.Game/BaseballManager.Game.csproj"
       ],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "build-and-run-game",
+      "dependsOn": ["build-game", "run-game"],
+      "dependsOrder": "sequence",
       "group": "test",
       "problemMatcher": []
     }

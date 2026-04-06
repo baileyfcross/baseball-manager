@@ -1,5 +1,5 @@
 {
-  "SelectedTeamName": "New York Hawks 2",
+  "SelectedTeamName": "Los Angeles Sharks",
   "Teams": {
     "Nashville Foxes": {
       "LineupSlots": [
@@ -59,6 +59,46 @@
         "fb353c6f-4ffb-45b2-b616-81f912047669",
         "a8a3a296-a411-4e94-b5d7-67aa54f662d0",
         "684306ea-dc23-45a9-a89b-8bd7b0a0e801"
+      ]
+    },
+    "Los Angeles Sharks": {
+      "LineupSlots": [
+        "a055c33d-8a0f-4595-a125-42d03b3ac58e",
+        "b825eb22-bb75-4a43-b42a-712dcea5a96e",
+        "e2ed1c44-c060-4a2d-a5db-1145a3e305f1",
+        "d5dd34af-b418-44ee-bf0d-0e445a2f9a50",
+        "168d00a4-0b3b-48d7-9877-67364cbbf4ea",
+        "34446c9b-8685-4c55-9b6e-a5929ef9581b",
+        "e17a1b03-7941-4b8f-8834-90d9773a1d8b",
+        "b8a341c0-4e38-499c-b7cf-a41f9342bfee",
+        "71409301-b1a9-4b60-8ddb-9882ef4098c1"
+      ],
+      "RotationSlots": [
+        "837851d8-8bb1-46ab-b41f-23333c1d5ba2",
+        "6da15fc4-e26d-4177-97a7-cf31eb677226",
+        "a3cfb88b-29ad-4771-bcf5-7edbac54dc88",
+        "7a6cdec4-737e-4eb2-9050-1f626de4b600",
+        "507c90a7-81c5-42f0-9c31-e9e0db3cdfe1"
+      ]
+    },
+    "Milwaukee Giants": {
+      "LineupSlots": [
+        "fe290822-0df8-484d-ade0-387654923ad3",
+        "a1a2fe97-7a29-490b-ae7b-e4904a74761f",
+        "b92831ba-3069-490c-9c6d-f8e27e135aa1",
+        "f7d168a2-a44e-4c24-8afa-a6593f736b0c",
+        "2f943cbc-4db7-4fd9-85b8-e5064101d08c",
+        "6bfd32c7-ebc7-4f6a-94c1-a848ca6f0395",
+        "684fa2b9-29f1-40fc-a60b-cafdb03690f9",
+        "c42ac468-05e0-463a-8783-f5b6d6057b07",
+        "fd12cd84-f4aa-46dc-9730-f51ecefb9028"
+      ],
+      "RotationSlots": [
+        "69bb6886-a094-4e2a-b3b1-a2b1f69085cc",
+        "00a876d1-5af8-4467-a334-d11a5227fe86",
+        "e32c6e31-655d-429a-a986-0c5bac37c132",
+        "3af2fd58-d9ae-4b7d-a089-3a272e6eb239",
+        "0f684012-e19a-4689-ab13-50292d72dc25"
       ]
     }
   }

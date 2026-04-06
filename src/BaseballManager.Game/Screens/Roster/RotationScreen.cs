@@ -20,6 +20,10 @@ public sealed class RotationScreen : GameScreen
     private int _pageIndex;
     private Guid? _selectedPlayerId;
     private int? _selectedSlot;
+    private bool _isDragging;
+    private Guid? _draggedPlayerId;
+    private string _draggedPlayerName = string.Empty;
+    private Point _dragPosition;
 
     public RotationScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -58,24 +62,34 @@ public sealed class RotationScreen : GameScreen
         _pageIndex = 0;
         _selectedPlayerId = null;
         _selectedSlot = null;
+        _isDragging = false;
+        _draggedPlayerId = null;
+        _draggedPlayerName = string.Empty;
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
         var currentMouseState = inputManager.MouseState;
+        var mousePosition = currentMouseState.Position;
+        var isPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
+        var isRelease = _previousMouseState.LeftButton == ButtonState.Pressed && currentMouseState.LeftButton == ButtonState.Released;
 
-        if (_previousMouseState.LeftButton == ButtonState.Released &&
-            currentMouseState.LeftButton == ButtonState.Pressed)
+        if (_isDragging)
         {
-            if (_backButtonBounds.Contains(currentMouseState.Position))
+            _dragPosition = mousePosition;
+        }
+
+        if (isPress)
+        {
+            if (_backButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
-            else if (GetPreviousPageBounds().Contains(currentMouseState.Position))
+            else if (GetPreviousPageBounds().Contains(mousePosition))
             {
                 _previousPageButton.Click();
             }
-            else if (GetNextPageBounds().Contains(currentMouseState.Position))
+            else if (GetNextPageBounds().Contains(mousePosition))
             {
                 var bullpenRows = GetBullpenRows();
                 var maxPage = Math.Max(0, (int)Math.Ceiling(bullpenRows.Count / 10d) - 1);
@@ -84,16 +98,24 @@ public sealed class RotationScreen : GameScreen
                     _nextPageButton.Click();
                 }
             }
-            else if (GetClearSlotBounds().Contains(currentMouseState.Position))
+            else if (GetClearSlotBounds().Contains(mousePosition))
             {
                 _clearSlotButton.Click();
             }
-            else if (TryHandleRotationSlotClick(currentMouseState.Position))
+            else if (TryStartDragFromRotationSlot(mousePosition))
             {
             }
-            else if (TryHandleBullpenSelection(currentMouseState.Position))
+            else if (TryStartDragFromBullpen(mousePosition))
             {
             }
+        }
+
+        if (isRelease && _isDragging)
+        {
+            TryDropOnRotationSlot(mousePosition);
+            _isDragging = false;
+            _draggedPlayerId = null;
+            _draggedPlayerName = string.Empty;
         }
 
         _previousMouseState = currentMouseState;
@@ -113,7 +135,7 @@ public sealed class RotationScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawText("Click a pitcher, then click a rotation slot to assign. Click an occupied slot to pick that pitcher up.", new Vector2(100, 130), Color.White);
+            uiRenderer.DrawText("Drag a pitcher to a rotation slot to assign. Drag from a slot to move pitchers.", new Vector2(100, 130), Color.White);
             uiRenderer.DrawText($"Selected: {GetSelectedPlayerName()}", new Vector2(100, 160), Color.White);
 
             uiRenderer.DrawText("STARTING ROTATION", new Vector2(100, 200), Color.White);
@@ -125,8 +147,11 @@ public sealed class RotationScreen : GameScreen
                     ? $"{slot}. Empty"
                     : $"{slot}. {Truncate(row.PlayerName, 18)} {row.PrimaryPosition} Age {row.Age}";
                 var slotHovered = bounds.Contains(Mouse.GetState().Position);
+                var isDropTarget = _isDragging && bounds.Contains(_dragPosition);
                 var isSelected = _selectedSlot == slot;
-                var color = isSelected ? Color.DarkOliveGreen : (slotHovered ? Color.DarkSlateBlue : Color.SlateGray);
+                var color = isDropTarget
+                    ? Color.Goldenrod
+                    : (isSelected ? Color.DarkOliveGreen : (slotHovered ? Color.DarkSlateBlue : Color.SlateGray));
                 uiRenderer.DrawButton(label, bounds, color, Color.White);
             }
 
@@ -153,6 +178,11 @@ public sealed class RotationScreen : GameScreen
         var isHovered = _backButtonBounds.Contains(Mouse.GetState().Position);
         var bgColor = isHovered ? Color.DarkGray : Color.Gray;
         uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, bgColor, Color.White);
+
+        if (_isDragging)
+        {
+            uiRenderer.DrawText($"Dragging: {Truncate(_draggedPlayerName, 22)}", new Vector2(_dragPosition.X + 16, _dragPosition.Y + 16), Color.Yellow);
+        }
     }
 
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
@@ -176,7 +206,7 @@ public sealed class RotationScreen : GameScreen
 
     private Rectangle GetBullpenRowBounds(int index) => new(700, 240 + index * 34, 460, 30);
 
-    private bool TryHandleRotationSlotClick(Point position)
+    private bool TryStartDragFromRotationSlot(Point position)
     {
         for (var slot = 1; slot <= 5; slot++)
         {
@@ -186,15 +216,10 @@ public sealed class RotationScreen : GameScreen
             }
 
             _selectedSlot = slot;
-            if (_selectedPlayerId.HasValue)
+            var slotPlayer = GetRotationRows().FirstOrDefault(entry => entry.RotationSlot == slot);
+            if (slotPlayer != null)
             {
-                _franchiseSession.AssignRotationSlot(_selectedPlayerId.Value, slot);
-                _selectedPlayerId = null;
-            }
-            else
-            {
-                var slotPlayer = GetRotationRows().FirstOrDefault(entry => entry.RotationSlot == slot);
-                _selectedPlayerId = slotPlayer?.PlayerId;
+                BeginDrag(slotPlayer.PlayerId, slotPlayer.PlayerName, position);
             }
 
             return true;
@@ -203,7 +228,7 @@ public sealed class RotationScreen : GameScreen
         return false;
     }
 
-    private bool TryHandleBullpenSelection(Point position)
+    private bool TryStartDragFromBullpen(Point position)
     {
         var pageSize = 10;
         var visibleRows = GetBullpenRows().Skip(_pageIndex * pageSize).Take(pageSize).ToList();
@@ -211,12 +236,44 @@ public sealed class RotationScreen : GameScreen
         {
             if (GetBullpenRowBounds(i).Contains(position))
             {
-                _selectedPlayerId = visibleRows[i].PlayerId;
+                BeginDrag(visibleRows[i].PlayerId, visibleRows[i].PlayerName, position);
                 return true;
             }
         }
 
         return false;
+    }
+
+    private bool TryDropOnRotationSlot(Point position)
+    {
+        if (!_draggedPlayerId.HasValue)
+        {
+            return false;
+        }
+
+        for (var slot = 1; slot <= 5; slot++)
+        {
+            if (!GetRotationSlotBounds(slot).Contains(position))
+            {
+                continue;
+            }
+
+            _selectedSlot = slot;
+            _selectedPlayerId = _draggedPlayerId;
+            _franchiseSession.AssignRotationSlot(_draggedPlayerId.Value, slot);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void BeginDrag(Guid playerId, string playerName, Point position)
+    {
+        _selectedPlayerId = playerId;
+        _draggedPlayerId = playerId;
+        _draggedPlayerName = playerName;
+        _dragPosition = position;
+        _isDragging = true;
     }
 
     private List<RotationDisplayRow> GetRotationRows()

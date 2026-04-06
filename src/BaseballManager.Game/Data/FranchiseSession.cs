@@ -94,7 +94,7 @@ public sealed class FranchiseSession
     public IReadOnlyList<FranchiseRosterEntry> GetBullpenPlayers()
     {
         return GetSelectedTeamRoster()
-            .Where(entry => !entry.RotationSlot.HasValue && entry.PrimaryPosition is "SP" or "RP")
+            .Where(entry => !entry.RotationSlot.HasValue && entry.PrimaryPosition is ("SP" or "RP"))
             .OrderBy(entry => entry.PrimaryPosition)
             .ThenBy(entry => entry.PlayerName)
             .ToList();
@@ -109,8 +109,7 @@ public sealed class FranchiseSession
 
         var teamState = GetOrCreateTeamState(SelectedTeam.Name);
         InitializeLineupSlots(teamState, SelectedTeam.Name);
-        ClearPlayerFromSlots(teamState.LineupSlots, playerId);
-        teamState.LineupSlots[slotNumber - 1] = playerId;
+        AssignPlayerToSlotWithSwap(teamState.LineupSlots, playerId, slotNumber - 1);
         Save();
     }
 
@@ -136,8 +135,7 @@ public sealed class FranchiseSession
 
         var teamState = GetOrCreateTeamState(SelectedTeam.Name);
         InitializeRotationSlots(teamState, SelectedTeam.Name);
-        ClearPlayerFromSlots(teamState.RotationSlots, playerId);
-        teamState.RotationSlots[slotNumber - 1] = playerId;
+        AssignPlayerToSlotWithSwap(teamState.RotationSlots, playerId, slotNumber - 1);
         Save();
     }
 
@@ -220,6 +218,41 @@ public sealed class FranchiseSession
                 slots[i] = null;
             }
         }
+    }
+
+    private static void AssignPlayerToSlotWithSwap(List<Guid?> slots, Guid playerId, int targetSlotIndex)
+    {
+        if (targetSlotIndex < 0 || targetSlotIndex >= slots.Count)
+        {
+            return;
+        }
+
+        var sourceSlotIndex = FindPlayerSlotIndex(slots, playerId);
+        if (sourceSlotIndex == targetSlotIndex)
+        {
+            return;
+        }
+
+        var displacedPlayerId = slots[targetSlotIndex];
+        if (sourceSlotIndex >= 0)
+        {
+            slots[sourceSlotIndex] = displacedPlayerId;
+        }
+
+        slots[targetSlotIndex] = playerId;
+    }
+
+    private static int FindPlayerSlotIndex(List<Guid?> slots, Guid playerId)
+    {
+        for (var i = 0; i < slots.Count; i++)
+        {
+            if (slots[i] == playerId)
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private static Dictionary<Guid, int> BuildSlotMap(List<Guid?> slots)

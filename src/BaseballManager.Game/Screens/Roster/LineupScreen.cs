@@ -20,6 +20,10 @@ public sealed class LineupScreen : GameScreen
     private int _pageIndex;
     private Guid? _selectedPlayerId;
     private int? _selectedSlot;
+    private bool _isDragging;
+    private Guid? _draggedPlayerId;
+    private string _draggedPlayerName = string.Empty;
+    private Point _dragPosition;
 
     public LineupScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -58,24 +62,34 @@ public sealed class LineupScreen : GameScreen
         _pageIndex = 0;
         _selectedPlayerId = null;
         _selectedSlot = null;
+        _isDragging = false;
+        _draggedPlayerId = null;
+        _draggedPlayerName = string.Empty;
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
         var currentMouseState = inputManager.MouseState;
+        var mousePosition = currentMouseState.Position;
+        var isPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
+        var isRelease = _previousMouseState.LeftButton == ButtonState.Pressed && currentMouseState.LeftButton == ButtonState.Released;
 
-        if (_previousMouseState.LeftButton == ButtonState.Released &&
-            currentMouseState.LeftButton == ButtonState.Pressed)
+        if (_isDragging)
         {
-            if (_backButtonBounds.Contains(currentMouseState.Position))
+            _dragPosition = mousePosition;
+        }
+
+        if (isPress)
+        {
+            if (_backButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
-            else if (GetPreviousPageBounds().Contains(currentMouseState.Position))
+            else if (GetPreviousPageBounds().Contains(mousePosition))
             {
                 _previousPageButton.Click();
             }
-            else if (GetNextPageBounds().Contains(currentMouseState.Position))
+            else if (GetNextPageBounds().Contains(mousePosition))
             {
                 var benchRows = GetBenchRows();
                 var maxPage = Math.Max(0, (int)Math.Ceiling(benchRows.Count / 10d) - 1);
@@ -84,16 +98,24 @@ public sealed class LineupScreen : GameScreen
                     _nextPageButton.Click();
                 }
             }
-            else if (GetClearSlotBounds().Contains(currentMouseState.Position))
+            else if (GetClearSlotBounds().Contains(mousePosition))
             {
                 _clearSlotButton.Click();
             }
-            else if (TryHandleLineupSlotClick(currentMouseState.Position))
+            else if (TryStartDragFromLineupSlot(mousePosition))
             {
             }
-            else if (TryHandleBenchSelection(currentMouseState.Position))
+            else if (TryStartDragFromBench(mousePosition))
             {
             }
+        }
+
+        if (isRelease && _isDragging)
+        {
+            TryDropOnLineupSlot(mousePosition);
+            _isDragging = false;
+            _draggedPlayerId = null;
+            _draggedPlayerName = string.Empty;
         }
 
         _previousMouseState = currentMouseState;
@@ -113,7 +135,7 @@ public sealed class LineupScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawText("Click a player, then click a lineup slot to assign. Click an occupied slot to pick that player up.", new Vector2(100, 130), Color.White);
+            uiRenderer.DrawText("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Vector2(100, 130), Color.White);
             uiRenderer.DrawText($"Selected: {GetSelectedPlayerName()}", new Vector2(100, 160), Color.White);
 
             uiRenderer.DrawText("LINEUP", new Vector2(100, 200), Color.White);
@@ -125,8 +147,11 @@ public sealed class LineupScreen : GameScreen
                     ? $"{slot}. Empty"
                     : $"{slot}. {Truncate(row.PlayerName, 18)} {row.PrimaryPosition} Age {row.Age}";
                 var slotHovered = bounds.Contains(Mouse.GetState().Position);
+                var isDropTarget = _isDragging && bounds.Contains(_dragPosition);
                 var isSelected = _selectedSlot == slot;
-                var color = isSelected ? Color.DarkOliveGreen : (slotHovered ? Color.DarkSlateBlue : Color.SlateGray);
+                var color = isDropTarget
+                    ? Color.Goldenrod
+                    : (isSelected ? Color.DarkOliveGreen : (slotHovered ? Color.DarkSlateBlue : Color.SlateGray));
                 uiRenderer.DrawButton(label, bounds, color, Color.White);
             }
 
@@ -153,6 +178,11 @@ public sealed class LineupScreen : GameScreen
         var isHovered = _backButtonBounds.Contains(Mouse.GetState().Position);
         var bgColor = isHovered ? Color.DarkGray : Color.Gray;
         uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, bgColor, Color.White);
+
+        if (_isDragging)
+        {
+            uiRenderer.DrawText($"Dragging: {Truncate(_draggedPlayerName, 22)}", new Vector2(_dragPosition.X + 16, _dragPosition.Y + 16), Color.Yellow);
+        }
     }
 
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
@@ -176,7 +206,7 @@ public sealed class LineupScreen : GameScreen
 
     private Rectangle GetBenchRowBounds(int index) => new(700, 240 + index * 34, 460, 30);
 
-    private bool TryHandleLineupSlotClick(Point position)
+    private bool TryStartDragFromLineupSlot(Point position)
     {
         for (var slot = 1; slot <= 9; slot++)
         {
@@ -186,15 +216,10 @@ public sealed class LineupScreen : GameScreen
             }
 
             _selectedSlot = slot;
-            if (_selectedPlayerId.HasValue)
+            var slotPlayer = GetLineupRows().FirstOrDefault(entry => entry.LineupSlot == slot);
+            if (slotPlayer != null)
             {
-                _franchiseSession.AssignLineupSlot(_selectedPlayerId.Value, slot);
-                _selectedPlayerId = null;
-            }
-            else
-            {
-                var slotPlayer = GetLineupRows().FirstOrDefault(entry => entry.LineupSlot == slot);
-                _selectedPlayerId = slotPlayer?.PlayerId;
+                BeginDrag(slotPlayer.PlayerId, slotPlayer.PlayerName, position);
             }
 
             return true;
@@ -203,7 +228,7 @@ public sealed class LineupScreen : GameScreen
         return false;
     }
 
-    private bool TryHandleBenchSelection(Point position)
+    private bool TryStartDragFromBench(Point position)
     {
         var pageSize = 10;
         var visibleRows = GetBenchRows().Skip(_pageIndex * pageSize).Take(pageSize).ToList();
@@ -211,12 +236,44 @@ public sealed class LineupScreen : GameScreen
         {
             if (GetBenchRowBounds(i).Contains(position))
             {
-                _selectedPlayerId = visibleRows[i].PlayerId;
+                BeginDrag(visibleRows[i].PlayerId, visibleRows[i].PlayerName, position);
                 return true;
             }
         }
 
         return false;
+    }
+
+    private bool TryDropOnLineupSlot(Point position)
+    {
+        if (!_draggedPlayerId.HasValue)
+        {
+            return false;
+        }
+
+        for (var slot = 1; slot <= 9; slot++)
+        {
+            if (!GetLineupSlotBounds(slot).Contains(position))
+            {
+                continue;
+            }
+
+            _selectedSlot = slot;
+            _selectedPlayerId = _draggedPlayerId;
+            _franchiseSession.AssignLineupSlot(_draggedPlayerId.Value, slot);
+            return true;
+        }
+
+        return false;
+    }
+
+    private void BeginDrag(Guid playerId, string playerName, Point position)
+    {
+        _selectedPlayerId = playerId;
+        _draggedPlayerId = playerId;
+        _draggedPlayerName = playerName;
+        _dragPosition = position;
+        _isDragging = true;
     }
 
     private List<LineupDisplayRow> GetLineupRows()
