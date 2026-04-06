@@ -1,0 +1,65 @@
+{
+  "SelectedTeamName": "New York Hawks 2",
+  "Teams": {
+    "Nashville Foxes": {
+      "LineupSlots": [
+        "08120cfe-7721-4044-bfc5-f858259de8c8",
+        "f11162fc-7a71-4b16-9e10-11f075d571da",
+        "53a8b25b-8929-4b56-9e86-5a688ecc3efb",
+        "31e6525e-0b80-4e1b-ad69-21a1da745bdb",
+        "7b1b1b46-56fb-45dd-b9ab-9eb2de8bb4f2",
+        "b49b8d75-b1ca-4b7a-aa42-80096230411d",
+        "4e895b94-c1fd-4d8f-9ca6-9e94ce556bf6",
+        "a9a5145b-4301-4add-83c8-01a4df52cf28",
+        "dba2a9af-4080-4e0a-9472-ac826cbcfb7b"
+      ],
+      "RotationSlots": [
+        "e473ffb9-5dc3-484e-ae66-27d69fefcb7f",
+        "e6ddc9c3-f747-433f-aff9-2e963eb4bb14",
+        "55efd229-2a53-4887-9d2d-bfb245d5208b",
+        "32faed3f-899f-4a8e-899a-a96363a2b3df",
+        "66ff6d88-905b-4b80-9707-122d47eeccd8"
+      ]
+    },
+    "Chicago Dragons": {
+      "LineupSlots": [
+        "8f52b9a2-2f64-4728-adc1-d188a65ba453",
+        "4669a6b1-24eb-49d8-b37d-92dd21db45fa",
+        "ccfdcbe0-40f4-4e9a-97f3-54b57547ba12",
+        "4a043215-c56b-466e-81be-4b8b7dc2266e",
+        "cbe94ac9-c0c0-42bd-a19c-9a6f974227b4",
+        "33baed50-4b00-4be6-9931-7ba361f08b38",
+        "70c6d0fc-a3e7-416d-abbc-de328e196eb8",
+        "bd0a49f4-88b4-4ee8-b6ba-0b45b02a243e",
+        "d324bf14-a710-4227-a700-461047a45910"
+      ],
+      "RotationSlots": [
+        "8ea81064-8ba4-436c-9a88-6be9e68a5d18",
+        "0604fc0e-0190-44c5-9bce-92d9914aa60a",
+        "49b0509b-195c-48ec-b870-c704e892cd2a",
+        "61bcaac4-e846-4d2b-8f43-1c6e491c5b4f",
+        "266b7741-b1dd-42a8-8c2c-c6686a8f3efc"
+      ]
+    },
+    "New York Hawks 2": {
+      "LineupSlots": [
+        "8501e2e1-425e-4d7a-87a7-d0ab8d95670b",
+        "c44d129c-260b-4a8b-a45f-4b850d08882a",
+        "8f6d0b37-72d6-4466-9bc9-c67454bdc202",
+        "703e3133-5016-429d-9097-a78e0d5683db",
+        "3bdd249c-3304-4170-838c-8f3fba35073d",
+        "af3e5eb3-5bfb-431d-aa2a-0e6f56bc661a",
+        "7c7af143-f0c4-411a-9268-deacdc8615c8",
+        "08a4c9b4-6e67-48d3-a02e-bfa1b0b3f05a",
+        "aacb64f9-b449-4087-884b-4db1aa7efdc0"
+      ],
+      "RotationSlots": [
+        "d5296c66-9153-4da0-b155-aece25c868ee",
+        "bc13b2bb-12ca-48d9-b557-ba6f469edb57",
+        "fb353c6f-4ffb-45b2-b616-81f912047669",
+        "a8a3a296-a411-4e94-b5d7-67aa54f662d0",
+        "684306ea-dc23-45a9-a89b-8bd7b0a0e801"
+      ]
+    }
+  }
+}

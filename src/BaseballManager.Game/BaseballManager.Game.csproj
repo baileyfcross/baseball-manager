@@ -23,6 +23,7 @@
     <ProjectReference Include="..\BaseballManager.Sim\BaseballManager.Sim.csproj" />
     <ProjectReference Include="..\BaseballManager.Application\BaseballManager.Application.csproj" />
     <ProjectReference Include="..\BaseballManager.Infrastructure\BaseballManager.Infrastructure.csproj" />
+    <ProjectReference Include="..\BaseballManager.Contracts\BaseballManager.Contracts.csproj" />
   </ItemGroup>
 
 </Project>

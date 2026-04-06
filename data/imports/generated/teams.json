@@ -1,0 +1,212 @@
+[
+  {
+    "Name": "Nashville Foxes",
+    "Abbreviation": "NAF",
+    "League": "American",
+    "Division": "East",
+    "City": "Nashville"
+  },
+  {
+    "Name": "St. Louis Owls",
+    "Abbreviation": "STO",
+    "League": "American",
+    "Division": "East",
+    "City": "St. Louis"
+  },
+  {
+    "Name": "Portland Captains",
+    "Abbreviation": "POC",
+    "League": "American",
+    "Division": "East",
+    "City": "Portland"
+  },
+  {
+    "Name": "Baltimore Pilots",
+    "Abbreviation": "BAP",
+    "League": "American",
+    "Division": "East",
+    "City": "Baltimore"
+  },
+  {
+    "Name": "Austin Stars",
+    "Abbreviation": "AUS",
+    "League": "American",
+    "Division": "East",
+    "City": "Austin"
+  },
+  {
+    "Name": "Toronto Lions",
+    "Abbreviation": "TOL",
+    "League": "American",
+    "Division": "Central",
+    "City": "Toronto"
+  },
+  {
+    "Name": "Pittsburgh Bears",
+    "Abbreviation": "PIB",
+    "League": "American",
+    "Division": "Central",
+    "City": "Pittsburgh"
+  },
+  {
+    "Name": "Charlotte Storm",
+    "Abbreviation": "CHS",
+    "League": "American",
+    "Division": "Central",
+    "City": "Charlotte"
+  },
+  {
+    "Name": "Denver Comets",
+    "Abbreviation": "DEC",
+    "League": "American",
+    "Division": "Central",
+    "City": "Denver"
+  },
+  {
+    "Name": "Houston Knights",
+    "Abbreviation": "HOK",
+    "League": "American",
+    "Division": "Central",
+    "City": "Houston"
+  },
+  {
+    "Name": "Indianapolis Anchors",
+    "Abbreviation": "INA",
+    "League": "American",
+    "Division": "West",
+    "City": "Indianapolis"
+  },
+  {
+    "Name": "Milwaukee Giants",
+    "Abbreviation": "MIG",
+    "League": "American",
+    "Division": "West",
+    "City": "Milwaukee"
+  },
+  {
+    "Name": "Chicago Dragons",
+    "Abbreviation": "CHD",
+    "League": "American",
+    "Division": "West",
+    "City": "Chicago"
+  },
+  {
+    "Name": "Los Angeles Sharks",
+    "Abbreviation": "LOS",
+    "League": "American",
+    "Division": "West",
+    "City": "Los Angeles"
+  },
+  {
+    "Name": "Miami Aces",
+    "Abbreviation": "MIA",
+    "League": "American",
+    "Division": "West",
+    "City": "Miami"
+  },
+  {
+    "Name": "Phoenix Hawks",
+    "Abbreviation": "PHH",
+    "League": "National",
+    "Division": "East",
+    "City": "Phoenix"
+  },
+  {
+    "Name": "Kansas City Wolves",
+    "Abbreviation": "KAW",
+    "League": "National",
+    "Division": "East",
+    "City": "Kansas City"
+  },
+  {
+    "Name": "Dallas Rockets",
+    "Abbreviation": "DAR",
+    "League": "National",
+    "Division": "East",
+    "City": "Dallas"
+  },
+  {
+    "Name": "Minneapolis Guardians",
+    "Abbreviation": "MI1",
+    "League": "National",
+    "Division": "East",
+    "City": "Minneapolis"
+  },
+  {
+    "Name": "Boston Falcons",
+    "Abbreviation": "BOF",
+    "League": "National",
+    "Division": "East",
+    "City": "Boston"
+  },
+  {
+    "Name": "Seattle Storm 2",
+    "Abbreviation": "SES",
+    "League": "National",
+    "Division": "Central",
+    "City": "Seattle"
+  },
+  {
+    "Name": "Philadelphia Knights 2",
+    "Abbreviation": "PHK",
+    "League": "National",
+    "Division": "Central",
+    "City": "Philadelphia"
+  },
+  {
+    "Name": "Atlanta Captains 2",
+    "Abbreviation": "ATC",
+    "League": "National",
+    "Division": "Central",
+    "City": "Atlanta"
+  },
+  {
+    "Name": "San Diego Falcons 2",
+    "Abbreviation": "SAF",
+    "League": "National",
+    "Division": "Central",
+    "City": "San Diego"
+  },
+  {
+    "Name": "Tampa Pilots 2",
+    "Abbreviation": "TAP",
+    "League": "National",
+    "Division": "Central",
+    "City": "Tampa"
+  },
+  {
+    "Name": "Cleveland Sharks 2",
+    "Abbreviation": "CLS",
+    "League": "National",
+    "Division": "West",
+    "City": "Cleveland"
+  },
+  {
+    "Name": "Detroit Bears 2",
+    "Abbreviation": "DEB",
+    "League": "National",
+    "Division": "West",
+    "City": "Detroit"
+  },
+  {
+    "Name": "New York Hawks 2",
+    "Abbreviation": "NEH",
+    "League": "National",
+    "Division": "West",
+    "City": "New York"
+  },
+  {
+    "Name": "San Francisco Owls 2",
+    "Abbreviation": "SAO",
+    "League": "National",
+    "Division": "West",
+    "City": "San Francisco"
+  },
+  {
+    "Name": "Washington Aces 2",
+    "Abbreviation": "WAA",
+    "League": "National",
+    "Division": "West",
+    "City": "Washington"
+  }
+]

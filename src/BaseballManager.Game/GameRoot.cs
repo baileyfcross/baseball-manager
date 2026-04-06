@@ -1,10 +1,12 @@
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
+using BaseballManager.Game.Data;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens;
 using BaseballManager.Game.Screens.MainMenu;
 using BaseballManager.Game.Screens.Roster;
 using BaseballManager.Game.Screens.Schedule;
+using BaseballManager.Game.Screens.TeamSelection;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -16,6 +18,9 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
     private ScreenManager _screenManager = null!;
     private InputManager _inputManager = null!;
     private UiRenderer _uiRenderer = null!;
+    private ImportedLeagueData _leagueData = null!;
+    private FranchiseSession _franchiseSession = null!;
+    private FranchiseStateStore _franchiseStateStore = null!;
 
     public GameRoot()
     {
@@ -33,14 +38,18 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         _inputManager = new InputManager();
         _uiRenderer = new UiRenderer(GraphicsDevice);
         _screenManager = new ScreenManager();
+        _leagueData = new LeagueDataLoader().Load();
+        _franchiseStateStore = new FranchiseStateStore();
+        _franchiseSession = new FranchiseSession(_leagueData, _franchiseStateStore);
 
-        var mainMenuScreen = new MainMenuScreen(_screenManager);
+        var mainMenuScreen = new MainMenuScreen(_screenManager, _franchiseSession);
         _screenManager.Register(mainMenuScreen);
-        _screenManager.Register(new FranchiseHubScreen(_screenManager));
-        _screenManager.Register(new RosterScreen(_screenManager));
-        _screenManager.Register(new LineupScreen(_screenManager));
-        _screenManager.Register(new RotationScreen(_screenManager));
-        _screenManager.Register(new ScheduleScreen(_screenManager));
+        _screenManager.Register(new TeamSelectionScreen(_screenManager, _leagueData, _franchiseSession));
+        _screenManager.Register(new FranchiseHubScreen(_screenManager, _franchiseSession));
+        _screenManager.Register(new RosterScreen(_screenManager, _leagueData, _franchiseSession));
+        _screenManager.Register(new LineupScreen(_screenManager, _leagueData, _franchiseSession));
+        _screenManager.Register(new RotationScreen(_screenManager, _leagueData, _franchiseSession));
+        _screenManager.Register(new ScheduleScreen(_screenManager, _leagueData, _franchiseSession));
 
         _screenManager.SetInitialScreen(mainMenuScreen);
         base.Initialize();

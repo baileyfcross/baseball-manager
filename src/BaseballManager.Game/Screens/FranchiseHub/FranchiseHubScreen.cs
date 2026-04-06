@@ -1,3 +1,4 @@
+using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.MainMenu;
@@ -12,6 +13,7 @@ namespace BaseballManager.Game.Screens.FranchiseHub;
 public sealed class FranchiseHubScreen : GameScreen
 {
     private readonly ScreenManager _screenManager;
+    private readonly FranchiseSession _franchiseSession;
     private readonly List<ButtonControl> _buttons = new();
     private MouseState _previousMouseState = default;
     private Point _viewport = new(1280, 720);
@@ -21,9 +23,10 @@ public sealed class FranchiseHubScreen : GameScreen
     private const int ButtonSpacing = 20;
     private const int StartY = 200;
 
-    public FranchiseHubScreen(ScreenManager screenManager)
+    public FranchiseHubScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
         _screenManager = screenManager;
+        _franchiseSession = franchiseSession;
         InitializeButtons();
     }
 
@@ -68,6 +71,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
         uiRenderer.DrawText("Franchise Hub", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         for (int i = 0; i < _buttons.Count; i++)
         {

@@ -1,8 +1,9 @@
-using BaseballManager.Application.Franchise;
 using BaseballManager.Application.SaveLoad;
+using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
+using BaseballManager.Game.Screens.TeamSelection;
 using BaseballManager.Game.UI.Controls;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -12,8 +13,8 @@ namespace BaseballManager.Game.Screens.MainMenu;
 public sealed class MainMenuScreen : GameScreen
 {
     private readonly ScreenManager _screenManager;
+    private readonly FranchiseSession _franchiseSession;
     private readonly List<ButtonControl> _buttons = new();
-    private readonly StartNewFranchiseUseCase _startNewFranchiseUseCase = new();
     private readonly LoadGameUseCase _loadGameUseCase = new();
     private MouseState _previousMouseState = default;
     private Point _viewport = new(1280, 720);
@@ -23,9 +24,10 @@ public sealed class MainMenuScreen : GameScreen
     private const int ButtonSpacing = 20;
     private const int StartY = 200;
 
-    public MainMenuScreen(ScreenManager screenManager)
+    public MainMenuScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
         _screenManager = screenManager;
+        _franchiseSession = franchiseSession;
         InitializeButtons();
     }
 
@@ -92,15 +94,23 @@ public sealed class MainMenuScreen : GameScreen
 
     private void StartNewGame()
     {
-        _startNewFranchiseUseCase.Execute();
-        Console.WriteLine("Starting new game...");
-        _screenManager.TransitionTo(nameof(FranchiseHubScreen));
+        Console.WriteLine("Opening team selection...");
+        _screenManager.TransitionTo(nameof(TeamSelectionScreen));
     }
 
     private void LoadGame()
     {
         _loadGameUseCase.Execute();
-        Console.WriteLine("Loading game...");
+
+        if (_franchiseSession.SelectedTeam != null)
+        {
+            Console.WriteLine($"Resuming franchise: {_franchiseSession.SelectedTeamName}");
+            _screenManager.TransitionTo(nameof(FranchiseHubScreen));
+            return;
+        }
+
+        Console.WriteLine("No saved franchise team found. Opening team selection...");
+        _screenManager.TransitionTo(nameof(TeamSelectionScreen));
     }
 
     private void ExitGame()
