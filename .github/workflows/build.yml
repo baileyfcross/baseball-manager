@@ -41,11 +41,46 @@ jobs:
           brew update
           brew install freetype
 
+      - name: Configure freetype alias (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/lib"
+          FREETYPE_LIB="$(ldconfig -p | awk '/libfreetype\.so\.6/{print $NF; exit}')"
+          if [[ -z "$FREETYPE_LIB" ]]; then
+            echo "Could not locate libfreetype.so.6"
+            exit 1
+          fi
+          ln -sf "$FREETYPE_LIB" "$HOME/.local/lib/libfreetype6"
+          ln -sf "$FREETYPE_LIB" "$HOME/.local/lib/libfreetype6.so"
+          ls -la "$HOME/.local/lib"
+
+      - name: Configure freetype alias (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.local/lib"
+          FREETYPE_LIB="$(brew --prefix freetype)/lib/libfreetype.6.dylib"
+          if [[ ! -f "$FREETYPE_LIB" ]]; then
+            echo "Could not locate $FREETYPE_LIB"
+            exit 1
+          fi
+          ln -sf "$FREETYPE_LIB" "$HOME/.local/lib/libfreetype6"
+          ln -sf "$FREETYPE_LIB" "$HOME/.local/lib/libfreetype6.dylib"
+          ls -la "$HOME/.local/lib"
+
       - name: Restore solution
         run: dotnet restore BaseballManager.sln
 
       - name: Build solution
-        env:
-          DYLD_LIBRARY_PATH: /opt/homebrew/opt/freetype/lib:${{ env.DYLD_LIBRARY_PATH }}
-          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:${{ env.LD_LIBRARY_PATH }}
-        run: dotnet build BaseballManager.sln --configuration Release --no-restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            export LD_LIBRARY_PATH="$HOME/.local/lib:${LD_LIBRARY_PATH:-}"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            export DYLD_LIBRARY_PATH="$HOME/.local/lib:$(brew --prefix freetype)/lib:${DYLD_LIBRARY_PATH:-}"
+          fi
+          dotnet build BaseballManager.sln --configuration Release --no-restore
