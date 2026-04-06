@@ -13,10 +13,10 @@ Example:
 ```csharp
 public sealed class PlayerImportDto
 {
-	public string FullName { get; set; } = string.Empty;
+  public string FullName { get; set; } = string.Empty;
 
-	[CsvHeader("Primary Position")]
-	[CsvHeader("Pos")]
-	public string PrimaryPosition { get; set; } = string.Empty;
+  [CsvHeader("Primary Position")]
+  [CsvHeader("Pos")]
+  public string PrimaryPosition { get; set; } = string.Empty;
 }
 ```

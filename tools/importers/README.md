@@ -12,10 +12,10 @@ Usage:
 
 ```bash
 dotnet run --project tools/importers/BaseballManager.CsvImportTool/BaseballManager.CsvImportTool.csproj -- \
-	--csv data/imports/players.csv \
-	--out data/imports/players.json \
-	--model BaseballManager.Contracts.ImportDtos.PlayerImportDto \
-	--strict true
+  --csv data/imports/players.csv \
+  --out data/imports/players.json \
+  --model BaseballManager.Contracts.ImportDtos.PlayerImportDto \
+  --strict true
 ```
 
 Optional:
