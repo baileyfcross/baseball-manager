@@ -26,8 +26,26 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
+      - name: Restore local .NET tools
+        run: dotnet tool restore
+
+      - name: Install native dependencies (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfreetype6
+
+      - name: Install native dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install freetype
+
       - name: Restore solution
         run: dotnet restore BaseballManager.sln
 
       - name: Build solution
+        env:
+          DYLD_LIBRARY_PATH: /opt/homebrew/opt/freetype/lib:${{ env.DYLD_LIBRARY_PATH }}
+          LD_LIBRARY_PATH: /usr/lib/x86_64-linux-gnu:${{ env.LD_LIBRARY_PATH }}
         run: dotnet build BaseballManager.sln --configuration Release --no-restore
