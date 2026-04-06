@@ -1,5 +1,6 @@
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
+using BaseballManager.Game.Screens.MainMenu;
 using BaseballManager.Game.Screens.Roster;
 using BaseballManager.Game.Screens.Schedule;
 using BaseballManager.Game.UI.Controls;
@@ -12,8 +13,13 @@ public sealed class FranchiseHubScreen : GameScreen
 {
     private readonly ScreenManager _screenManager;
     private readonly List<ButtonControl> _buttons = new();
-    private readonly List<Rectangle> _buttonBounds = new();
     private MouseState _previousMouseState = default;
+    private Point _viewport = new(1280, 720);
+
+    private const int ButtonWidth = 200;
+    private const int ButtonHeight = 50;
+    private const int ButtonSpacing = 20;
+    private const int StartY = 200;
 
     public FranchiseHubScreen(ScreenManager screenManager)
     {
@@ -23,27 +29,18 @@ public sealed class FranchiseHubScreen : GameScreen
 
     private void InitializeButtons()
     {
-        var centerX = 640;
-        var startY = 200;
-        const int buttonWidth = 200;
-        const int buttonHeight = 50;
-        const int spacing = 20;
-
-        AddButton("Roster", nameof(RosterScreen), centerX, startY, buttonWidth, buttonHeight);
-        AddButton("Lineup", nameof(LineupScreen), centerX, startY + (buttonHeight + spacing), buttonWidth, buttonHeight);
-        AddButton("Rotation", nameof(RotationScreen), centerX, startY + (buttonHeight + spacing) * 2, buttonWidth, buttonHeight);
-        AddButton("Schedule", nameof(ScheduleScreen), centerX, startY + (buttonHeight + spacing) * 3, buttonWidth, buttonHeight);
+        _buttons.Add(new ButtonControl { Label = "Roster",    OnClick = () => _screenManager.TransitionTo(nameof(RosterScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Lineup",    OnClick = () => _screenManager.TransitionTo(nameof(LineupScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Rotation",  OnClick = () => _screenManager.TransitionTo(nameof(RotationScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Schedule",  OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Main Menu", OnClick = () => _screenManager.TransitionTo(nameof(MainMenuScreen)) });
     }
 
-    private void AddButton(string label, string screenName, int centerX, int y, int width, int height)
+    private Rectangle GetButtonBounds(int index, int viewportWidth, int viewportHeight)
     {
-        _buttons.Add(new ButtonControl
-        {
-            Label = label,
-            OnClick = () => _screenManager.TransitionTo(screenName)
-        });
-
-        _buttonBounds.Add(new Rectangle(centerX - width / 2, y, width, height));
+        var centerX = viewportWidth / 2;
+        var y = StartY + index * (ButtonHeight + ButtonSpacing);
+        return new Rectangle(centerX - ButtonWidth / 2, y, ButtonWidth, ButtonHeight);
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -54,9 +51,9 @@ public sealed class FranchiseHubScreen : GameScreen
             currentMouseState.LeftButton == ButtonState.Pressed)
         {
             var mousePos = currentMouseState.Position;
-            for (int i = 0; i < _buttonBounds.Count; i++)
+            for (int i = 0; i < _buttons.Count; i++)
             {
-                if (_buttonBounds[i].Contains(mousePos))
+                if (GetButtonBounds(i, _viewport.X, _viewport.Y).Contains(mousePos))
                 {
                     _buttons[i].Click();
                 }
@@ -68,12 +65,14 @@ public sealed class FranchiseHubScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
+        _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+
         uiRenderer.DrawText("Franchise Hub", new Vector2(100, 50), Color.White);
 
         for (int i = 0; i < _buttons.Count; i++)
         {
             var button = _buttons[i];
-            var bounds = _buttonBounds[i];
+            var bounds = GetButtonBounds(i, _viewport.X, _viewport.Y);
             var isHovered = bounds.Contains(Mouse.GetState().Position);
             var bgColor = isHovered ? Color.DarkGray : Color.Gray;
 

@@ -17,6 +17,8 @@ public sealed class UiRenderer
         _graphicsDevice = graphicsDevice;
     }
 
+    public Viewport Viewport => _graphicsDevice.Viewport;
+
     public void LoadContent(ContentManager contentManager)
     {
         _contentManager = contentManager;

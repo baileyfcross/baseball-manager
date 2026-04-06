@@ -20,9 +20,12 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
     public GameRoot()
     {
         _graphics = new GraphicsDeviceManager(this);
+        _graphics.PreferredBackBufferWidth = 1280;
+        _graphics.PreferredBackBufferHeight = 720;
         Content.RootDirectory = "Assets";
         IsMouseVisible = true;
         Window.Title = "Baseball Manager";
+        Window.AllowUserResizing = true;
     }
 
     protected override void Initialize()
