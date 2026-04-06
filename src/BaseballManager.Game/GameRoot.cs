@@ -1,7 +1,7 @@
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens;
-using BaseballManager.Game.Screens.Boot;
+using BaseballManager.Game.Screens.MainMenu;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -27,8 +27,19 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         _inputManager = new InputManager();
         _uiRenderer = new UiRenderer(GraphicsDevice);
         _screenManager = new ScreenManager();
-        _screenManager.SetInitialScreen(new BootScreen());
+
+        // Register screens
+        _screenManager.Register(new MainMenuScreen(_screenManager));
+
+        // Set initial screen
+        _screenManager.SetInitialScreen(new MainMenuScreen(_screenManager));
         base.Initialize();
+    }
+
+    protected override void LoadContent()
+    {
+        _uiRenderer.LoadContent(Content);
+        base.LoadContent();
     }
 
     protected override void Update(GameTime gameTime)

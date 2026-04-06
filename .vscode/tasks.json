@@ -5,6 +5,11 @@
       "label": "build-game",
       "type": "shell",
       "command": "dotnet",
+      "options": {
+        "env": {
+          "DYLD_LIBRARY_PATH": "${env:HOME}/.local/lib:/opt/homebrew/opt/freetype/lib:${env:DYLD_LIBRARY_PATH}"
+        }
+      },
       "args": [
         "build",
         "src/BaseballManager.Game/BaseballManager.Game.csproj"
@@ -18,6 +23,11 @@
       "label": "run-game",
       "type": "shell",
       "command": "dotnet",
+      "options": {
+        "env": {
+          "DYLD_LIBRARY_PATH": "${env:HOME}/.local/lib:/opt/homebrew/opt/freetype/lib:${env:DYLD_LIBRARY_PATH}"
+        }
+      },
       "args": [
         "run",
         "--project",
