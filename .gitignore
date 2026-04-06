@@ -5,6 +5,10 @@ obj/
 # MonoGame content build output
 *.xnb
 
+# Local spritefont source copies
+src/BaseballManager.Game/Assets/Fonts/UiSans.ttf
+src/BaseballManager.Game/Assets/Fonts/UiMono.ttf
+
 # User-specific files
 *.user
 *.suo

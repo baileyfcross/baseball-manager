@@ -69,7 +69,50 @@ jobs:
           fi
           ln -sf "$FREETYPE_LIB" "$HOME/.local/lib/libfreetype6"
           ln -sf "$FREETYPE_LIB" "$HOME/.local/lib/libfreetype6.dylib"
+          sudo mkdir -p /usr/local/lib
+          sudo ln -sf "$FREETYPE_LIB" /usr/local/lib/libfreetype6.dylib
           ls -la "$HOME/.local/lib"
+          ls -la /usr/local/lib/libfreetype6.dylib
+
+      - name: Prepare spritefont files (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf src/BaseballManager.Game/Assets/Fonts/UiSans.ttf
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf src/BaseballManager.Game/Assets/Fonts/UiMono.ttf
+          ls -la src/BaseballManager.Game/Assets/Fonts
+
+      - name: Prepare spritefont files (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          SANS_FONT="$(find /System/Library/Fonts /Library/Fonts -type f -iname 'Arial.ttf' | head -n 1)"
+          MONO_FONT="$(find /System/Library/Fonts /Library/Fonts -type f -iname 'Courier New.ttf' | head -n 1)"
+          if [[ -z "$SANS_FONT" ]]; then
+            echo "Could not locate Arial.ttf on macOS runner"
+            exit 1
+          fi
+          if [[ -z "$MONO_FONT" ]]; then
+            echo "Could not locate Courier New.ttf on macOS runner"
+            exit 1
+          fi
+          cp "$SANS_FONT" src/BaseballManager.Game/Assets/Fonts/UiSans.ttf
+          cp "$MONO_FONT" src/BaseballManager.Game/Assets/Fonts/UiMono.ttf
+          ls -la src/BaseballManager.Game/Assets/Fonts
+
+      - name: Prepare spritefont files (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item -Path "$env:WINDIR\Fonts\arial.ttf" -Destination "src/BaseballManager.Game/Assets/Fonts/UiSans.ttf" -Force
+          if (Test-Path "$env:WINDIR\Fonts\cour.ttf") {
+            Copy-Item -Path "$env:WINDIR\Fonts\cour.ttf" -Destination "src/BaseballManager.Game/Assets/Fonts/UiMono.ttf" -Force
+          } else {
+            Copy-Item -Path "$env:WINDIR\Fonts\consola.ttf" -Destination "src/BaseballManager.Game/Assets/Fonts/UiMono.ttf" -Force
+          }
+          Get-ChildItem src/BaseballManager.Game/Assets/Fonts | Format-Table Name, Length -AutoSize
 
       - name: Restore solution
         run: dotnet restore BaseballManager.sln
