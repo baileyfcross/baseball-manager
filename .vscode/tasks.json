@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build-game",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "build",
+        "src/BaseballManager.Game/BaseballManager.Game.csproj"
+      ],
+      "group": "build",
+      "problemMatcher": [
+        "$msCompile"
+      ]
+    },
+    {
+      "label": "run-game",
+      "type": "shell",
+      "command": "dotnet",
+      "args": [
+        "run",
+        "--project",
+        "src/BaseballManager.Game/BaseballManager.Game.csproj"
+      ],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

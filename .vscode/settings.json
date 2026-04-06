@@ -1,0 +1,12 @@
+{
+  "dotnet.defaultSolution": "BaseballManager.sln",
+  "editor.formatOnSave": true,
+  "files.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  },
+  "search.exclude": {
+    "**/bin": true,
+    "**/obj": true
+  }
+}
