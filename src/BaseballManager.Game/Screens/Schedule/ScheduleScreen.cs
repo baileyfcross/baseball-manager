@@ -17,6 +17,7 @@ public sealed class ScheduleScreen : GameScreen
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
     private MouseState _previousMouseState = default;
+    private bool _ignoreClicksUntilRelease = true;
     private int _pageIndex;
 
     public ScheduleScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
@@ -43,11 +44,23 @@ public sealed class ScheduleScreen : GameScreen
     public override void OnEnter()
     {
         _pageIndex = 0;
+        _ignoreClicksUntilRelease = true;
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
         var currentMouseState = inputManager.MouseState;
+
+        if (_ignoreClicksUntilRelease)
+        {
+            if (currentMouseState.LeftButton == ButtonState.Released)
+            {
+                _ignoreClicksUntilRelease = false;
+            }
+
+            _previousMouseState = currentMouseState;
+            return;
+        }
 
         if (_previousMouseState.LeftButton == ButtonState.Released &&
             currentMouseState.LeftButton == ButtonState.Pressed)

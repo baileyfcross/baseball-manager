@@ -19,6 +19,7 @@ public sealed class TeamSelectionScreen : GameScreen
     private readonly StartNewFranchiseUseCase _startNewFranchiseUseCase = new();
     private readonly ButtonControl _backButton;
     private MouseState _previousMouseState = default;
+    private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
 
     public TeamSelectionScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
@@ -36,6 +37,18 @@ public sealed class TeamSelectionScreen : GameScreen
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
         var currentMouseState = inputManager.MouseState;
+
+        if (_ignoreClicksUntilRelease)
+        {
+            if (currentMouseState.LeftButton == ButtonState.Released)
+            {
+                _ignoreClicksUntilRelease = false;
+            }
+
+            _previousMouseState = currentMouseState;
+            return;
+        }
+
         if (_previousMouseState.LeftButton == ButtonState.Released &&
             currentMouseState.LeftButton == ButtonState.Pressed)
         {
@@ -56,6 +69,11 @@ public sealed class TeamSelectionScreen : GameScreen
         }
 
         _previousMouseState = currentMouseState;
+    }
+
+    public override void OnEnter()
+    {
+        _ignoreClicksUntilRelease = true;
     }
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)

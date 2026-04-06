@@ -24,6 +24,7 @@ public sealed class LineupScreen : GameScreen
     private Guid? _draggedPlayerId;
     private string _draggedPlayerName = string.Empty;
     private Point _dragPosition;
+    private bool _ignoreClicksUntilRelease = true;
 
     public LineupScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -65,6 +66,7 @@ public sealed class LineupScreen : GameScreen
         _isDragging = false;
         _draggedPlayerId = null;
         _draggedPlayerName = string.Empty;
+        _ignoreClicksUntilRelease = true;
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -73,6 +75,17 @@ public sealed class LineupScreen : GameScreen
         var mousePosition = currentMouseState.Position;
         var isPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
         var isRelease = _previousMouseState.LeftButton == ButtonState.Pressed && currentMouseState.LeftButton == ButtonState.Released;
+
+        if (_ignoreClicksUntilRelease)
+        {
+            if (currentMouseState.LeftButton == ButtonState.Released)
+            {
+                _ignoreClicksUntilRelease = false;
+            }
+
+            _previousMouseState = currentMouseState;
+            return;
+        }
 
         if (_isDragging)
         {

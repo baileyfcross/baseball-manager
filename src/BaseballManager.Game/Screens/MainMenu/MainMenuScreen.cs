@@ -17,6 +17,7 @@ public sealed class MainMenuScreen : GameScreen
     private readonly List<ButtonControl> _buttons = new();
     private readonly LoadGameUseCase _loadGameUseCase = new();
     private MouseState _previousMouseState = default;
+    private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
 
     private const int ButtonWidth = 200;
@@ -49,6 +50,17 @@ public sealed class MainMenuScreen : GameScreen
     {
         var currentMouseState = inputManager.MouseState;
 
+        if (_ignoreClicksUntilRelease)
+        {
+            if (currentMouseState.LeftButton == ButtonState.Released)
+            {
+                _ignoreClicksUntilRelease = false;
+            }
+
+            _previousMouseState = currentMouseState;
+            return;
+        }
+
         // Check for button clicks
         if (_previousMouseState.LeftButton == ButtonState.Released &&
             currentMouseState.LeftButton == ButtonState.Pressed)
@@ -64,6 +76,11 @@ public sealed class MainMenuScreen : GameScreen
         }
 
         _previousMouseState = currentMouseState;
+    }
+
+    public override void OnEnter()
+    {
+        _ignoreClicksUntilRelease = true;
     }
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)

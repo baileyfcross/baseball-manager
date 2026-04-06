@@ -16,6 +16,7 @@ public sealed class FranchiseHubScreen : GameScreen
     private readonly FranchiseSession _franchiseSession;
     private readonly List<ButtonControl> _buttons = new();
     private MouseState _previousMouseState = default;
+    private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
 
     private const int ButtonWidth = 200;
@@ -50,6 +51,17 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         var currentMouseState = inputManager.MouseState;
 
+        if (_ignoreClicksUntilRelease)
+        {
+            if (currentMouseState.LeftButton == ButtonState.Released)
+            {
+                _ignoreClicksUntilRelease = false;
+            }
+
+            _previousMouseState = currentMouseState;
+            return;
+        }
+
         if (_previousMouseState.LeftButton == ButtonState.Released &&
             currentMouseState.LeftButton == ButtonState.Pressed)
         {
@@ -64,6 +76,11 @@ public sealed class FranchiseHubScreen : GameScreen
         }
 
         _previousMouseState = currentMouseState;
+    }
+
+    public override void OnEnter()
+    {
+        _ignoreClicksUntilRelease = true;
     }
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
