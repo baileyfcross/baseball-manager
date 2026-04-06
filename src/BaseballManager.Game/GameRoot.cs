@@ -1,7 +1,10 @@
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
+using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens;
 using BaseballManager.Game.Screens.MainMenu;
+using BaseballManager.Game.Screens.Roster;
+using BaseballManager.Game.Screens.Schedule;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
@@ -28,11 +31,15 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         _uiRenderer = new UiRenderer(GraphicsDevice);
         _screenManager = new ScreenManager();
 
-        // Register screens
-        _screenManager.Register(new MainMenuScreen(_screenManager));
+        var mainMenuScreen = new MainMenuScreen(_screenManager);
+        _screenManager.Register(mainMenuScreen);
+        _screenManager.Register(new FranchiseHubScreen(_screenManager));
+        _screenManager.Register(new RosterScreen(_screenManager));
+        _screenManager.Register(new LineupScreen(_screenManager));
+        _screenManager.Register(new RotationScreen(_screenManager));
+        _screenManager.Register(new ScheduleScreen(_screenManager));
 
-        // Set initial screen
-        _screenManager.SetInitialScreen(new MainMenuScreen(_screenManager));
+        _screenManager.SetInitialScreen(mainMenuScreen);
         base.Initialize();
     }
 

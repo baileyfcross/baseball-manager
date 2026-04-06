@@ -2,6 +2,7 @@ using BaseballManager.Application.Franchise;
 using BaseballManager.Application.SaveLoad;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
+using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -120,6 +121,7 @@ public sealed class MainMenuScreen : GameScreen
     {
         _startNewFranchiseUseCase.Execute();
         Console.WriteLine("Starting new game...");
+        _screenManager.TransitionTo(nameof(FranchiseHubScreen));
     }
 
     private void LoadGame()
