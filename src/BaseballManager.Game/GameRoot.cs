@@ -120,7 +120,11 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
 
     protected override void Draw(GameTime gameTime)
     {
-        GraphicsDevice.Clear(Color.ForestGreen);
+        var backgroundColor = _franchiseSession.SelectedTeam != null
+            ? TeamColorPalette.GetBackgroundColor(_franchiseSession.SelectedTeam.HexColor, Color.ForestGreen)
+            : Color.ForestGreen;
+
+        GraphicsDevice.Clear(backgroundColor);
         _screenManager.Draw(gameTime, _uiRenderer);
         base.Draw(gameTime);
     }

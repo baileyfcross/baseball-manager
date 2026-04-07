@@ -7,6 +7,11 @@ public sealed class TeamImportDto
     [CsvHeader("Club")]
     public string Name { get; set; } = string.Empty;
 
+    [CsvHeader("Hex Color")]
+    [CsvHeader("HexColor")]
+    [CsvHeader("Primary Color")]
+    public string HexColor { get; set; } = string.Empty;
+
     [CsvHeader("Team Code")]
     [CsvHeader("Abbrev")]
     [CsvHeader("Abbreviation")]

@@ -16,8 +16,11 @@ public sealed class LeagueDataLoader
         var generatedDir = Path.Combine(root, "data", "imports", "generated");
         var importDir = Path.Combine(root, "data", "imports");
 
+        var teams = LoadList<TeamImportDto>(Path.Combine(generatedDir, "teams.json"), Path.Combine(importDir, "teams.json"));
+        TeamColorPalette.ApplyTo(teams);
+
         return new ImportedLeagueData(
-            LoadList<TeamImportDto>(Path.Combine(generatedDir, "teams.json"), Path.Combine(importDir, "teams.json")),
+            teams,
             LoadList<PlayerImportDto>(Path.Combine(generatedDir, "players.json"), Path.Combine(importDir, "players.json")),
             LoadList<RosterImportDto>(Path.Combine(generatedDir, "rosters.json"), Path.Combine(importDir, "rosters.json")),
             LoadList<ScheduleImportDto>(Path.Combine(generatedDir, "schedule.json"), Path.Combine(importDir, "schedule.json")));

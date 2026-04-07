@@ -95,8 +95,12 @@ public sealed class TeamSelectionScreen : GameScreen
         {
             var bounds = GetTeamButtonBounds(i);
             var isHovered = bounds.Contains(Mouse.GetState().Position);
-            var bgColor = isHovered ? Color.DarkSlateBlue : Color.SlateGray;
             var team = _leagueData.Teams[i];
+            var isSelected = _franchiseSession.SelectedTeam != null &&
+                             string.Equals(_franchiseSession.SelectedTeam.Name, team.Name, StringComparison.OrdinalIgnoreCase);
+            var bgColor = isSelected
+                ? TeamColorPalette.GetSelectionColor(team.HexColor, isHovered)
+                : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
             uiRenderer.DrawButton($"{team.Abbreviation}  {team.Name}", bounds, bgColor, Color.White);
         }
 
