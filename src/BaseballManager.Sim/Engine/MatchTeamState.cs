@@ -47,6 +47,35 @@ public sealed class MatchTeamState
         return StartingPitcher.Id == playerId ? StartingPitcher : null;
     }
 
+    public MatchPlayerSnapshot? FindFielder(string positionLabel)
+    {
+        if (string.IsNullOrWhiteSpace(positionLabel))
+        {
+            return null;
+        }
+
+        if (string.Equals(positionLabel, "P", StringComparison.OrdinalIgnoreCase))
+        {
+            return StartingPitcher;
+        }
+
+        var exactMatch = Lineup.FirstOrDefault(player =>
+            string.Equals(player.PrimaryPosition, positionLabel, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(player.SecondaryPosition, positionLabel, StringComparison.OrdinalIgnoreCase));
+        if (exactMatch != null)
+        {
+            return exactMatch;
+        }
+
+        return positionLabel.ToUpperInvariant() switch
+        {
+            "LF" or "CF" or "RF" => Lineup.FirstOrDefault(player => player.PrimaryPosition is "OF" or "LF" or "CF" or "RF"),
+            "1B" or "2B" or "3B" or "SS" => Lineup.FirstOrDefault(player => player.PrimaryPosition is "IF" or "1B" or "2B" or "3B" or "SS"),
+            "C" => Lineup.FirstOrDefault(player => string.Equals(player.PrimaryPosition, "C", StringComparison.OrdinalIgnoreCase)),
+            _ => Lineup.FirstOrDefault()
+        };
+    }
+
     public static MatchTeamState CreatePlaceholder(string name, string abbreviation)
     {
         var lineup = Enumerable.Range(1, 9)
@@ -58,6 +87,8 @@ public sealed class MatchTeamState
 
     private static MatchPlayerSnapshot CreatePlaceholderPlayer(string name, string position, int pitching = 24)
     {
+        var overall = (int)Math.Round((52 + 50 + 50 + 50 + pitching + 52 + 50 + 55) / 8d);
+
         return new MatchPlayerSnapshot(
             Guid.NewGuid(),
             name,
@@ -68,6 +99,10 @@ public sealed class MatchTeamState
             50,
             50,
             50,
-            pitching);
+            pitching,
+            52,
+            50,
+            55,
+            overall);
     }
 }

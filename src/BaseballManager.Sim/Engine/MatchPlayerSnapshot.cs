@@ -10,4 +10,8 @@ public sealed record MatchPlayerSnapshot(
     int PowerRating,
     int DisciplineRating,
     int SpeedRating,
-    int PitchingRating);
+    int PitchingRating,
+    int FieldingRating,
+    int ArmRating,
+    int DurabilityRating,
+    int OverallRating);

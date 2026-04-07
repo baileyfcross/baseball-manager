@@ -51,15 +51,19 @@ public sealed class MatchState
 
     public MatchPlayerSnapshot CurrentPitcher => DefensiveTeam.StartingPitcher;
 
-    public string GetRunnerName(Guid? runnerId)
+    public MatchPlayerSnapshot? GetPlayer(Guid? playerId)
     {
-        if (!runnerId.HasValue)
+        if (!playerId.HasValue)
         {
-            return string.Empty;
+            return null;
         }
 
-        return AwayTeam.FindPlayer(runnerId.Value)?.FullName
-               ?? HomeTeam.FindPlayer(runnerId.Value)?.FullName
-               ?? string.Empty;
+        return AwayTeam.FindPlayer(playerId.Value)
+               ?? HomeTeam.FindPlayer(playerId.Value);
+    }
+
+    public string GetRunnerName(Guid? runnerId)
+    {
+        return GetPlayer(runnerId)?.FullName ?? string.Empty;
     }
 }

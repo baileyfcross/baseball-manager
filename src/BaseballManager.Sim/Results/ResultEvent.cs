@@ -10,9 +10,23 @@ public sealed class ResultEvent
 
     public bool IsBallInPlay { get; init; }
 
+    public bool CountsAsAtBat { get; init; }
+
+    public bool CountsAsHit { get; init; }
+
+    public bool IsWalk { get; init; }
+
+    public bool IsStrikeout { get; init; }
+
+    public int BasesAwarded { get; init; }
+
     public int RunsScored { get; init; }
 
     public int OutsRecorded { get; init; }
+
+    public Guid BatterId { get; init; }
+
+    public Guid PitcherId { get; init; }
 
     public float BallX { get; init; } = 0.5f;
 

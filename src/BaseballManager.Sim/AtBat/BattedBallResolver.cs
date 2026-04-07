@@ -19,31 +19,32 @@ public sealed class BattedBallResolver
     public BattedBallResult ResolveBattedBall(MatchState state, ContactQuality contactQuality, Random random)
     {
         var batter = state.CurrentBatter;
-        var powerBoost = Math.Clamp((batter.PowerRating - 50) / 5, -6, 10);
-        var speedBoost = Math.Clamp((batter.SpeedRating - 50) / 8, -3, 5);
+        var powerBoost = Math.Clamp((batter.PowerRating - 50) / 4 + ((batter.OverallRating - 50) / 12), -8, 14);
+        var speedBoost = Math.Clamp((batter.SpeedRating - 50) / 6 + ((batter.OverallRating - 50) / 16), -4, 7);
+        var contactBoost = Math.Clamp((batter.ContactRating - 50) / 7, -4, 6);
         var roll = random.Next(100);
 
         return contactQuality switch
         {
-            ContactQuality.Weak => roll < 50
+            ContactQuality.Weak => roll < 56 - contactBoost
                 ? CreateGroundout(random, "A chopped grounder")
-                : roll < 82
+                : roll < 84
                     ? CreateFlyout(random, "A lazy pop fly")
                     : CreateSingle(random, "A soft single"),
-            ContactQuality.Average => roll < 26 + powerBoost
+            ContactQuality.Average => roll < 30 + contactBoost
                 ? CreateSingle(random, "A sharp single")
-                : roll < 44 + powerBoost
+                : roll < 50 + powerBoost
                     ? CreateDouble(random, "A drive into the gap")
-                    : roll < 68 + speedBoost
+                    : roll < 72 + speedBoost
                         ? CreateGroundout(random, "A routine ground ball")
                         : CreateFlyout(random, "A lifted fly ball"),
-            _ => roll < 18 + powerBoost
+            _ => roll < 16 + powerBoost
                 ? CreateHomeRun(random, "A towering drive")
-                : roll < 36 + powerBoost
+                : roll < 34 + powerBoost
                     ? CreateDouble(random, "A rope off the wall")
-                    : roll < 42 + speedBoost
+                    : roll < 44 + speedBoost
                         ? CreateTriple(random, "A rocket to the alley")
-                        : roll < 76
+                        : roll < 80 + contactBoost
                             ? CreateSingle(random, "A solid liner")
                             : CreateFlyout(random, "A deep fly ball")
         };

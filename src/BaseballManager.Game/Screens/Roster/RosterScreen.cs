@@ -14,10 +14,13 @@ public sealed class RosterScreen : GameScreen
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
     private readonly Rectangle _backButtonBounds = new(40, 40, 140, 44);
+    private readonly ButtonControl _toggleViewButton;
+    private readonly Rectangle _toggleViewBounds = new(200, 40, 180, 44);
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
+    private RosterViewMode _viewMode;
     private int _pageIndex;
 
     public RosterScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
@@ -28,6 +31,20 @@ public sealed class RosterScreen : GameScreen
         {
             Label = "Back",
             OnClick = () => screenManager.TransitionTo(nameof(FranchiseHubScreen))
+        };
+        _toggleViewButton = new ButtonControl
+        {
+            Label = "Season Stats",
+            OnClick = () =>
+            {
+                _viewMode = _viewMode switch
+                {
+                    RosterViewMode.Standard => RosterViewMode.SeasonStats,
+                    RosterViewMode.SeasonStats => RosterViewMode.HiddenRatings,
+                    _ => RosterViewMode.Standard
+                };
+                _pageIndex = 0;
+            }
         };
         _previousPageButton = new ButtonControl
         {
@@ -44,6 +61,7 @@ public sealed class RosterScreen : GameScreen
     public override void OnEnter()
     {
         _pageIndex = 0;
+        _viewMode = RosterViewMode.Standard;
         _ignoreClicksUntilRelease = true;
     }
 
@@ -69,6 +87,10 @@ public sealed class RosterScreen : GameScreen
             {
                 _backButton.Click();
             }
+            else if (_toggleViewBounds.Contains(currentMouseState.Position))
+            {
+                _toggleViewButton.Click();
+            }
             else if (GetPreviousPageBounds().Contains(currentMouseState.Position))
             {
                 _previousPageButton.Click();
@@ -89,7 +111,21 @@ public sealed class RosterScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        uiRenderer.DrawText("Roster", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
+        _toggleViewButton.Label = _viewMode switch
+        {
+            RosterViewMode.Standard => "Season Stats",
+            RosterViewMode.SeasonStats => "Hidden Stats",
+            _ => "Show Roster"
+        };
+
+        var title = _viewMode switch
+        {
+            RosterViewMode.SeasonStats => "Roster - Season Stats",
+            RosterViewMode.HiddenRatings => "Roster - Hidden Stats",
+            _ => "Roster"
+        };
+
+        uiRenderer.DrawText(title, new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         var rosterRows = GetRosterRows();
@@ -99,32 +135,82 @@ public sealed class RosterScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawText("ID        NAME                    POS  SEC  AGE  LINEUP  ROT", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
-
             var pageSize = 14;
             var startIndex = _pageIndex * pageSize;
             var visibleRows = rosterRows.Skip(startIndex).Take(pageSize).ToList();
-            for (var i = 0; i < visibleRows.Count; i++)
+
+            if (_viewMode == RosterViewMode.HiddenRatings)
             {
-                var row = visibleRows[i];
-                var line = string.Format(
-                    "{0}  {1,-22} {2,-4} {3,-4} {4,3}   {5,2}      {6,2}",
-                    row.PlayerId.ToString("N")[..8],
-                    Truncate(row.PlayerName, 22),
-                    row.PrimaryPosition,
-                    row.SecondaryPosition,
-                    row.Age,
-                    row.LineupSlot?.ToString() ?? "-",
-                    row.RotationSlot?.ToString() ?? "-");
-                uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                uiRenderer.DrawText("NAME               POS OVR TOT CON POW DIS SPD FLD ARM PIT DUR", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
+                for (var i = 0; i < visibleRows.Count; i++)
+                {
+                    var row = visibleRows[i];
+                    var ratings = row.HiddenRatings;
+                    var line = string.Format(
+                        "{0,-18} {1,-3} {2,3} {3,3} {4,3} {5,3} {6,3} {7,3} {8,3} {9,3} {10,3} {11,3}",
+                        Truncate(row.PlayerName, 18),
+                        row.PrimaryPosition,
+                        ratings.OverallRating,
+                        ratings.AttributeTotal,
+                        ratings.ContactRating,
+                        ratings.PowerRating,
+                        ratings.DisciplineRating,
+                        ratings.SpeedRating,
+                        ratings.FieldingRating,
+                        ratings.ArmRating,
+                        ratings.PitchingRating,
+                        ratings.DurabilityRating);
+                    uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                }
+            }
+            else if (_viewMode == RosterViewMode.SeasonStats)
+            {
+                uiRenderer.DrawText("NAME               POS  AVG  HR RBI  OPS  ERA  W-L", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
+                for (var i = 0; i < visibleRows.Count; i++)
+                {
+                    var row = visibleRows[i];
+                    var stats = row.SeasonStats;
+                    var line = string.Format(
+                        "{0,-18} {1,-3} {2,5} {3,3} {4,3} {5,5} {6,5} {7,5}",
+                        Truncate(row.PlayerName, 18),
+                        row.PrimaryPosition,
+                        stats.BattingAverageDisplay,
+                        stats.HomeRuns,
+                        stats.RunsBattedIn,
+                        stats.OpsDisplay,
+                        stats.EarnedRunAverageDisplay,
+                        stats.WinLossDisplay);
+                    uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                }
+            }
+            else
+            {
+                uiRenderer.DrawText("ID        NAME                    POS  SEC  AGE  LINEUP  ROT", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
+                for (var i = 0; i < visibleRows.Count; i++)
+                {
+                    var row = visibleRows[i];
+                    var line = string.Format(
+                        "{0}  {1,-22} {2,-4} {3,-4} {4,3}   {5,2}      {6,2}",
+                        row.PlayerId.ToString("N")[..8],
+                        Truncate(row.PlayerName, 22),
+                        row.PrimaryPosition,
+                        row.SecondaryPosition,
+                        row.Age,
+                        row.LineupSlot?.ToString() ?? "-",
+                        row.RotationSlot?.ToString() ?? "-");
+                    uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                }
             }
 
             DrawPagingButtons(uiRenderer, rosterRows.Count, pageSize);
         }
 
-        var isHovered = _backButtonBounds.Contains(Mouse.GetState().Position);
+        var mousePosition = Mouse.GetState().Position;
+        var isHovered = _backButtonBounds.Contains(mousePosition);
         var bgColor = isHovered ? Color.DarkGray : Color.Gray;
+        var toggleColor = _toggleViewBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray;
         uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, bgColor, Color.White);
+        uiRenderer.DrawButton(_toggleViewButton.Label, _toggleViewBounds, toggleColor, Color.White);
     }
 
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
@@ -155,7 +241,9 @@ public sealed class RosterScreen : GameScreen
                 row.SecondaryPosition,
                 row.Age,
                 row.LineupSlot,
-                row.RotationSlot))
+                row.RotationSlot,
+                _franchiseSession.GetPlayerRatings(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
+                _franchiseSession.GetPlayerSeasonStats(row.PlayerId)))
             .ToList();
     }
 
@@ -171,5 +259,14 @@ public sealed class RosterScreen : GameScreen
         string SecondaryPosition,
         int Age,
         int? LineupSlot,
-        int? RotationSlot);
+        int? RotationSlot,
+        PlayerHiddenRatingsState HiddenRatings,
+        PlayerSeasonStatsState SeasonStats);
+
+    private enum RosterViewMode
+    {
+        Standard,
+        SeasonStats,
+        HiddenRatings
+    }
 }

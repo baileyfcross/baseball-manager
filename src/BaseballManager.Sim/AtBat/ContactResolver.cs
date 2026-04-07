@@ -15,14 +15,16 @@ public sealed class ContactResolver
     {
         var batter = state.CurrentBatter;
         var pitcher = state.CurrentPitcher;
-        var adjustedRoll = random.Next(100) + ((batter.ContactRating + batter.PowerRating) / 4) - (pitcher.PitchingRating / 5);
+        var batterSkill = batter.ContactRating + (batter.PowerRating / 2) + (batter.OverallRating / 3);
+        var pitcherSkill = pitcher.PitchingRating + (pitcher.OverallRating / 4);
+        var adjustedRoll = random.Next(100) + ((batterSkill - pitcherSkill) / 3) + ((batter.DisciplineRating - 50) / 6);
 
-        if (adjustedRoll < 42)
+        if (adjustedRoll < 38)
         {
             return ContactQuality.Weak;
         }
 
-        if (adjustedRoll < 82)
+        if (adjustedRoll < 78)
         {
             return ContactQuality.Average;
         }

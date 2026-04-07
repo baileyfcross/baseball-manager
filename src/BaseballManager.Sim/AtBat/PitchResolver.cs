@@ -22,11 +22,12 @@ public sealed class PitchResolver
 
         var disciplineEdge = batter.DisciplineRating - pitcher.PitchingRating;
         var contactEdge = batter.ContactRating - pitcher.PitchingRating;
+        var overallEdge = batter.OverallRating - pitcher.OverallRating;
 
-        var ballChance = Math.Clamp(18 + (disciplineEdge / 6), 10, 28);
-        var calledStrikeChance = Math.Clamp(18 + ((pitcher.PitchingRating - batter.DisciplineRating) / 8), 12, 24);
-        var swingingStrikeChance = Math.Clamp(16 + ((pitcher.PitchingRating - batter.ContactRating) / 8), 10, 24);
-        var foulChance = 14;
+        var ballChance = Math.Clamp(18 + (disciplineEdge / 5) + (overallEdge / 12), 8, 30);
+        var calledStrikeChance = Math.Clamp(19 + ((pitcher.PitchingRating - batter.DisciplineRating) / 6) - (overallEdge / 20), 10, 28);
+        var swingingStrikeChance = Math.Clamp(17 + ((pitcher.PitchingRating - batter.ContactRating) / 6) - (overallEdge / 24), 8, 28);
+        var foulChance = Math.Clamp(14 + (Math.Abs(contactEdge) / 20), 10, 18);
 
         var roll = random.Next(100);
         if (roll < ballChance)

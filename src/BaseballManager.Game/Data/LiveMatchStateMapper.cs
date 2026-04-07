@@ -83,11 +83,11 @@ public static class LiveMatchStateMapper
     private static MatchTeamState ToRuntimeTeam(MatchTeamSaveState saveTeam, string fallbackName, string fallbackAbbreviation)
     {
         var lineup = saveTeam.Lineup?.Count > 0
-            ? saveTeam.Lineup
+            ? saveTeam.Lineup.Select(NormalizeSnapshot).ToList()
             : MatchTeamState.CreatePlaceholder(fallbackName, fallbackAbbreviation).Lineup;
-        var startingPitcher = saveTeam.StartingPitcher
+        var startingPitcher = NormalizeSnapshot(saveTeam.StartingPitcher
             ?? lineup.FirstOrDefault()
-            ?? MatchTeamState.CreatePlaceholder(fallbackName, fallbackAbbreviation).StartingPitcher;
+            ?? MatchTeamState.CreatePlaceholder(fallbackName, fallbackAbbreviation).StartingPitcher);
 
         var runtimeTeam = new MatchTeamState(
             string.IsNullOrWhiteSpace(saveTeam.Name) ? fallbackName : saveTeam.Name,
@@ -101,6 +101,34 @@ public static class LiveMatchStateMapper
         };
 
         return runtimeTeam;
+    }
+
+    private static MatchPlayerSnapshot NormalizeSnapshot(MatchPlayerSnapshot snapshot)
+    {
+        var contact = snapshot.ContactRating > 0 ? snapshot.ContactRating : 50;
+        var power = snapshot.PowerRating > 0 ? snapshot.PowerRating : 48;
+        var discipline = snapshot.DisciplineRating > 0 ? snapshot.DisciplineRating : 50;
+        var speed = snapshot.SpeedRating > 0 ? snapshot.SpeedRating : 50;
+        var pitching = snapshot.PitchingRating > 0 ? snapshot.PitchingRating : (snapshot.PrimaryPosition is "SP" or "RP" ? 58 : 20);
+        var fielding = snapshot.FieldingRating > 0 ? snapshot.FieldingRating : 52;
+        var arm = snapshot.ArmRating > 0 ? snapshot.ArmRating : 50;
+        var durability = snapshot.DurabilityRating > 0 ? snapshot.DurabilityRating : 55;
+        var overall = snapshot.OverallRating > 0
+            ? snapshot.OverallRating
+            : Math.Clamp((int)Math.Round((contact + power + discipline + speed + pitching + fielding + arm + durability) / 8d), 1, 99);
+
+        return snapshot with
+        {
+            ContactRating = contact,
+            PowerRating = power,
+            DisciplineRating = discipline,
+            SpeedRating = speed,
+            PitchingRating = pitching,
+            FieldingRating = fielding,
+            ArmRating = arm,
+            DurabilityRating = durability,
+            OverallRating = overall
+        };
     }
 
     private static ResultEvent CloneResultEvent(ResultEvent? resultEvent)
@@ -120,8 +148,15 @@ public static class LiveMatchStateMapper
             Description = resultEvent.Description,
             EndsPlateAppearance = resultEvent.EndsPlateAppearance,
             IsBallInPlay = resultEvent.IsBallInPlay,
+            CountsAsAtBat = resultEvent.CountsAsAtBat,
+            CountsAsHit = resultEvent.CountsAsHit,
+            IsWalk = resultEvent.IsWalk,
+            IsStrikeout = resultEvent.IsStrikeout,
+            BasesAwarded = resultEvent.BasesAwarded,
             RunsScored = resultEvent.RunsScored,
             OutsRecorded = resultEvent.OutsRecorded,
+            BatterId = resultEvent.BatterId,
+            PitcherId = resultEvent.PitcherId,
             BallX = resultEvent.BallX,
             BallY = resultEvent.BallY,
             Fielder = resultEvent.Fielder,

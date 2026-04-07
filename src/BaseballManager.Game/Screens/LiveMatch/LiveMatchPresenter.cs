@@ -127,7 +127,20 @@ public sealed class LiveMatchPresenter
 
     public void ResolvePitchOutcome()
     {
-        _engine.Tick();
+        var batter = _engine.CurrentState.CurrentBatter;
+        var pitcher = _engine.CurrentState.CurrentPitcher;
+        var defensiveTeam = _engine.CurrentState.DefensiveTeam;
+        var result = _engine.Tick();
+
+        if (_mode == LiveMatchMode.Franchise)
+        {
+            _franchiseSession.ApplyPerformanceDevelopment(batter, pitcher, defensiveTeam, result);
+            if (result.IsGameOver)
+            {
+                _franchiseSession.RecordCompletedGame(_engine.CurrentState);
+            }
+        }
+
         _secondsUntilNextPitch = 0.85f;
         _ballHighlightTimer = 1.2f;
         SaveMatchProgress();
@@ -378,19 +391,9 @@ public sealed class LiveMatchPresenter
         return CreatePlayerSnapshot(pitcherRow.PlayerId, pitcherRow.PlayerName, pitcherRow.PrimaryPosition, pitcherRow.SecondaryPosition, playerData?.Age ?? 27, pitcherRow.LineupSlot ?? 9, pitcherRow.RotationSlot ?? 1);
     }
 
-    private static MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age, int lineupSlot, int rotationSlot)
+    private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age, int lineupSlot, int rotationSlot)
     {
-        var ageBonus = age is >= 25 and <= 31 ? 5 : age <= 23 ? 2 : -2;
-        var contact = 46 + ageBonus + Math.Max(0, 8 - lineupSlot) + (primaryPosition is "SS" or "2B" or "CF" ? 4 : 0);
-        var power = 43 + (ageBonus / 2) + (primaryPosition is "1B" or "LF" or "RF" or "DH" ? 7 : 0);
-        var discipline = 44 + ageBonus + Math.Max(0, 5 - lineupSlot);
-        var speed = 45 + (primaryPosition is "SS" or "2B" or "CF" ? 8 : primaryPosition is "LF" or "RF" or "3B" ? 4 : 0);
-        var pitching = primaryPosition switch
-        {
-            "SP" => 60 + (Math.Max(1, 6 - Math.Max(1, rotationSlot)) * 2),
-            "RP" => 57,
-            _ => 20
-        };
+        var ratings = _franchiseSession.GetPlayerRatings(playerId, name, primaryPosition, secondaryPosition, age);
 
         return new MatchPlayerSnapshot(
             playerId,
@@ -398,19 +401,23 @@ public sealed class LiveMatchPresenter
             primaryPosition,
             secondaryPosition,
             age,
-            Math.Clamp(contact, 35, 78),
-            Math.Clamp(power, 35, 78),
-            Math.Clamp(discipline, 35, 78),
-            Math.Clamp(speed, 35, 78),
-            Math.Clamp(pitching, 20, 82));
+            ratings.ContactRating,
+            ratings.PowerRating,
+            ratings.DisciplineRating,
+            ratings.SpeedRating,
+            ratings.PitchingRating,
+            ratings.FieldingRating,
+            ratings.ArmRating,
+            ratings.DurabilityRating,
+            ratings.OverallRating);
     }
 
-    private static MatchPlayerSnapshot CreatePlaceholderSnapshot(string name, int lineupSlot)
+    private MatchPlayerSnapshot CreatePlaceholderSnapshot(string name, int lineupSlot)
     {
         return CreatePlayerSnapshot(Guid.NewGuid(), name, lineupSlot % 2 == 0 ? "IF" : "OF", string.Empty, 27, lineupSlot, 0);
     }
 
-    private static List<MatchPlayerSnapshot> BuildPlaceholderLineup(string teamName)
+    private List<MatchPlayerSnapshot> BuildPlaceholderLineup(string teamName)
     {
         return Enumerable.Range(1, 9)
             .Select(slot => CreatePlaceholderSnapshot($"{teamName} Batter {slot}", slot))

@@ -58,6 +58,7 @@ public sealed class BaserunningResolver
         var first = state.Baserunners.FirstBaseRunnerId;
         var second = state.Baserunners.SecondBaseRunnerId;
         var third = state.Baserunners.ThirdBaseRunnerId;
+        var armRating = GetFielderArm(state, outcome);
         var newFirst = outcome.BatterId;
         Guid? newSecond = null;
         Guid? newThird = null;
@@ -72,7 +73,8 @@ public sealed class BaserunningResolver
 
         if (second.HasValue)
         {
-            if (random.NextDouble() < 0.75d)
+            var scoreChance = GetAdvanceChance(GetRunnerSpeed(state, second), armRating, 0.58d, 0.0035d, 0.0025d, 0.18d, 0.92d);
+            if (random.NextDouble() < scoreChance)
             {
                 runs++;
                 notes.Add($"{GetRunnerName(state, second)} scores from second.");
@@ -85,7 +87,8 @@ public sealed class BaserunningResolver
 
         if (first.HasValue)
         {
-            if (!newThird.HasValue && random.NextDouble() < 0.30d)
+            var thirdBaseChance = GetAdvanceChance(GetRunnerSpeed(state, first), armRating, 0.22d, 0.0025d, 0.0015d, 0.08d, 0.68d);
+            if (!newThird.HasValue && random.NextDouble() < thirdBaseChance)
             {
                 newThird = first;
             }
@@ -106,6 +109,7 @@ public sealed class BaserunningResolver
         var first = state.Baserunners.FirstBaseRunnerId;
         var second = state.Baserunners.SecondBaseRunnerId;
         var third = state.Baserunners.ThirdBaseRunnerId;
+        var armRating = GetFielderArm(state, outcome);
         Guid? newThird = null;
         var runs = 0;
         var notes = new List<string>();
@@ -124,7 +128,8 @@ public sealed class BaserunningResolver
 
         if (first.HasValue)
         {
-            if (random.NextDouble() < 0.55d)
+            var scoreChance = GetAdvanceChance(GetRunnerSpeed(state, first), armRating, 0.42d, 0.0040d, 0.0018d, 0.12d, 0.88d);
+            if (random.NextDouble() < scoreChance)
             {
                 runs++;
                 notes.Add($"{GetRunnerName(state, first)} comes all the way around to score.");
@@ -205,14 +210,33 @@ public sealed class BaserunningResolver
 
     private static BaserunningResult ProcessFlyout(MatchState state, PlateAppearanceOutcome outcome, Random random)
     {
-        if (outcome.OutsBeforePlay < 2 && state.Baserunners.ThirdBaseRunnerId.HasValue && random.NextDouble() < 0.35d)
+        if (outcome.OutsBeforePlay < 2 && state.Baserunners.ThirdBaseRunnerId.HasValue)
         {
-            var scoringRunner = state.Baserunners.ThirdBaseRunnerId;
-            state.Baserunners.ThirdBaseRunnerId = null;
-            return new BaserunningResult(1, $"{GetRunnerName(state, scoringRunner)} tags from third and scores.");
+            var tagChance = GetAdvanceChance(GetRunnerSpeed(state, state.Baserunners.ThirdBaseRunnerId), GetFielderArm(state, outcome), 0.30d, 0.0030d, 0.0020d, 0.05d, 0.78d);
+            if (random.NextDouble() < tagChance)
+            {
+                var scoringRunner = state.Baserunners.ThirdBaseRunnerId;
+                state.Baserunners.ThirdBaseRunnerId = null;
+                return new BaserunningResult(1, $"{GetRunnerName(state, scoringRunner)} tags from third and scores.");
+            }
         }
 
         return new BaserunningResult(0, string.Empty);
+    }
+
+    private static int GetRunnerSpeed(MatchState state, Guid? runnerId)
+    {
+        return state.GetPlayer(runnerId)?.SpeedRating ?? 50;
+    }
+
+    private static int GetFielderArm(MatchState state, PlateAppearanceOutcome outcome)
+    {
+        return state.DefensiveTeam.FindFielder(outcome.Fielder)?.ArmRating ?? 50;
+    }
+
+    private static double GetAdvanceChance(int speedRating, int armRating, double baseChance, double speedFactor, double armFactor, double minChance, double maxChance)
+    {
+        return Math.Clamp(baseChance + ((speedRating - 50) * speedFactor) - ((armRating - 50) * armFactor), minChance, maxChance);
     }
 
     private static string GetRunnerName(MatchState state, Guid? runnerId)

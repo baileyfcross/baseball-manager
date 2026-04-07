@@ -1,4 +1,6 @@
 using BaseballManager.Contracts.ImportDtos;
+using BaseballManager.Sim.Engine;
+using BaseballManager.Sim.Results;
 
 namespace BaseballManager.Game.Data;
 
@@ -13,6 +15,8 @@ public sealed class FranchiseSession
         _leagueData = leagueData;
         _stateStore = stateStore;
         _saveState = _stateStore.Load();
+        _saveState.PlayerRatings ??= new Dictionary<Guid, PlayerHiddenRatingsState>();
+        _saveState.PlayerSeasonStats ??= new Dictionary<Guid, PlayerSeasonStatsState>();
 
         if (!string.IsNullOrWhiteSpace(_saveState.SelectedTeamName))
         {
@@ -25,6 +29,11 @@ public sealed class FranchiseSession
         if (SelectedTeam != null)
         {
             MigrateLegacyFranchiseMatchIfNeeded(SelectedTeam.Name);
+        }
+
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated())
+        {
+            Save();
         }
     }
 
@@ -67,6 +76,120 @@ public sealed class FranchiseSession
         _saveState.SelectedTeamName = team.Name;
         MigrateLegacyFranchiseMatchIfNeeded(team.Name);
         _stateStore.Save(_saveState);
+    }
+
+    public PlayerHiddenRatingsState GetPlayerRatings(Guid playerId, string fullName, string primaryPosition, string secondaryPosition, int age)
+    {
+        if (_saveState.PlayerRatings.TryGetValue(playerId, out var ratings))
+        {
+            ratings.RecalculateDerivedRatings();
+            return ratings;
+        }
+
+        var generated = PlayerRatingsGenerator.Generate(playerId, fullName, primaryPosition, secondaryPosition, age);
+        _saveState.PlayerRatings[playerId] = generated;
+        Save();
+        return generated;
+    }
+
+    public PlayerSeasonStatsState GetPlayerSeasonStats(Guid playerId)
+    {
+        if (_saveState.PlayerSeasonStats.TryGetValue(playerId, out var stats))
+        {
+            return stats;
+        }
+
+        stats = new PlayerSeasonStatsState();
+        _saveState.PlayerSeasonStats[playerId] = stats;
+        return stats;
+    }
+
+    public void ApplyPerformanceDevelopment(MatchPlayerSnapshot batter, MatchPlayerSnapshot pitcher, MatchTeamState defensiveTeam, ResultEvent result)
+    {
+        if (!result.EndsPlateAppearance)
+        {
+            return;
+        }
+
+        ApplySeasonStats(batter, pitcher, result);
+
+        switch (result.Code)
+        {
+            case "Walk":
+                AdjustPlayerRatings(batter.Id, ratings =>
+                {
+                    ratings.DisciplineRating += 1;
+                    if (result.RunsScored > 0)
+                    {
+                        ratings.ContactRating += 1;
+                    }
+                });
+                break;
+
+            case "Single":
+                AdjustPlayerRatings(batter.Id, ratings =>
+                {
+                    ratings.ContactRating += 1;
+                    if (result.RunsScored > 0)
+                    {
+                        ratings.SpeedRating += 1;
+                    }
+                });
+                break;
+
+            case "Double":
+                AdjustPlayerRatings(batter.Id, ratings =>
+                {
+                    ratings.ContactRating += 1;
+                    ratings.PowerRating += 1;
+                });
+                break;
+
+            case "Triple":
+                AdjustPlayerRatings(batter.Id, ratings =>
+                {
+                    ratings.ContactRating += 1;
+                    ratings.SpeedRating += 2;
+                });
+                break;
+
+            case "HomeRun":
+                AdjustPlayerRatings(batter.Id, ratings =>
+                {
+                    ratings.PowerRating += 2;
+                    ratings.ContactRating += 1;
+                });
+                break;
+        }
+
+        if (result.OutsRecorded > 0)
+        {
+            AdjustPlayerRatings(pitcher.Id, ratings =>
+            {
+                ratings.PitchingRating += result.Code == "Strikeout" ? 2 : 1;
+                ratings.DurabilityRating += 1;
+            });
+
+            var fielder = defensiveTeam.FindFielder(result.Fielder);
+            if (fielder != null && fielder.Id != pitcher.Id)
+            {
+                AdjustPlayerRatings(fielder.Id, ratings =>
+                {
+                    ratings.FieldingRating += 1;
+                    if (result.Code is "Groundout" or "Flyout")
+                    {
+                        ratings.ArmRating += 1;
+                    }
+                });
+            }
+        }
+    }
+
+    public void RecordCompletedGame(MatchState finalState)
+    {
+        var awayWon = finalState.AwayTeam.Runs > finalState.HomeTeam.Runs;
+        ApplyCompletedGame(finalState.AwayTeam, awayWon);
+        ApplyCompletedGame(finalState.HomeTeam, !awayWon);
     }
 
     public IReadOnlyList<FranchiseRosterEntry> GetSelectedTeamRoster()
@@ -324,11 +447,13 @@ public sealed class FranchiseSession
 
     public bool DeleteAllSaveData()
     {
-        var hadSaveData = HasAnySaveData;
+        var hadSaveData = HasAnySaveData || _saveState.PlayerRatings.Count > 0;
 
         _saveState.SelectedTeamName = null;
         _saveState.CurrentLiveMatch = null;
         _saveState.QuickMatchLiveMatch = null;
+        _saveState.PlayerRatings.Clear();
+        _saveState.PlayerSeasonStats.Clear();
         _saveState.Teams.Clear();
         SelectedTeam = null;
         PendingLiveMatchMode = LiveMatchMode.QuickMatch;
@@ -468,6 +593,153 @@ public sealed class FranchiseSession
         var teamState = GetOrCreateTeamState(teamName);
         teamState.CurrentLiveMatch ??= _saveState.CurrentLiveMatch;
         _saveState.CurrentLiveMatch = null;
+    }
+
+    private void AdjustPlayerRatings(Guid playerId, Action<PlayerHiddenRatingsState> updateRatings)
+    {
+        if (!_saveState.PlayerRatings.TryGetValue(playerId, out var ratings))
+        {
+            return;
+        }
+
+        updateRatings(ratings);
+        ClampRatings(ratings);
+        ratings.RecalculateDerivedRatings();
+    }
+
+    private static void ClampRatings(PlayerHiddenRatingsState ratings)
+    {
+        ratings.ContactRating = Math.Clamp(ratings.ContactRating, 1, 99);
+        ratings.PowerRating = Math.Clamp(ratings.PowerRating, 1, 99);
+        ratings.DisciplineRating = Math.Clamp(ratings.DisciplineRating, 1, 99);
+        ratings.SpeedRating = Math.Clamp(ratings.SpeedRating, 1, 99);
+        ratings.FieldingRating = Math.Clamp(ratings.FieldingRating, 1, 99);
+        ratings.ArmRating = Math.Clamp(ratings.ArmRating, 1, 99);
+        ratings.PitchingRating = Math.Clamp(ratings.PitchingRating, 1, 99);
+        ratings.DurabilityRating = Math.Clamp(ratings.DurabilityRating, 1, 99);
+    }
+
+    private void ApplySeasonStats(MatchPlayerSnapshot batter, MatchPlayerSnapshot pitcher, ResultEvent result)
+    {
+        var batterStats = GetPlayerSeasonStats(batter.Id);
+        batterStats.PlateAppearances++;
+
+        if (result.CountsAsAtBat)
+        {
+            batterStats.AtBats++;
+        }
+
+        if (result.CountsAsHit)
+        {
+            batterStats.Hits++;
+        }
+
+        if (result.IsWalk)
+        {
+            batterStats.Walks++;
+        }
+
+        if (result.IsStrikeout)
+        {
+            batterStats.Strikeouts++;
+        }
+
+        batterStats.RunsBattedIn += Math.Max(0, result.RunsScored);
+
+        switch (result.Code)
+        {
+            case "Double":
+                batterStats.Doubles++;
+                break;
+            case "Triple":
+                batterStats.Triples++;
+                break;
+            case "HomeRun":
+                batterStats.HomeRuns++;
+                break;
+        }
+
+        var pitcherStats = GetPlayerSeasonStats(pitcher.Id);
+        pitcherStats.InningsPitchedOuts += Math.Max(0, result.OutsRecorded);
+        pitcherStats.RunsAllowed += Math.Max(0, result.RunsScored);
+        pitcherStats.EarnedRuns += Math.Max(0, result.RunsScored);
+
+        if (result.CountsAsHit)
+        {
+            pitcherStats.HitsAllowed++;
+        }
+
+        if (result.IsWalk)
+        {
+            pitcherStats.WalksAllowed++;
+        }
+
+        if (result.IsStrikeout)
+        {
+            pitcherStats.StrikeoutsPitched++;
+        }
+    }
+
+    private void ApplyCompletedGame(MatchTeamState team, bool wonGame)
+    {
+        var countedPlayers = new HashSet<Guid>();
+        foreach (var player in team.Lineup.Append(team.StartingPitcher))
+        {
+            if (!countedPlayers.Add(player.Id))
+            {
+                continue;
+            }
+
+            GetPlayerSeasonStats(player.Id).GamesPlayed++;
+        }
+
+        var pitcherStats = GetPlayerSeasonStats(team.StartingPitcher.Id);
+        pitcherStats.GamesPitched++;
+        if (wonGame)
+        {
+            pitcherStats.Wins++;
+        }
+        else
+        {
+            pitcherStats.Losses++;
+        }
+    }
+
+    private bool EnsurePlayerRatingsGenerated()
+    {
+        var hasChanges = false;
+
+        foreach (var player in _leagueData.Players)
+        {
+            if (_saveState.PlayerRatings.ContainsKey(player.PlayerId))
+            {
+                _saveState.PlayerRatings[player.PlayerId].RecalculateDerivedRatings();
+                continue;
+            }
+
+            _saveState.PlayerRatings[player.PlayerId] = PlayerRatingsGenerator.Generate(player);
+            hasChanges = true;
+        }
+
+        return hasChanges;
+    }
+
+    private bool EnsurePlayerSeasonStatsGenerated()
+    {
+        var hasChanges = false;
+
+        foreach (var player in _leagueData.Players)
+        {
+            if (_saveState.PlayerSeasonStats.ContainsKey(player.PlayerId))
+            {
+                continue;
+            }
+
+            _saveState.PlayerSeasonStats[player.PlayerId] = new PlayerSeasonStatsState();
+            hasChanges = true;
+        }
+
+        return hasChanges;
     }
 
     private void Save()
