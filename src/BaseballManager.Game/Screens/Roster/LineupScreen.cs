@@ -12,7 +12,7 @@ public sealed class LineupScreen : GameScreen
 {
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly Rectangle _backButtonBounds = new(40, 40, 140, 44);
+    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
     private readonly ButtonControl _clearSlotButton;
@@ -25,6 +25,7 @@ public sealed class LineupScreen : GameScreen
     private string _draggedPlayerName = string.Empty;
     private Point _dragPosition;
     private bool _ignoreClicksUntilRelease = true;
+    private Point _viewport = new(1280, 720);
 
     public LineupScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -136,8 +137,14 @@ public sealed class LineupScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        uiRenderer.DrawText("Lineup", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
+        _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+
+        uiRenderer.DrawText("Lineup", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+
+        var lineupPanelBounds = GetLineupPanelBounds();
+        var benchPanelBounds = GetBenchPanelBounds();
+        var headerY = lineupPanelBounds.Y - 34;
 
         var lineupRows = GetLineupRows();
         var benchRows = GetBenchRows();
@@ -148,10 +155,12 @@ public sealed class LineupScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawText("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Vector2(100, 130), Color.White);
-            uiRenderer.DrawText($"Selected: {GetSelectedPlayerName()}", new Vector2(100, 160), Color.White);
+            uiRenderer.DrawWrappedTextInBounds("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Rectangle(100, 126, Math.Max(560, _viewport.X - 220), 24), Color.White, uiRenderer.ScoreboardFont, 1);
+            uiRenderer.DrawTextInBounds($"Selected: {GetSelectedPlayerName()}", new Rectangle(100, 154, Math.Max(560, _viewport.X - 220), 22), Color.White, uiRenderer.ScoreboardFont);
 
-            uiRenderer.DrawText("LINEUP", new Vector2(100, 200), Color.White, uiRenderer.UiMediumFont);
+            uiRenderer.DrawButton(string.Empty, lineupPanelBounds, new Color(38, 48, 56), Color.White);
+            uiRenderer.DrawButton(string.Empty, benchPanelBounds, new Color(38, 48, 56), Color.White);
+            uiRenderer.DrawText("LINEUP", new Vector2(lineupPanelBounds.X + 12, headerY), Color.White, uiRenderer.UiMediumFont);
             for (var slot = 1; slot <= 9; slot++)
             {
                 var bounds = GetLineupSlotBounds(slot);
@@ -168,7 +177,7 @@ public sealed class LineupScreen : GameScreen
                 uiRenderer.DrawButton(label, bounds, color, Color.White);
             }
 
-            uiRenderer.DrawText("BENCH / RESERVES", new Vector2(700, 200), Color.White, uiRenderer.UiMediumFont);
+            uiRenderer.DrawText("BENCH / RESERVES", new Vector2(benchPanelBounds.X + 12, headerY), Color.White, uiRenderer.UiMediumFont);
             var pageSize = 10;
             var startIndex = _pageIndex * pageSize;
             var visibleRows = benchRows.Skip(startIndex).Take(pageSize).ToList();
@@ -216,15 +225,58 @@ public sealed class LineupScreen : GameScreen
         uiRenderer.DrawText(pageLabel, new Vector2(labelX, labelY), Color.White, uiRenderer.ScoreboardFont);
     }
 
-    private Rectangle GetPreviousPageBounds() => new(700, 580, 120, 40);
+    private Rectangle GetPreviousPageBounds()
+    {
+        var benchPanelBounds = GetBenchPanelBounds();
+        return new Rectangle(benchPanelBounds.X, benchPanelBounds.Bottom + 12, 120, 40);
+    }
 
-    private Rectangle GetNextPageBounds() => new(840, 580, 120, 40);
+    private Rectangle GetNextPageBounds()
+    {
+        var benchPanelBounds = GetBenchPanelBounds();
+        return new Rectangle(benchPanelBounds.Right - 120, benchPanelBounds.Bottom + 12, 120, 40);
+    }
 
-    private Rectangle GetClearSlotBounds() => new(100, 580, 140, 40);
+    private Rectangle GetClearSlotBounds()
+    {
+        var lineupPanelBounds = GetLineupPanelBounds();
+        return new Rectangle(lineupPanelBounds.X, lineupPanelBounds.Bottom + 12, 140, 40);
+    }
 
-    private Rectangle GetLineupSlotBounds(int slot) => new(100, 240 + (slot - 1) * 34, 500, 30);
+    private Rectangle GetLineupPanelBounds()
+    {
+        var width = Math.Max(420, (_viewport.X - 180) / 2);
+        var height = Math.Max(320, _viewport.Y - 320);
+        return new Rectangle(60, 230, width, height);
+    }
 
-    private Rectangle GetBenchRowBounds(int index) => new(700, 240 + index * 34, 460, 30);
+    private Rectangle GetBenchPanelBounds()
+    {
+        var lineupPanelBounds = GetLineupPanelBounds();
+        var gap = 24;
+        return new Rectangle(lineupPanelBounds.Right + gap, lineupPanelBounds.Y, Math.Max(360, _viewport.X - lineupPanelBounds.Right - gap - 60), lineupPanelBounds.Height);
+    }
+
+    private int GetListRowHeight(int rowCount)
+    {
+        var panelHeight = GetLineupPanelBounds().Height;
+        var spacing = 6;
+        return Math.Clamp((panelHeight - 58 - ((rowCount - 1) * spacing)) / rowCount, 28, 40);
+    }
+
+    private Rectangle GetLineupSlotBounds(int slot)
+    {
+        var panel = GetLineupPanelBounds();
+        var rowHeight = GetListRowHeight(9);
+        return new Rectangle(panel.X + 10, panel.Y + 14 + (slot - 1) * (rowHeight + 6), panel.Width - 20, rowHeight);
+    }
+
+    private Rectangle GetBenchRowBounds(int index)
+    {
+        var panel = GetBenchPanelBounds();
+        var rowHeight = GetListRowHeight(10);
+        return new Rectangle(panel.X + 10, panel.Y + 14 + index * (rowHeight + 6), panel.Width - 20, rowHeight);
+    }
 
     private bool TryStartDragFromLineupSlot(Point position)
     {

@@ -19,9 +19,9 @@ public sealed class ScoutingScreen : GameScreen
     private readonly ButtonControl _marketNextButton;
     private readonly ButtonControl _offerPreviousButton;
     private readonly ButtonControl _offerNextButton;
-    private readonly Rectangle _backButtonBounds = new(1080, 40, 140, 44);
-    private readonly Rectangle _tradeButtonBounds = new(840, 40, 220, 44);
+    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private MouseState _previousMouseState = default;
+    private Point _viewport = new(1280, 720);
     private bool _ignoreClicksUntilRelease = true;
     private int _marketPageIndex;
     private int _offerPageIndex;
@@ -103,7 +103,7 @@ public sealed class ScoutingScreen : GameScreen
             {
                 _backButton.Click();
             }
-            else if (_tradeButtonBounds.Contains(mousePosition))
+            else if (GetTradeButtonBounds().Contains(mousePosition))
             {
                 _tradeButton.Click();
             }
@@ -155,6 +155,8 @@ public sealed class ScoutingScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
+        _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+
         var coaches = _franchiseSession.GetCoachingStaff();
         var marketPlayers = ApplyFilter(_franchiseSession.GetScoutingBoardPlayers());
         var offerPlayers = _franchiseSession.GetTradeChipPlayers();
@@ -164,17 +166,17 @@ public sealed class ScoutingScreen : GameScreen
             ? $"Filter: {GetFilterLabel(_filterMode)} ^"
             : $"Filter: {GetFilterLabel(_filterMode)} v";
 
-        uiRenderer.DrawText("Scouting / Transfers", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
+        uiRenderer.DrawText("Scouting / Transfers", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
         var filterBounds = GetFilterButtonBounds();
         uiRenderer.DrawButton(_filterButton.Label, filterBounds, filterBounds.Contains(Mouse.GetState().Position) || _showFilterDropdown ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
 
-        var introY = 120f;
-        foreach (var introLine in WrapText("Talk to a coach, get a plain-English read, then swap players if you want to make the move.", 92))
-        {
-            uiRenderer.DrawText(introLine, new Vector2(100, introY), Color.White, uiRenderer.ScoreboardFont);
-            introY += 18f;
-        }
+        uiRenderer.DrawWrappedTextInBounds(
+            "Talk to coaches for plain-English reports, then swap players if you want to make a move.",
+            new Rectangle(168, 112, 560, 40),
+            Color.White,
+            uiRenderer.UiSmallFont,
+            2);
 
         DrawCoaches(uiRenderer, coaches);
         DrawMarketPlayers(uiRenderer, marketPlayers);
@@ -182,8 +184,9 @@ public sealed class ScoutingScreen : GameScreen
         DrawReportArea(uiRenderer, coaches, marketPlayers);
 
         var mousePosition = Mouse.GetState().Position;
+        var tradeButtonBounds = GetTradeButtonBounds();
         uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !_showFilterDropdown && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_tradeButton.Label, _tradeButtonBounds, !_showFilterDropdown && _tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+        uiRenderer.DrawButton(_tradeButton.Label, tradeButtonBounds, !_showFilterDropdown && tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
 
         if (_showFilterDropdown)
         {
@@ -193,7 +196,8 @@ public sealed class ScoutingScreen : GameScreen
 
     private void DrawCoaches(UiRenderer uiRenderer, IReadOnlyList<CoachProfileView> coaches)
     {
-        uiRenderer.DrawText("COACHES", new Vector2(40, 174), Color.White, uiRenderer.UiMediumFont);
+        var coachHeaderBounds = new Rectangle(GetCoachRowBounds(0).X, 174, GetCoachRowBounds(0).Width, 24);
+        uiRenderer.DrawTextInBounds("COACHES", coachHeaderBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
 
         for (var i = 0; i < coaches.Count; i++)
         {
@@ -208,7 +212,8 @@ public sealed class ScoutingScreen : GameScreen
 
     private void DrawMarketPlayers(UiRenderer uiRenderer, IReadOnlyList<ScoutingPlayerCard> marketPlayers)
     {
-        uiRenderer.DrawText("PLAYERS AROUND THE LEAGUE", new Vector2(400, 174), Color.White, uiRenderer.UiMediumFont);
+        var marketHeaderBounds = new Rectangle(GetMarketRowBounds(0).X, 174, GetMarketRowBounds(0).Width, 24);
+        uiRenderer.DrawTextInBounds("PLAYERS AROUND THE LEAGUE", marketHeaderBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
         var visiblePlayers = marketPlayers.Skip(_marketPageIndex * PageSize).Take(PageSize).ToList();
 
         for (var i = 0; i < visiblePlayers.Count; i++)
@@ -228,7 +233,8 @@ public sealed class ScoutingScreen : GameScreen
 
     private void DrawOfferPlayers(UiRenderer uiRenderer, IReadOnlyList<ScoutingPlayerCard> offerPlayers)
     {
-        uiRenderer.DrawText("PLAYER YOU OFFER", new Vector2(790, 174), Color.White, uiRenderer.UiMediumFont);
+        var offerHeaderBounds = new Rectangle(GetOfferRowBounds(0).X, 174, GetOfferRowBounds(0).Width, 24);
+        uiRenderer.DrawTextInBounds("PLAYER YOU OFFER", offerHeaderBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
         var visiblePlayers = offerPlayers.Skip(_offerPageIndex * PageSize).Take(PageSize).ToList();
 
         for (var i = 0; i < visiblePlayers.Count; i++)
@@ -252,19 +258,24 @@ public sealed class ScoutingScreen : GameScreen
         var selectedPlayer = marketPlayers.FirstOrDefault(player => player.PlayerId == _selectedPlayerId)
             ?? marketPlayers.FirstOrDefault();
 
-        uiRenderer.DrawText("SCOUT REPORT", new Vector2(40, 520), Color.White, uiRenderer.UiMediumFont);
+        var reportPanelBounds = GetReportPanelBounds();
+        var movesPanelBounds = GetMovesPanelBounds(reportPanelBounds);
+
+        uiRenderer.DrawTextInBounds("SCOUT REPORT", new Rectangle(reportPanelBounds.X, reportPanelBounds.Y - 30, 300, 24), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawButton(string.Empty, reportPanelBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawButton(string.Empty, movesPanelBounds, new Color(38, 48, 56), Color.White);
 
         if (selectedCoach == null || selectedPlayer == null)
         {
-            uiRenderer.DrawText("Select a coach and a player to see a report.", new Vector2(40, 556), Color.White, uiRenderer.ScoreboardFont);
+            uiRenderer.DrawWrappedTextInBounds("Select a coach and a player to see a report.", new Rectangle(reportPanelBounds.X + 12, reportPanelBounds.Y + 12, reportPanelBounds.Width - 24, reportPanelBounds.Height - 24), Color.White, uiRenderer.ScoreboardFont, 2);
             return;
         }
 
         var report = _franchiseSession.GetCoachScoutingReport(selectedPlayer.PlayerId, selectedCoach.Role);
-        uiRenderer.DrawText($"{report.CoachName} - {report.CoachRole}", new Vector2(40, 556), Color.Goldenrod, uiRenderer.ScoreboardFont);
-        uiRenderer.DrawText($"Specialty: {selectedCoach.Specialty} | Voice: {selectedCoach.Voice}", new Vector2(40, 578), Color.White, uiRenderer.ScoreboardFont);
+        uiRenderer.DrawTextInBounds($"{report.CoachName} - {report.CoachRole}", new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 8, reportPanelBounds.Width - 20, 16), Color.Goldenrod, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"Specialty: {selectedCoach.Specialty} | Voice: {selectedCoach.Voice}", new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 24, reportPanelBounds.Width - 20, 16), Color.White, uiRenderer.UiSmallFont);
 
-        var reportLines = new List<string>
+        var reportText = string.Join(" ", new[]
         {
             BuildLastSeasonSummary(selectedPlayer),
             report.Summary,
@@ -272,34 +283,16 @@ public sealed class ScoutingScreen : GameScreen
             report.Concern,
             report.TransferRecommendation,
             $"Status: {_statusMessage}"
-        };
+        });
 
-        var y = 600f;
-        foreach (var line in reportLines)
-        {
-            foreach (var wrappedLine in WrapText(line, 100))
-            {
-                uiRenderer.DrawText(wrappedLine, new Vector2(40, y), Color.White, uiRenderer.ScoreboardFont);
-                y += 18f;
-            }
+        uiRenderer.DrawWrappedTextInBounds(reportText, new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 44, reportPanelBounds.Width - 20, reportPanelBounds.Height - 52), Color.White, uiRenderer.UiSmallFont, 5);
 
-            y += 6f;
-        }
-
+        uiRenderer.DrawTextInBounds("Recent Moves", new Rectangle(movesPanelBounds.X + 10, movesPanelBounds.Y + 8, movesPanelBounds.Width - 20, 16), Color.White, uiRenderer.UiSmallFont);
         var recentMoves = _franchiseSession.GetRecentTransferSummaries(2);
-        if (recentMoves.Count > 0)
-        {
-            uiRenderer.DrawText("Recent Moves:", new Vector2(860, 556), Color.White, uiRenderer.ScoreboardFont);
-            var moveY = 578f;
-            foreach (var move in recentMoves)
-            {
-                foreach (var wrappedMove in WrapText(move, 30))
-                {
-                    uiRenderer.DrawText(wrappedMove, new Vector2(860, moveY), Color.White, uiRenderer.ScoreboardFont);
-                    moveY += 18f;
-                }
-            }
-        }
+        var movesText = recentMoves.Count == 0
+            ? "No recent swaps yet."
+            : string.Join(" ", recentMoves);
+        uiRenderer.DrawWrappedTextInBounds(movesText, new Rectangle(movesPanelBounds.X + 10, movesPanelBounds.Y + 28, movesPanelBounds.Width - 20, movesPanelBounds.Height - 36), Color.White, uiRenderer.UiSmallFont, 5);
     }
 
     private void DrawListPaging(UiRenderer uiRenderer, Rectangle previousBounds, Rectangle nextBounds, int currentPage, int totalItems)
@@ -308,9 +301,9 @@ public sealed class ScoutingScreen : GameScreen
         uiRenderer.DrawButton(_marketNextButton.Label, nextBounds, !_showFilterDropdown && nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
 
         var pageLabel = $"Page {currentPage + 1} / {GetMaxPage(totalItems) + 1}";
-        var labelX = previousBounds.X;
-        var labelY = previousBounds.Bottom + 6;
-        uiRenderer.DrawText(pageLabel, new Vector2(labelX, labelY), Color.White, uiRenderer.ScoreboardFont);
+        var labelBounds = new Rectangle(previousBounds.Right + 8, previousBounds.Y, Math.Max(84, nextBounds.X - previousBounds.Right - 16), previousBounds.Height);
+        uiRenderer.DrawButton(string.Empty, labelBounds, new Color(70, 70, 70), Color.White);
+        uiRenderer.DrawTextInBounds(pageLabel, labelBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
     }
 
     private bool TrySelectCoach(Point mousePosition)
@@ -414,7 +407,9 @@ public sealed class ScoutingScreen : GameScreen
         return Math.Max(0, (int)Math.Ceiling(totalCount / (double)PageSize) - 1);
     }
 
-    private Rectangle GetFilterButtonBounds() => new(620, 40, 200, 44);
+    private Rectangle GetFilterButtonBounds() => new(_viewport.X - 520, 40, 200, 44);
+
+    private Rectangle GetTradeButtonBounds() => new(_viewport.X - 300, 38, 240, 44);
 
     private void DrawFilterDropdown(UiRenderer uiRenderer)
     {
@@ -589,19 +584,55 @@ public sealed class ScoutingScreen : GameScreen
         return value.Length <= maxLength ? value : value[..maxLength];
     }
 
-    private static Rectangle GetCoachRowBounds(int index) => new(40, 214 + (index * 46), 330, 40);
+    private Rectangle GetCoachRowBounds(int index)
+    {
+        var margin = 40;
+        var top = 210;
+        var gap = 24;
+        var availableWidth = Math.Max(960, _viewport.X - (margin * 2) - (gap * 2));
+        var coachWidth = Math.Clamp((int)(availableWidth * 0.28f), 260, 360);
+        return new Rectangle(margin, top + (index * 46), coachWidth, 38);
+    }
 
-    private static Rectangle GetMarketRowBounds(int index) => new(400, 214 + (index * 34), 350, 30);
+    private Rectangle GetMarketRowBounds(int index)
+    {
+        var coachBounds = GetCoachRowBounds(0);
+        var gap = 24;
+        var x = coachBounds.Right + gap;
+        var availableWidth = Math.Max(960, _viewport.X - 80 - (gap * 2));
+        var coachWidth = coachBounds.Width;
+        var marketWidth = Math.Clamp((int)(availableWidth * 0.32f), 280, 380);
+        return new Rectangle(x, 210 + (index * 34), marketWidth, 30);
+    }
 
-    private static Rectangle GetOfferRowBounds(int index) => new(790, 214 + (index * 34), 410, 30);
+    private Rectangle GetOfferRowBounds(int index)
+    {
+        var marketBounds = GetMarketRowBounds(0);
+        var gap = 24;
+        var x = marketBounds.Right + gap;
+        return new Rectangle(x, 210 + (index * 34), Math.Max(300, _viewport.X - x - 40), 30);
+    }
 
-    private static Rectangle GetMarketPreviousBounds() => new(400, 488, 90, 36);
+    private Rectangle GetMarketPreviousBounds() => new(GetMarketRowBounds(0).X, 490, 84, 34);
 
-    private static Rectangle GetMarketNextBounds() => new(504, 488, 90, 36);
+    private Rectangle GetMarketNextBounds() => new(GetMarketRowBounds(0).Right - 84, 490, 84, 34);
 
-    private static Rectangle GetOfferPreviousBounds() => new(790, 488, 90, 36);
+    private Rectangle GetOfferPreviousBounds() => new(GetOfferRowBounds(0).X, 490, 84, 34);
 
-    private static Rectangle GetOfferNextBounds() => new(894, 488, 90, 36);
+    private Rectangle GetOfferNextBounds() => new(GetOfferRowBounds(0).Right - 84, 490, 84, 34);
+
+    private Rectangle GetReportPanelBounds()
+    {
+        var bottomY = Math.Max(548, _viewport.Y - 160);
+        var width = Math.Max(520, (int)(_viewport.X * 0.62f));
+        return new Rectangle(40, bottomY, Math.Min(width, _viewport.X - 420), 140);
+    }
+
+    private Rectangle GetMovesPanelBounds(Rectangle reportPanelBounds)
+    {
+        var x = reportPanelBounds.Right + 30;
+        return new Rectangle(x, reportPanelBounds.Y, Math.Max(250, _viewport.X - x - 40), reportPanelBounds.Height);
+    }
 
     private enum ScoutingFilterMode
     {

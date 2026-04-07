@@ -31,6 +31,10 @@ public sealed class TeamFranchiseState
 
     public List<Guid?> RotationSlots { get; set; } = new();
 
+    public TeamPracticeFocus PracticeFocus { get; set; } = TeamPracticeFocus.Balanced;
+
+    public Dictionary<string, TeamPracticeFocus> PracticeFocusOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public List<CoachAssignmentState> CoachingStaff { get; set; } = new();
 
     public List<TransferRecordState> TransferHistory { get; set; } = new();
@@ -175,4 +179,14 @@ public enum DisplayWindowMode
     Windowed,
     BorderlessWindow,
     Fullscreen
+}
+
+public enum TeamPracticeFocus
+{
+    Balanced,
+    Hitting,
+    Pitching,
+    Defense,
+    Baserunning,
+    Recovery
 }

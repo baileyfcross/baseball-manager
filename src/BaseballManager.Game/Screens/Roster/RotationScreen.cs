@@ -12,7 +12,7 @@ public sealed class RotationScreen : GameScreen
 {
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly Rectangle _backButtonBounds = new(40, 40, 140, 44);
+    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
     private readonly ButtonControl _clearSlotButton;
@@ -25,6 +25,7 @@ public sealed class RotationScreen : GameScreen
     private string _draggedPlayerName = string.Empty;
     private Point _dragPosition;
     private bool _ignoreClicksUntilRelease = true;
+    private Point _viewport = new(1280, 720);
 
     public RotationScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -136,8 +137,14 @@ public sealed class RotationScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        uiRenderer.DrawText("Rotation", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
+        _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+
+        uiRenderer.DrawText("Rotation", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+
+        var rotationPanelBounds = GetRotationPanelBounds();
+        var bullpenPanelBounds = GetBullpenPanelBounds();
+        var headerY = rotationPanelBounds.Y - 34;
 
         var rotationRows = GetRotationRows();
         var bullpenRows = GetBullpenRows();
@@ -148,10 +155,12 @@ public sealed class RotationScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawText("Drag a pitcher to a rotation slot to assign. Drag from a slot to move pitchers.", new Vector2(100, 130), Color.White);
-            uiRenderer.DrawText($"Selected: {GetSelectedPlayerName()}", new Vector2(100, 160), Color.White);
+            uiRenderer.DrawWrappedTextInBounds("Drag a pitcher to a rotation slot to assign. Drag from a slot to move pitchers.", new Rectangle(100, 126, Math.Max(560, _viewport.X - 220), 24), Color.White, uiRenderer.ScoreboardFont, 1);
+            uiRenderer.DrawTextInBounds($"Selected: {GetSelectedPlayerName()}", new Rectangle(100, 154, Math.Max(560, _viewport.X - 220), 22), Color.White, uiRenderer.ScoreboardFont);
 
-            uiRenderer.DrawText("STARTING ROTATION", new Vector2(100, 200), Color.White, uiRenderer.UiMediumFont);
+            uiRenderer.DrawButton(string.Empty, rotationPanelBounds, new Color(38, 48, 56), Color.White);
+            uiRenderer.DrawButton(string.Empty, bullpenPanelBounds, new Color(38, 48, 56), Color.White);
+            uiRenderer.DrawText("STARTING ROTATION", new Vector2(rotationPanelBounds.X + 12, headerY), Color.White, uiRenderer.UiMediumFont);
             for (var slot = 1; slot <= 5; slot++)
             {
                 var bounds = GetRotationSlotBounds(slot);
@@ -168,7 +177,7 @@ public sealed class RotationScreen : GameScreen
                 uiRenderer.DrawButton(label, bounds, color, Color.White);
             }
 
-            uiRenderer.DrawText("BULLPEN / EXTRA ARMS", new Vector2(700, 200), Color.White, uiRenderer.UiMediumFont);
+            uiRenderer.DrawText("BULLPEN / EXTRA ARMS", new Vector2(bullpenPanelBounds.X + 12, headerY), Color.White, uiRenderer.UiMediumFont);
             var pageSize = 10;
             var startIndex = _pageIndex * pageSize;
             var visibleRows = bullpenRows.Skip(startIndex).Take(pageSize).ToList();
@@ -216,15 +225,58 @@ public sealed class RotationScreen : GameScreen
         uiRenderer.DrawText(pageLabel, new Vector2(labelX, labelY), Color.White, uiRenderer.ScoreboardFont);
     }
 
-    private Rectangle GetPreviousPageBounds() => new(700, 580, 120, 40);
+    private Rectangle GetPreviousPageBounds()
+    {
+        var bullpenPanelBounds = GetBullpenPanelBounds();
+        return new Rectangle(bullpenPanelBounds.X, bullpenPanelBounds.Bottom + 12, 120, 40);
+    }
 
-    private Rectangle GetNextPageBounds() => new(840, 580, 120, 40);
+    private Rectangle GetNextPageBounds()
+    {
+        var bullpenPanelBounds = GetBullpenPanelBounds();
+        return new Rectangle(bullpenPanelBounds.Right - 120, bullpenPanelBounds.Bottom + 12, 120, 40);
+    }
 
-    private Rectangle GetClearSlotBounds() => new(100, 440, 140, 40);
+    private Rectangle GetClearSlotBounds()
+    {
+        var rotationPanelBounds = GetRotationPanelBounds();
+        return new Rectangle(rotationPanelBounds.X, rotationPanelBounds.Bottom + 12, 140, 40);
+    }
 
-    private Rectangle GetRotationSlotBounds(int slot) => new(100, 240 + (slot - 1) * 34, 500, 30);
+    private Rectangle GetRotationPanelBounds()
+    {
+        var width = Math.Max(420, (_viewport.X - 180) / 2);
+        var height = Math.Max(220, _viewport.Y - 320);
+        return new Rectangle(60, 230, width, height);
+    }
 
-    private Rectangle GetBullpenRowBounds(int index) => new(700, 240 + index * 34, 460, 30);
+    private Rectangle GetBullpenPanelBounds()
+    {
+        var rotationPanelBounds = GetRotationPanelBounds();
+        var gap = 24;
+        return new Rectangle(rotationPanelBounds.Right + gap, rotationPanelBounds.Y, Math.Max(360, _viewport.X - rotationPanelBounds.Right - gap - 60), rotationPanelBounds.Height);
+    }
+
+    private int GetListRowHeight(int rowCount)
+    {
+        var panelHeight = GetBullpenPanelBounds().Height;
+        var spacing = 6;
+        return Math.Clamp((panelHeight - 58 - ((rowCount - 1) * spacing)) / rowCount, 28, 40);
+    }
+
+    private Rectangle GetRotationSlotBounds(int slot)
+    {
+        var panel = GetRotationPanelBounds();
+        var rowHeight = GetListRowHeight(5);
+        return new Rectangle(panel.X + 10, panel.Y + 14 + (slot - 1) * (rowHeight + 6), panel.Width - 20, rowHeight);
+    }
+
+    private Rectangle GetBullpenRowBounds(int index)
+    {
+        var panel = GetBullpenPanelBounds();
+        var rowHeight = GetListRowHeight(10);
+        return new Rectangle(panel.X + 10, panel.Y + 14 + index * (rowHeight + 6), panel.Width - 20, rowHeight);
+    }
 
     private bool TryStartDragFromRotationSlot(Point position)
     {

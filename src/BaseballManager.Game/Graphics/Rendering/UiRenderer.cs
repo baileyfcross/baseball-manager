@@ -83,6 +83,90 @@ public sealed class UiRenderer
         }
     }
 
+    public void DrawTextInBounds(string text, Rectangle bounds, Color color, SpriteFont? font = null, bool centerHorizontally = false)
+    {
+        if (_spriteBatch == null)
+            return;
+
+        var safeText = SanitizeText(text);
+        if (string.IsNullOrEmpty(safeText))
+        {
+            return;
+        }
+
+        var selectedFont = font ?? _uiSmallFont;
+        if (selectedFont != null)
+        {
+            var batchStarted = false;
+            try
+            {
+                _spriteBatch.Begin();
+                batchStarted = true;
+
+                var textSize = selectedFont.MeasureString(safeText);
+                var maxTextWidth = Math.Max(1f, bounds.Width - 4f);
+                var maxTextHeight = Math.Max(1f, bounds.Height - 2f);
+                var scaleX = textSize.X <= 0f ? 1f : Math.Min(1f, maxTextWidth / textSize.X);
+                var scaleY = textSize.Y <= 0f ? 1f : Math.Min(1f, maxTextHeight / textSize.Y);
+                var scale = Math.Min(scaleX, scaleY);
+                var scaledSize = textSize * scale;
+                var textX = centerHorizontally
+                    ? bounds.X + (bounds.Width - scaledSize.X) / 2f
+                    : bounds.X + 2f;
+                var textY = bounds.Y + (bounds.Height - scaledSize.Y) / 2f;
+                _spriteBatch.DrawString(selectedFont, safeText, new Vector2(textX, textY), color, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+            }
+            finally
+            {
+                if (batchStarted)
+                {
+                    _spriteBatch.End();
+                }
+            }
+        }
+        else
+        {
+            DrawSimpleText(safeText, new Vector2(bounds.X + 2, bounds.Y + 2), color);
+        }
+    }
+
+    public void DrawWrappedTextInBounds(string text, Rectangle bounds, Color color, SpriteFont? font = null, int maxLines = int.MaxValue, int lineSpacing = 2)
+    {
+        var safeText = SanitizeText(text);
+        if (string.IsNullOrWhiteSpace(safeText))
+        {
+            return;
+        }
+
+        var selectedFont = font ?? _uiSmallFont;
+        if (selectedFont == null)
+        {
+            DrawTextInBounds(safeText, bounds, color, font);
+            return;
+        }
+
+        var wrappedLines = WrapTextToWidth(safeText, selectedFont, Math.Max(1f, bounds.Width - 4f));
+        var lineHeight = Math.Max(12, selectedFont.LineSpacing - 2);
+        var drawnLines = 0;
+
+        foreach (var line in wrappedLines)
+        {
+            if (drawnLines >= maxLines)
+            {
+                break;
+            }
+
+            var lineBounds = new Rectangle(bounds.X, bounds.Y + drawnLines * (lineHeight + lineSpacing), bounds.Width, lineHeight);
+            if (lineBounds.Bottom > bounds.Bottom)
+            {
+                break;
+            }
+
+            DrawTextInBounds(line, lineBounds, color, selectedFont);
+            drawnLines++;
+        }
+    }
+
     public void DrawButton(string label, Rectangle bounds, Color backgroundColor, Color textColor, SpriteFont? font = null)
     {
         if (_spriteBatch == null || _pixelTexture == null)
@@ -129,6 +213,37 @@ public sealed class UiRenderer
                 _spriteBatch.End();
             }
         }
+    }
+
+    private static List<string> WrapTextToWidth(string text, SpriteFont font, float maxWidth)
+    {
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var lines = new List<string>();
+        var currentLine = string.Empty;
+
+        foreach (var word in words)
+        {
+            var candidate = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
+            if (font.MeasureString(candidate).X <= maxWidth)
+            {
+                currentLine = candidate;
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(currentLine))
+            {
+                lines.Add(currentLine);
+            }
+
+            currentLine = word;
+        }
+
+        if (!string.IsNullOrEmpty(currentLine))
+        {
+            lines.Add(currentLine);
+        }
+
+        return lines;
     }
 
     private void DrawSimpleText(string text, Vector2 position, Color color)

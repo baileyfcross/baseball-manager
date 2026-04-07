@@ -30,7 +30,7 @@ public sealed class RosterScreen : GameScreen
     private string? _sortColumnHiddenRatings;
     private bool _sortAscending = true;
     private readonly Dictionary<string, Rectangle> _headerHitBoxes = new();
-    private const int HeaderX = 100;
+    private Point _viewport = new(1280, 720);
     private const int HeaderY = 160;
     private const int HeaderHeight = 28;
     private const int PageSize = 14;
@@ -133,7 +133,7 @@ public sealed class RosterScreen : GameScreen
                     _nextPageButton.Click();
                 }
             }
-            else if (currentMouseState.Y >= HeaderY && currentMouseState.Y < HeaderY + HeaderHeight)
+            else if (currentMouseState.Y >= GetHeaderY() && currentMouseState.Y < GetHeaderY() + HeaderHeight)
             {
                 var clickedColumn = GetClickedColumn(currentMouseState.X);
                 if (!string.IsNullOrEmpty(clickedColumn))
@@ -148,6 +148,8 @@ public sealed class RosterScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
+        _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+
         _toggleViewButton.Label = _viewMode switch
         {
             RosterViewMode.Standard => "Season Stats",
@@ -169,9 +171,9 @@ public sealed class RosterScreen : GameScreen
             _ => "Roster"
         };
 
-        uiRenderer.DrawText(title, new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
-        uiRenderer.DrawText($"Active Filter: {GetFilterDescription(_filterMode)}", new Vector2(100, 120), Color.White, uiRenderer.ScoreboardFont);
+        uiRenderer.DrawText(title, new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"Active Filter: {GetFilterDescription(_filterMode)}", new Rectangle(168, 110, Math.Max(420, _viewport.X - 220), 20), Color.White, uiRenderer.ScoreboardFont);
 
         var rosterRows = GetRosterRows();
         var filteredRows = ApplyRosterFilter(rosterRows);
@@ -179,7 +181,7 @@ public sealed class RosterScreen : GameScreen
 
         if (sortedRows.Count == 0)
         {
-            uiRenderer.DrawText("No roster data found for the selected team with the current filter.", new Vector2(100, HeaderY + 20), Color.White);
+            uiRenderer.DrawText("No roster data found for the selected team with the current filter.", new Vector2(GetHeaderX(), GetHeaderY() + 20), Color.White);
         }
         else
         {
@@ -209,7 +211,7 @@ public sealed class RosterScreen : GameScreen
                             Truncate(row.PlayerName, 18),
                             row.PrimaryPosition,
                             note);
-                        uiRenderer.DrawText(line, new Vector2(100, 200 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
                     }
                     break;
 
@@ -233,7 +235,7 @@ public sealed class RosterScreen : GameScreen
                             ratings.ArmRating,
                             ratings.PitchingRating,
                             ratings.DurabilityRating);
-                        uiRenderer.DrawText(line, new Vector2(100, 200 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
                     }
                     break;
 
@@ -251,7 +253,7 @@ public sealed class RosterScreen : GameScreen
                             row.Age,
                             row.LineupSlot?.ToString() ?? "-",
                             row.RotationSlot?.ToString() ?? "-");
-                        uiRenderer.DrawText(line, new Vector2(100, 200 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
                     }
                     break;
             }
@@ -289,14 +291,14 @@ public sealed class RosterScreen : GameScreen
                 stats.OpsDisplay,
                 stats.EarnedRunAverageDisplay,
                 stats.WinLossDisplay);
-            uiRenderer.DrawText(line, new Vector2(100, 200 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+            uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
         }
     }
 
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
     {
         var maxPage = Math.Max(0, (int)Math.Ceiling(totalRows / (double)pageSize) - 1);
-        uiRenderer.DrawText($"Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(100, 600), Color.White, uiRenderer.ScoreboardFont);
+        uiRenderer.DrawText($"Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(GetHeaderX(), GetPreviousPageBounds().Y - 26), Color.White, uiRenderer.ScoreboardFont);
 
         var previousBounds = GetPreviousPageBounds();
         var nextBounds = GetNextPageBounds();
@@ -304,15 +306,21 @@ public sealed class RosterScreen : GameScreen
         uiRenderer.DrawButton(_nextPageButton.Label, nextBounds, nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
     }
 
-    private Rectangle GetBackButtonBounds() => new(1080, 40, 140, 44);
+    private int GetHeaderX() => Math.Max(40, (_viewport.X - 1080) / 2);
 
-    private Rectangle GetToggleViewBounds() => new(860, 40, 190, 44);
+    private int GetHeaderY() => Math.Max(HeaderY, (_viewport.Y - 560) / 2);
 
-    private Rectangle GetFilterButtonBounds() => new(610, 40, 230, 44);
+    private int GetRowY(int index) => GetHeaderY() + 40 + (index * 28);
 
-    private Rectangle GetPreviousPageBounds() => new(100, 640, 120, 40);
+    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
-    private Rectangle GetNextPageBounds() => new(240, 640, 120, 40);
+    private Rectangle GetToggleViewBounds() => new(_viewport.X - 270, 40, 210, 44);
+
+    private Rectangle GetFilterButtonBounds() => new(_viewport.X - 520, 40, 230, 44);
+
+    private Rectangle GetPreviousPageBounds() => new(GetHeaderX(), _viewport.Y - 76, 120, 40);
+
+    private Rectangle GetNextPageBounds() => new(GetHeaderX() + 140, _viewport.Y - 76, 120, 40);
 
     private void DrawFilterDropdown(UiRenderer uiRenderer)
     {
@@ -391,7 +399,7 @@ public sealed class RosterScreen : GameScreen
         AppendStatic(headerBuilder, "  ");
         AppendColumn(headerBuilder, uiRenderer, "ROT", 3, RosterViewMode.Standard);
 
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(HeaderX, HeaderY), Color.White, uiRenderer.ScoreboardFont);
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
     }
 
     private void DrawSeasonStatsHeader(UiRenderer uiRenderer, RosterViewMode mode)
@@ -415,7 +423,7 @@ public sealed class RosterScreen : GameScreen
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "W-L", 5, mode);
 
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(HeaderX, HeaderY), Color.White, uiRenderer.ScoreboardFont);
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
     }
 
     private void DrawScoutNotesHeader(UiRenderer uiRenderer)
@@ -429,7 +437,7 @@ public sealed class RosterScreen : GameScreen
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "REPORT", 42, RosterViewMode.ScoutNotes);
 
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(HeaderX, HeaderY), Color.White, uiRenderer.ScoreboardFont);
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
     }
 
     private void DrawHiddenRatingsHeader(UiRenderer uiRenderer)
@@ -461,7 +469,7 @@ public sealed class RosterScreen : GameScreen
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "DUR", 3, RosterViewMode.HiddenRatings);
 
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(HeaderX, HeaderY), Color.White, uiRenderer.ScoreboardFont);
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
     }
 
     private static void AppendStatic(System.Text.StringBuilder builder, string value)
@@ -475,9 +483,9 @@ public sealed class RosterScreen : GameScreen
         var visibleLabel = GetDisplayColumnLabel(columnName, mode);
         var paddedColumn = visibleLabel.PadRight(width);
 
-        var left = HeaderX + (int)MathF.Floor(MeasureTextWidth(prefix, uiRenderer.ScoreboardFont));
+        var left = GetHeaderX() + (int)MathF.Floor(MeasureTextWidth(prefix, uiRenderer.ScoreboardFont));
         var labelWidth = (int)MathF.Ceiling(MeasureTextWidth(visibleLabel, uiRenderer.ScoreboardFont));
-        _headerHitBoxes[columnName] = new Rectangle(left, HeaderY, Math.Max(1, labelWidth), HeaderHeight);
+        _headerHitBoxes[columnName] = new Rectangle(left, GetHeaderY(), Math.Max(1, labelWidth), HeaderHeight);
 
         builder.Append(paddedColumn);
     }

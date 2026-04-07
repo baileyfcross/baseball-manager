@@ -12,15 +12,15 @@ public sealed class CoachingStaffScreen : GameScreen
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly ButtonControl _previousCoachButton;
-    private readonly ButtonControl _nextCoachButton;
-    private readonly Rectangle _backButtonBounds = new(1080, 40, 140, 44);
-    private readonly Rectangle _previousCoachBounds = new(720, 320, 160, 40);
-    private readonly Rectangle _nextCoachBounds = new(900, 320, 160, 40);
+    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
     private string _selectedRole = "Manager";
-    private string _statusMessage = "Select a role and cycle through candidates to refresh your staff.";
+    private string _statusMessage = "Select a role, then drag a coach from the list onto that role to make the change.";
+    private bool _isDraggingCandidate;
+    private Point _viewport = new(1280, 720);
+    private CoachProfileView? _draggedCandidate;
+    private Point _dragPosition;
 
     public CoachingStaffScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -31,21 +31,15 @@ public sealed class CoachingStaffScreen : GameScreen
             Label = "Back",
             OnClick = () => _screenManager.TransitionTo(nameof(FranchiseHubScreen))
         };
-        _previousCoachButton = new ButtonControl
-        {
-            Label = "Prev Coach",
-            OnClick = () => ChangeCoach(-1)
-        };
-        _nextCoachButton = new ButtonControl
-        {
-            Label = "Next Coach",
-            OnClick = () => ChangeCoach(1)
-        };
     }
 
     public override void OnEnter()
     {
         _ignoreClicksUntilRelease = true;
+        _isDraggingCandidate = false;
+        _draggedCandidate = null;
+        _dragPosition = Point.Zero;
+
         var coaches = _franchiseSession.GetCoachingStaff();
         if (coaches.Count > 0 && coaches.All(coach => !string.Equals(coach.Role, _selectedRole, StringComparison.OrdinalIgnoreCase)))
         {
@@ -56,6 +50,9 @@ public sealed class CoachingStaffScreen : GameScreen
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
         var currentMouseState = inputManager.MouseState;
+        var mousePosition = currentMouseState.Position;
+        var isPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
+        var isRelease = _previousMouseState.LeftButton == ButtonState.Pressed && currentMouseState.LeftButton == ButtonState.Released;
 
         if (_ignoreClicksUntilRelease)
         {
@@ -68,20 +65,19 @@ public sealed class CoachingStaffScreen : GameScreen
             return;
         }
 
-        if (_previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed)
+        if (_isDraggingCandidate)
         {
-            var mousePosition = currentMouseState.Position;
+            _dragPosition = mousePosition;
+        }
+
+        if (isPress)
+        {
             if (_backButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
-            else if (_previousCoachBounds.Contains(mousePosition))
+            else if (TryStartDragFromCandidate(mousePosition))
             {
-                _previousCoachButton.Click();
-            }
-            else if (_nextCoachBounds.Contains(mousePosition))
-            {
-                _nextCoachButton.Click();
             }
             else
             {
@@ -89,76 +85,94 @@ public sealed class CoachingStaffScreen : GameScreen
             }
         }
 
+        if (isRelease && _isDraggingCandidate)
+        {
+            TryDropCandidate(mousePosition);
+            _isDraggingCandidate = false;
+            _draggedCandidate = null;
+        }
+
         _previousMouseState = currentMouseState;
     }
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
+        _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+
         var coaches = _franchiseSession.GetCoachingStaff();
         var selectedCoach = coaches.FirstOrDefault(coach => string.Equals(coach.Role, _selectedRole, StringComparison.OrdinalIgnoreCase))
             ?? coaches.FirstOrDefault();
+        var candidates = _franchiseSession.GetCoachCandidates(_selectedRole);
+        var mousePosition = Mouse.GetState().Position;
+        var selectedCoachPanelBounds = GetSelectedCoachPanelBounds();
+        var candidatePanelBounds = GetCandidatePanelBounds();
+        var selectedPanelColor = _isDraggingCandidate && _draggedCandidate != null && string.Equals(_draggedCandidate.Role, _selectedRole, StringComparison.OrdinalIgnoreCase)
+            ? new Color(70, 84, 42)
+            : new Color(38, 48, 56);
 
-        uiRenderer.DrawText("Coaching Staff", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
+        uiRenderer.DrawText("Coaching Staff", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(
+            "Select a role on the left, then drag a coach from the list onto that role to hire them.",
+            new Rectangle(168, 112, 560, 42),
+            Color.White,
+            uiRenderer.UiSmallFont,
+            2);
 
-        var introY = 120f;
-        foreach (var introLine in WrapText("Swap voices and specialties here, then visit scouting to hear how each coach sizes up players.", 88))
-        {
-            uiRenderer.DrawText(introLine, new Vector2(100, introY), Color.White, uiRenderer.ScoreboardFont);
-            introY += 18f;
-        }
-
-        uiRenderer.DrawText("CURRENT STAFF", new Vector2(100, 184), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText("CURRENT STAFF", new Vector2(68, 176), Color.White, uiRenderer.UiMediumFont);
         for (var i = 0; i < coaches.Count; i++)
         {
             var coach = coaches[i];
             var bounds = GetRoleBounds(i);
-            var isHovered = bounds.Contains(Mouse.GetState().Position);
+            var isHovered = bounds.Contains(mousePosition);
             var isSelected = string.Equals(_selectedRole, coach.Role, StringComparison.OrdinalIgnoreCase);
-            var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
+            var isDropTarget = _isDraggingCandidate && _draggedCandidate != null && bounds.Contains(_dragPosition) && string.Equals(_draggedCandidate.Role, coach.Role, StringComparison.OrdinalIgnoreCase);
+            var color = isDropTarget
+                ? Color.Goldenrod
+                : (isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray));
             uiRenderer.DrawButton($"{coach.Role}: {coach.Name}", bounds, color, Color.White);
         }
 
-        uiRenderer.DrawText("SELECTED COACH", new Vector2(720, 184), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText("SELECTED ROLE", new Vector2(selectedCoachPanelBounds.X + 16, 176), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawButton(string.Empty, selectedCoachPanelBounds, selectedPanelColor, Color.White);
         if (selectedCoach != null)
         {
-            uiRenderer.DrawText(selectedCoach.Name, new Vector2(720, 210), Color.Goldenrod, uiRenderer.UiMediumFont);
-            uiRenderer.DrawText($"Role: {selectedCoach.Role}", new Vector2(720, 246), Color.White, uiRenderer.ScoreboardFont);
-            uiRenderer.DrawText($"Specialty: {selectedCoach.Specialty}", new Vector2(720, 270), Color.White, uiRenderer.ScoreboardFont);
-            uiRenderer.DrawText($"Voice: {selectedCoach.Voice}", new Vector2(720, 294), Color.White, uiRenderer.ScoreboardFont);
+            uiRenderer.DrawTextInBounds($"Current {selectedCoach.Role}", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 10, 220, 16), Color.Gold, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(selectedCoach.Name, new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 30, selectedCoachPanelBounds.Width - 32, 22), Color.White, uiRenderer.UiMediumFont);
+            uiRenderer.DrawTextInBounds($"Specialty: {selectedCoach.Specialty}", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 60, selectedCoachPanelBounds.Width - 32, 16), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"Voice: {selectedCoach.Voice}", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 82, selectedCoachPanelBounds.Width - 32, 16), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawWrappedTextInBounds("Drop a coach here or on the matching role row to make the move.", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 108, selectedCoachPanelBounds.Width - 32, 36), Color.White, uiRenderer.UiSmallFont, 2);
         }
 
-        uiRenderer.DrawButton(_previousCoachButton.Label, _previousCoachBounds, _previousCoachBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_nextCoachButton.Label, _nextCoachBounds, _nextCoachBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawText($"AVAILABLE {_selectedRole.ToUpperInvariant()} OPTIONS", new Vector2(candidatePanelBounds.X + 16, candidatePanelBounds.Y - 26), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawButton(string.Empty, candidatePanelBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawTextInBounds("Current coach is highlighted in green. Drag any option onto the role to hire them.", new Rectangle(candidatePanelBounds.X + 12, candidatePanelBounds.Y + 8, candidatePanelBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
 
-        var infoLines = new[]
+        for (var i = 0; i < candidates.Count; i++)
         {
-            "Manager: gives the broadest read on who can help your club right now.",
-            "Hitting Coach: leans into contact, patience, and raw pop.",
-            "Pitching Coach: looks hard at stuff, stamina, and arm strength.",
-            "Bench Coach: notices range, instincts, and late-game utility.",
-            "Scouting Director: blends ceiling, floor, and long-term fit."
-        };
-
-        uiRenderer.DrawText("WHAT EACH ROLE LISTENS FOR", new Vector2(720, 390), Color.White, uiRenderer.UiMediumFont);
-        for (var i = 0; i < infoLines.Length; i++)
-        {
-            uiRenderer.DrawText(infoLines[i], new Vector2(720, 426 + (i * 24)), Color.White, uiRenderer.ScoreboardFont);
+            var candidate = candidates[i];
+            var bounds = GetCandidateBounds(i);
+            var isHovered = bounds.Contains(mousePosition);
+            var isCurrentCoach = selectedCoach != null && IsSameCoach(candidate, selectedCoach);
+            var isDraggingThisCoach = _isDraggingCandidate && _draggedCandidate != null && IsSameCoach(candidate, _draggedCandidate);
+            var color = isDraggingThisCoach
+                ? Color.Goldenrod
+                : (isCurrentCoach ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray));
+            var label = $"{Truncate(candidate.Name, 18)} | {Truncate(candidate.Specialty, 16)} | {candidate.Voice}";
+            uiRenderer.DrawButton(label, bounds, color, Color.White, uiRenderer.UiSmallFont);
         }
 
-        var statusY = 632f;
-        foreach (var statusLine in WrapText($"Status: {_statusMessage}", 92).Take(2))
+        var statusBounds = new Rectangle(68, _viewport.Y - 110, Math.Max(540, _viewport.X - 136), 68);
+        uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawTextInBounds("Staff Update", new Rectangle(statusBounds.X + 12, statusBounds.Y + 6, 180, 16), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 12, statusBounds.Y + 24, statusBounds.Width - 24, statusBounds.Height - 28), Color.White, uiRenderer.UiSmallFont, 2);
+
+        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+
+        if (_isDraggingCandidate && _draggedCandidate != null)
         {
-            uiRenderer.DrawText(statusLine, new Vector2(100, statusY), Color.White, uiRenderer.ScoreboardFont);
-            statusY += 18f;
+            uiRenderer.DrawText($"Dragging: {Truncate(_draggedCandidate.Name, 24)}", new Vector2(_dragPosition.X + 16, _dragPosition.Y + 16), Color.Gold, uiRenderer.UiSmallFont);
         }
-
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, _backButtonBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
-    }
-
-    private void ChangeCoach(int direction)
-    {
-        _franchiseSession.ChangeCoach(_selectedRole, direction, out _statusMessage);
     }
 
     private bool TrySelectRole(Point mousePosition)
@@ -172,45 +186,102 @@ public sealed class CoachingStaffScreen : GameScreen
             }
 
             _selectedRole = coaches[i].Role;
-            _statusMessage = $"Selected {coaches[i].Name} for the {coaches[i].Role} spot.";
+            _statusMessage = $"Viewing the {_selectedRole} role. Drag a coach from the list to make a change.";
             return true;
         }
 
         return false;
     }
 
-    private static Rectangle GetRoleBounds(int index) => new(100, 224 + (index * 50), 500, 42);
-
-    private static IEnumerable<string> WrapText(string text, int maxCharacters)
+    private bool TryStartDragFromCandidate(Point mousePosition)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        var candidates = _franchiseSession.GetCoachCandidates(_selectedRole);
+        for (var i = 0; i < candidates.Count; i++)
         {
-            yield break;
-        }
-
-        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var currentLine = string.Empty;
-
-        foreach (var word in words)
-        {
-            var candidate = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
-            if (candidate.Length <= maxCharacters)
+            if (!GetCandidateBounds(i).Contains(mousePosition))
             {
-                currentLine = candidate;
                 continue;
             }
 
-            if (!string.IsNullOrEmpty(currentLine))
+            _draggedCandidate = candidates[i];
+            _isDraggingCandidate = true;
+            _dragPosition = mousePosition;
+            _statusMessage = $"Dragging {candidates[i].Name} for the {_selectedRole} opening.";
+            return true;
+        }
+
+        return false;
+    }
+
+    private void TryDropCandidate(Point mousePosition)
+    {
+        if (_draggedCandidate == null)
+        {
+            return;
+        }
+
+        var coaches = _franchiseSession.GetCoachingStaff();
+        for (var i = 0; i < coaches.Count; i++)
+        {
+            var coach = coaches[i];
+            if (!GetRoleBounds(i).Contains(mousePosition))
             {
-                yield return currentLine;
+                continue;
             }
 
-            currentLine = word;
+            if (!string.Equals(coach.Role, _draggedCandidate.Role, StringComparison.OrdinalIgnoreCase))
+            {
+                _statusMessage = $"That coach belongs on the {_draggedCandidate.Role} list. Select that role first to make the move.";
+                return;
+            }
+
+            _selectedRole = coach.Role;
+            _franchiseSession.AssignCoach(coach.Role, _draggedCandidate.Name, _draggedCandidate.Specialty, _draggedCandidate.Voice, out _statusMessage);
+            return;
         }
 
-        if (!string.IsNullOrEmpty(currentLine))
+        if (GetSelectedCoachPanelBounds().Contains(mousePosition))
         {
-            yield return currentLine;
+            _franchiseSession.AssignCoach(_selectedRole, _draggedCandidate.Name, _draggedCandidate.Specialty, _draggedCandidate.Voice, out _statusMessage);
         }
+    }
+
+    private static bool IsSameCoach(CoachProfileView left, CoachProfileView right)
+    {
+        return string.Equals(left.Role, right.Role, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(left.Specialty, right.Specialty, StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(left.Voice, right.Voice, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Truncate(string value, int maxLength)
+    {
+        return value.Length <= maxLength ? value : value[..maxLength];
+    }
+
+    private Rectangle GetRoleBounds(int index)
+    {
+        var leftPanelWidth = Math.Clamp((_viewport.X / 2) - 100, 360, 560);
+        return new Rectangle(68, 210 + (index * 44), leftPanelWidth, 34);
+    }
+
+    private Rectangle GetSelectedCoachPanelBounds()
+    {
+        var roleBounds = GetRoleBounds(0);
+        var panelX = roleBounds.Right + 36;
+        var panelWidth = Math.Max(320, _viewport.X - panelX - 68);
+        return new Rectangle(panelX, 204, panelWidth, 152);
+    }
+
+    private Rectangle GetCandidatePanelBounds()
+    {
+        var selectedPanel = GetSelectedCoachPanelBounds();
+        return new Rectangle(selectedPanel.X, 414, selectedPanel.Width, Math.Max(160, _viewport.Y - 534));
+    }
+
+    private Rectangle GetCandidateBounds(int index)
+    {
+        var panel = GetCandidatePanelBounds();
+        return new Rectangle(panel.X + 16, panel.Y + 32 + (index * 24), panel.Width - 32, 22);
     }
 }

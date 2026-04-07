@@ -15,7 +15,7 @@ public sealed class LiveMatchScreen : GameScreen
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly LiveMatchPresenter _presenter;
-    private readonly Rectangle _backButtonBounds = new(24, 20, 120, 42);
+    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private readonly LiveMatchHudRenderer _hudRenderer = new();
     private FieldRenderer? _fieldRenderer;
     private KeyboardState _previousKeyboardState = default;
@@ -133,9 +133,9 @@ public sealed class LiveMatchScreen : GameScreen
 
         if (_fatalErrorMessage != null)
         {
-            uiRenderer.DrawText("Live match failed to load.", new Vector2(120, 140), Color.White, uiRenderer.UiMediumFont);
-            uiRenderer.DrawText(_fatalErrorMessage, new Vector2(120, 190), Color.Orange);
-            uiRenderer.DrawText("Press Esc or click Back to return.", new Vector2(120, 230), Color.White);
+            uiRenderer.DrawText("Live match failed to load.", new Vector2(168, 120), Color.White, uiRenderer.UiMediumFont);
+            uiRenderer.DrawWrappedTextInBounds(_fatalErrorMessage, new Rectangle(168, 166, 700, 48), Color.Orange, uiRenderer.UiSmallFont, 2);
+            uiRenderer.DrawTextInBounds("Press Esc or click Back to return.", new Rectangle(168, 220, 360, 20), Color.White, uiRenderer.UiSmallFont);
         }
 
         uiRenderer.DrawButton("Back", _backButtonBounds, isHovered ? Color.DarkSlateBlue : Color.SlateGray, Color.White);

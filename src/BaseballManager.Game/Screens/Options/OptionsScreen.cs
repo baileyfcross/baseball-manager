@@ -78,8 +78,8 @@ public sealed class OptionsScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        uiRenderer.DrawText("Options", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawText($"Current Team: {_franchiseSession.SelectedTeamName}", new Vector2(100, 96), Color.White);
+        uiRenderer.DrawText("Options", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds($"Current Team: {_franchiseSession.SelectedTeamName}", new Rectangle(168, 82, 380, 22), Color.White, uiRenderer.UiSmallFont);
 
         var contentLeft = Math.Max(80, (_viewport.X - 680) / 2);
         var mousePosition = Mouse.GetState().Position;
@@ -152,7 +152,9 @@ public sealed class OptionsScreen : GameScreen
                 : Color.DimGray,
             Color.White);
 
-        uiRenderer.DrawText(_statusMessage, new Vector2(contentLeft, _viewport.Y - 110), Color.White);
+        var statusBounds = new Rectangle(contentLeft, _viewport.Y - 112, 540, 38);
+        uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 10, statusBounds.Y + 5, statusBounds.Width - 20, statusBounds.Height - 10), Color.White, uiRenderer.ScoreboardFont, 2);
         uiRenderer.DrawButton("Back", backBounds, backBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
     }
 
@@ -367,7 +369,7 @@ public sealed class OptionsScreen : GameScreen
         return _showRealTimeClock ? "On" : "Off";
     }
 
-    private Rectangle GetBackButtonBounds() => new(40, _viewport.Y - 70, 140, 44);
+    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
     private static Rectangle GetWindowModeLeftBounds(int contentLeft) => new(contentLeft + 180, 160, 44, 42);
 
@@ -393,9 +395,9 @@ public sealed class OptionsScreen : GameScreen
 
     private static Rectangle GetClockRightBounds(int contentLeft) => new(contentLeft + 488, 370, 44, 42);
 
-    private static Rectangle GetDeleteCurrentTeamBounds(int contentLeft) => new(contentLeft + 180, 440, 260, 48);
+    private static Rectangle GetDeleteCurrentTeamBounds(int contentLeft) => new(contentLeft + 180, 430, 260, 44);
 
-    private static Rectangle GetDeleteQuickMatchBounds(int contentLeft) => new(contentLeft + 180, 505, 260, 48);
+    private static Rectangle GetDeleteQuickMatchBounds(int contentLeft) => new(contentLeft + 180, 486, 260, 44);
 
-    private static Rectangle GetDeleteAllBounds(int contentLeft) => new(contentLeft + 180, 570, 260, 48);
+    private static Rectangle GetDeleteAllBounds(int contentLeft) => new(contentLeft + 180, 542, 260, 44);
 }

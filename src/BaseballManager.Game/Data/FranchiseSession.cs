@@ -90,6 +90,113 @@ public sealed class FranchiseSession
         Save();
     }
 
+    public TeamPracticeFocus GetPracticeFocus(DateTime? date = null)
+    {
+        if (SelectedTeam == null)
+        {
+            return TeamPracticeFocus.Balanced;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        if (date.HasValue && teamState.PracticeFocusOverrides.TryGetValue(BuildPracticeDateKey(date.Value), out var dateSpecificFocus))
+        {
+            return dateSpecificFocus;
+        }
+
+        return teamState.PracticeFocus;
+    }
+
+    public bool HasCustomPracticeFocus(DateTime date)
+    {
+        if (SelectedTeam == null)
+        {
+            return false;
+        }
+
+        return GetOrCreateTeamState(SelectedTeam.Name).PracticeFocusOverrides.ContainsKey(BuildPracticeDateKey(date));
+    }
+
+    public string CyclePracticeFocus(int direction, DateTime? targetDate = null)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a franchise team before changing the practice plan.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        var focusOptions = Enum.GetValues<TeamPracticeFocus>();
+        var currentFocus = targetDate.HasValue ? GetPracticeFocus(targetDate.Value) : teamState.PracticeFocus;
+        var currentIndex = Array.IndexOf(focusOptions, currentFocus);
+        if (currentIndex < 0)
+        {
+            currentIndex = 0;
+        }
+
+        var nextIndex = (currentIndex + direction % focusOptions.Length + focusOptions.Length) % focusOptions.Length;
+        var nextFocus = focusOptions[nextIndex];
+
+        if (targetDate.HasValue)
+        {
+            var practiceDateKey = BuildPracticeDateKey(targetDate.Value);
+            if (nextFocus == teamState.PracticeFocus)
+            {
+                teamState.PracticeFocusOverrides.Remove(practiceDateKey);
+            }
+            else
+            {
+                teamState.PracticeFocusOverrides[practiceDateKey] = nextFocus;
+            }
+
+            Save();
+            return $"Practice plan for {targetDate.Value:ddd, MMM d} set to {GetPracticeFocusLabel(nextFocus)}.";
+        }
+
+        teamState.PracticeFocus = nextFocus;
+        foreach (var practiceDateKey in teamState.PracticeFocusOverrides.Where(entry => entry.Value == nextFocus).Select(entry => entry.Key).ToList())
+        {
+            teamState.PracticeFocusOverrides.Remove(practiceDateKey);
+        }
+
+        Save();
+        return $"Default practice focus set to {GetPracticeFocusLabel(teamState.PracticeFocus)}.";
+    }
+
+    public static string GetPracticeFocusLabel(TeamPracticeFocus focus)
+    {
+        return focus switch
+        {
+            TeamPracticeFocus.Hitting => "Hitting",
+            TeamPracticeFocus.Pitching => "Pitching",
+            TeamPracticeFocus.Defense => "Defense",
+            TeamPracticeFocus.Baserunning => "Baserunning",
+            TeamPracticeFocus.Recovery => "Recovery",
+            _ => "Balanced"
+        };
+    }
+
+    public static string GetPracticeFocusDescription(TeamPracticeFocus focus, bool lightWorkout)
+    {
+        return focus switch
+        {
+            TeamPracticeFocus.Hitting => lightWorkout
+                ? "Short cage work, timing drills, and situational swings before the next series."
+                : "Extended batting practice, situational hitting, and lineup timing work for the whole club.",
+            TeamPracticeFocus.Pitching => lightWorkout
+                ? "Bullpen touch work, command check-ins, and scouting prep for the staff."
+                : "Bullpens, pitch-design work, and command sessions for starters and relievers.",
+            TeamPracticeFocus.Defense => lightWorkout
+                ? "Crisp infield reps, cutoff reminders, and glove-work refreshers."
+                : "Full defensive workout with relay drills, positioning reps, and team fundamentals.",
+            TeamPracticeFocus.Baserunning => lightWorkout
+                ? "Lead timing, jump reads, and first-step acceleration work."
+                : "Aggressive baserunning practice focused on reads, secondary leads, and taking extra bases.",
+            TeamPracticeFocus.Recovery => "Mobility, treatment, film review, and a lighter maintenance workload.",
+            _ => lightWorkout
+                ? "A short all-around tune-up with cage work, defense, and bullpen maintenance."
+                : "A balanced full-team workout covering hitting, defense, bullpen work, and conditioning."
+        };
+    }
+
     public DateTime GetCurrentFranchiseDate()
     {
         EnsureFranchiseDateInitialized();
@@ -182,6 +289,58 @@ public sealed class FranchiseSession
             .ToList();
     }
 
+    public IReadOnlyList<CoachProfileView> GetCoachCandidates(string role)
+    {
+        if (SelectedTeam == null || string.IsNullOrWhiteSpace(role))
+        {
+            return [];
+        }
+
+        return BuildCoachCandidatePool(SelectedTeam.Name, role)
+            .Select(candidate => new CoachProfileView(candidate.Role, candidate.Name, candidate.Specialty, candidate.Voice))
+            .ToList();
+    }
+
+    public bool AssignCoach(string role, string coachName, string specialty, string voice, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before changing your staff.";
+            return false;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureCoachingStaffInitialized(teamState, SelectedTeam.Name);
+
+        var coach = teamState.CoachingStaff.FirstOrDefault(entry =>
+            string.Equals(entry.Role, role, StringComparison.OrdinalIgnoreCase));
+
+        if (coach == null)
+        {
+            statusMessage = "That coaching role is not available right now.";
+            return false;
+        }
+
+        var replacement = BuildCoachCandidatePool(SelectedTeam.Name, role).FirstOrDefault(candidate =>
+            string.Equals(candidate.Name, coachName, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(candidate.Specialty, specialty, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(candidate.Voice, voice, StringComparison.OrdinalIgnoreCase));
+
+        if (replacement == null)
+        {
+            statusMessage = "That coach is not available for this role right now.";
+            return false;
+        }
+
+        coach.Name = replacement.Name;
+        coach.Specialty = replacement.Specialty;
+        coach.Voice = replacement.Voice;
+        Save();
+
+        statusMessage = $"{coach.Name} is now your {coach.Role.ToLowerInvariant()}.";
+        return true;
+    }
+
     public bool ChangeCoach(string role, int direction, out string statusMessage)
     {
         if (SelectedTeam == null)
@@ -222,14 +381,7 @@ public sealed class FranchiseSession
         var step = direction >= 0 ? 1 : -1;
         var nextIndex = (currentIndex + step + candidatePool.Count) % candidatePool.Count;
         var replacement = candidatePool[nextIndex];
-
-        coach.Name = replacement.Name;
-        coach.Specialty = replacement.Specialty;
-        coach.Voice = replacement.Voice;
-        Save();
-
-        statusMessage = $"{coach.Name} is now your {coach.Role.ToLowerInvariant()}.";
-        return true;
+        return AssignCoach(role, replacement.Name, replacement.Specialty, replacement.Voice, out statusMessage);
     }
 
     public IReadOnlyList<ScoutingPlayerCard> GetScoutingBoardPlayers()
@@ -813,6 +965,7 @@ public sealed class FranchiseSession
             _saveState.Teams[teamName] = teamState;
         }
 
+        teamState.PracticeFocusOverrides ??= new Dictionary<string, TeamPracticeFocus>(StringComparer.OrdinalIgnoreCase);
         return teamState;
     }
 
@@ -1857,6 +2010,11 @@ public sealed class FranchiseSession
     {
         var normalized = Math.Clamp((rating - 1d) / 98d, 0d, 1d);
         return lowValue + ((highValue - lowValue) * normalized);
+    }
+
+    private static string BuildPracticeDateKey(DateTime date)
+    {
+        return date.Date.ToString("yyyy-MM-dd");
     }
 
     private void Save()

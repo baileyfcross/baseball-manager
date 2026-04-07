@@ -80,16 +80,16 @@ public sealed class TeamSelectionScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        uiRenderer.DrawText("Select A Team", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText("Select A Team", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
 
         if (!_leagueData.HasData)
         {
-            uiRenderer.DrawText("No imported team data found in data/imports/generated.", new Vector2(100, 120), Color.White);
+            uiRenderer.DrawTextInBounds("No imported team data found in data/imports/generated.", new Rectangle(168, 110, 520, 24), Color.White, uiRenderer.UiSmallFont);
             DrawBackButton(uiRenderer);
             return;
         }
 
-        uiRenderer.DrawText($"Available Teams: {_leagueData.Teams.Count}", new Vector2(100, 100), Color.White);
+        uiRenderer.DrawTextInBounds($"Available Teams: {_leagueData.Teams.Count}", new Rectangle(168, 84, 260, 22), Color.White, uiRenderer.UiSmallFont);
 
         for (var i = 0; i < _leagueData.Teams.Count; i++)
         {
@@ -127,7 +127,7 @@ public sealed class TeamSelectionScreen : GameScreen
         return null;
     }
 
-    private Rectangle GetBackButtonBounds() => new(40, _viewport.Y - 70, 140, 44);
+    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
     private Rectangle GetTeamButtonBounds(int index)
     {

@@ -23,10 +23,8 @@ public sealed class FranchiseHubScreen : GameScreen
     private Point _viewport = new(1280, 720);
     private string _statusMessage = "";
 
-    private const int ButtonWidth = 220;
-    private const int ButtonHeight = 42;
-    private const int ButtonSpacing = 12;
-    private const int StartY = 170;
+    private const int ButtonWidth = 240;
+    private const int ButtonSpacing = 10;
 
     public FranchiseHubScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -42,7 +40,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _buttons.Add(new ButtonControl { Label = "Roster", OnClick = () => _screenManager.TransitionTo(nameof(RosterScreen)) });
         _buttons.Add(new ButtonControl { Label = "Lineup", OnClick = () => _screenManager.TransitionTo(nameof(LineupScreen)) });
         _buttons.Add(new ButtonControl { Label = "Rotation", OnClick = () => _screenManager.TransitionTo(nameof(RotationScreen)) });
-        _buttons.Add(new ButtonControl { Label = "Schedule", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
         _buttons.Add(new ButtonControl { Label = "Scouting / Transfers", OnClick = () => _screenManager.TransitionTo(nameof(ScoutingScreen)) });
         _buttons.Add(new ButtonControl { Label = "Coaching Staff", OnClick = () => _screenManager.TransitionTo(nameof(CoachingStaffScreen)) });
         _buttons.Add(new ButtonControl { Label = "Main Menu", OnClick = () => _screenManager.TransitionTo(nameof(MainMenuScreen)) });
@@ -50,10 +48,27 @@ public sealed class FranchiseHubScreen : GameScreen
 
     private Rectangle GetButtonBounds(int index, int viewportWidth, int viewportHeight)
     {
-        var centerX = viewportWidth / 2;
-        var y = StartY + index * (ButtonHeight + ButtonSpacing);
-        var width = GetColumnButtonWidth();
-        return new Rectangle(centerX - width / 2, y, width, ButtonHeight);
+        var panelBounds = GetMenuPanelBounds(viewportWidth, viewportHeight);
+        var buttonHeight = GetButtonHeight(viewportHeight);
+        var width = Math.Min(panelBounds.Width - 24, GetColumnButtonWidth());
+        var x = panelBounds.X + ((panelBounds.Width - width) / 2);
+        var y = panelBounds.Y + 18 + index * (buttonHeight + ButtonSpacing);
+        return new Rectangle(x, y, width, buttonHeight);
+    }
+
+    private Rectangle GetMenuPanelBounds(int viewportWidth, int viewportHeight)
+    {
+        var buttonHeight = GetButtonHeight(viewportHeight);
+        var totalHeight = (_buttons.Count * buttonHeight) + (Math.Max(0, _buttons.Count - 1) * ButtonSpacing) + 36;
+        var width = Math.Clamp(viewportWidth / 3, 320, 460);
+        var x = (viewportWidth - width) / 2;
+        var y = Math.Max(128, (viewportHeight - totalHeight - 120) / 2);
+        return new Rectangle(x, y, width, totalHeight);
+    }
+
+    private static int GetButtonHeight(int viewportHeight)
+    {
+        return Math.Clamp(viewportHeight / 16, 38, 50);
     }
 
     private int GetColumnButtonWidth()
@@ -99,7 +114,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _ignoreClicksUntilRelease = true;
         if (string.IsNullOrEmpty(_statusMessage))
         {
-            _statusMessage = "Use scouting for coach opinions and transfers, or jump straight into the next game.";
+            _statusMessage = "Use the schedule screen for a monthly game-and-practice calendar, or jump straight into the next game.";
         }
     }
 
@@ -107,8 +122,11 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        uiRenderer.DrawText("Franchise Hub", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
+        uiRenderer.DrawText("Franchise Hub", new Vector2(56, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(56, 82), Color.White);
+
+        var menuPanelBounds = GetMenuPanelBounds(_viewport.X, _viewport.Y);
+        uiRenderer.DrawButton(string.Empty, menuPanelBounds, new Color(38, 48, 56), Color.White);
 
         for (int i = 0; i < _buttons.Count; i++)
         {
@@ -120,12 +138,10 @@ public sealed class FranchiseHubScreen : GameScreen
             uiRenderer.DrawButton(button.Label, bounds, bgColor, Color.White);
         }
 
-        var statusY = _viewport.Y - 72f;
-        foreach (var line in WrapText(_statusMessage, 88).Take(2))
-        {
-            uiRenderer.DrawText(line, new Vector2(100, statusY), Color.White, uiRenderer.ScoreboardFont);
-            statusY += 18f;
-        }
+        var statusBounds = new Rectangle(68, _viewport.Y - 108, Math.Max(520, _viewport.X - 136), 72);
+        uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawTextInBounds("Latest Update", new Rectangle(statusBounds.X + 12, statusBounds.Y + 6, 200, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 12, statusBounds.Y + 26, statusBounds.Width - 24, statusBounds.Height - 32), Color.White, uiRenderer.UiSmallFont, 3);
     }
 
     private void StartLiveMatch()

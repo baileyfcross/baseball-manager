@@ -20,10 +20,8 @@ public sealed class MainMenuScreen : GameScreen
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
 
-    private const int ButtonWidth = 200;
-    private const int ButtonHeight = 50;
-    private const int ButtonSpacing = 20;
-    private const int StartY = 200;
+    private const int ButtonWidth = 220;
+    private const int ButtonSpacing = 18;
 
     public MainMenuScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -53,10 +51,27 @@ public sealed class MainMenuScreen : GameScreen
 
     private Rectangle GetButtonBounds(int index, int viewportWidth, int viewportHeight)
     {
-        var centerX = viewportWidth / 2;
-        var y = StartY + index * (ButtonHeight + ButtonSpacing);
-        var width = _buttons.Count == 0 ? ButtonWidth : _buttons.Max(button => ButtonControl.GetSuggestedWidth(button.Label, ButtonWidth));
-        return new Rectangle(centerX - width / 2, y, width, ButtonHeight);
+        var panelBounds = GetMenuPanelBounds(viewportWidth, viewportHeight);
+        var buttonHeight = GetButtonHeight(viewportHeight);
+        var width = _buttons.Count == 0 ? ButtonWidth : Math.Min(panelBounds.Width - 24, _buttons.Max(button => ButtonControl.GetSuggestedWidth(button.Label, ButtonWidth)));
+        var x = panelBounds.X + ((panelBounds.Width - width) / 2);
+        var y = panelBounds.Y + 18 + index * (buttonHeight + ButtonSpacing);
+        return new Rectangle(x, y, width, buttonHeight);
+    }
+
+    private Rectangle GetMenuPanelBounds(int viewportWidth, int viewportHeight)
+    {
+        var buttonHeight = GetButtonHeight(viewportHeight);
+        var totalHeight = (_buttons.Count * buttonHeight) + (Math.Max(0, _buttons.Count - 1) * ButtonSpacing) + 36;
+        var width = Math.Clamp(viewportWidth / 3, 320, 460);
+        var x = (viewportWidth - width) / 2;
+        var y = Math.Max(140, (viewportHeight - totalHeight) / 2);
+        return new Rectangle(x, y, width, totalHeight);
+    }
+
+    private static int GetButtonHeight(int viewportHeight)
+    {
+        return Math.Clamp(viewportHeight / 13, 44, 58);
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -101,12 +116,15 @@ public sealed class MainMenuScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        uiRenderer.DrawText("Baseball Manager", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText("Baseball Manager", new Vector2(56, 42), Color.White, uiRenderer.UiMediumFont);
 
         if (_franchiseSession.HasFranchiseSaveData)
         {
-            uiRenderer.DrawText($"Current Franchise: {_franchiseSession.SelectedTeamName}", new Vector2(100, 96), Color.White);
+            uiRenderer.DrawTextInBounds($"Current Franchise: {_franchiseSession.SelectedTeamName}", new Rectangle(56, 82, Math.Max(320, _viewport.X - 112), 28), Color.White, uiRenderer.UiSmallFont);
         }
+
+        var menuPanelBounds = GetMenuPanelBounds(_viewport.X, _viewport.Y);
+        uiRenderer.DrawButton(string.Empty, menuPanelBounds, new Color(38, 48, 56), Color.White);
 
         for (int i = 0; i < _buttons.Count; i++)
         {
