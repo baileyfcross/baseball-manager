@@ -13,22 +13,29 @@ public sealed class LiveMatchPresenter
     private float _secondsUntilNextPitch;
     private float _ballHighlightTimer;
     private bool _isPaused;
+    private LiveMatchMode _mode = LiveMatchMode.QuickMatch;
 
     public LiveMatchPresenter(ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
         _leagueData = leagueData;
         _franchiseSession = franchiseSession;
-        ResetMatch();
     }
 
     public LiveMatchViewModel ViewModel { get; private set; } = new();
 
-    public void ResetMatch()
+    public void ResetMatch(LiveMatchMode mode)
     {
-        _engine = CreateMatchEngine();
-        _secondsUntilNextPitch = 0.85f;
-        _ballHighlightTimer = 1.2f;
-        _isPaused = false;
+        _mode = mode;
+
+        if (!TryRestoreSavedMatch())
+        {
+            _engine = CreateMatchEngine();
+            _secondsUntilNextPitch = 0.85f;
+            _ballHighlightTimer = 1.2f;
+            _isPaused = false;
+            SaveMatchProgress();
+        }
+
         UpdateFieldView();
         UpdateOverlays();
     }
@@ -51,6 +58,7 @@ public sealed class LiveMatchPresenter
     public void TogglePause()
     {
         _isPaused = !_isPaused;
+        SaveMatchProgress();
         UpdateOverlays();
     }
 
@@ -122,6 +130,7 @@ public sealed class LiveMatchPresenter
         _engine.Tick();
         _secondsUntilNextPitch = 0.85f;
         _ballHighlightTimer = 1.2f;
+        SaveMatchProgress();
         UpdateFieldView();
         UpdateOverlays();
     }
@@ -136,11 +145,56 @@ public sealed class LiveMatchPresenter
         UpdateOverlays();
     }
 
+    public void SaveMatchProgress()
+    {
+        if (_engine == null)
+        {
+            return;
+        }
+
+        if (_engine.CurrentState.IsGameOver)
+        {
+            _franchiseSession.ClearLiveMatchState(_mode);
+            return;
+        }
+
+        var liveMatchState = LiveMatchStateMapper.FromMatchState(
+            _engine.CurrentState,
+            _secondsUntilNextPitch,
+            _ballHighlightTimer,
+            _isPaused);
+
+        _franchiseSession.SaveLiveMatchState(_mode, liveMatchState);
+    }
+
+    private bool TryRestoreSavedMatch()
+    {
+        var savedMatch = _franchiseSession.GetLiveMatchState(_mode);
+        if (savedMatch == null || savedMatch.IsGameOver)
+        {
+            if (savedMatch?.IsGameOver == true)
+            {
+                _franchiseSession.ClearLiveMatchState(_mode);
+            }
+
+            return false;
+        }
+
+        var restoredMatch = LiveMatchStateMapper.ToRuntimeState(savedMatch);
+        _engine = new MatchEngine(restoredMatch.MatchState);
+        _secondsUntilNextPitch = restoredMatch.SecondsUntilNextPitch;
+        _ballHighlightTimer = restoredMatch.BallHighlightTimer;
+        _isPaused = restoredMatch.IsPaused;
+        return true;
+    }
+
     private MatchEngine CreateMatchEngine()
     {
         var (awayTeam, homeTeam) = SelectMatchup();
-        var awaySnapshot = BuildTeamSnapshot(awayTeam, preferFranchiseSelections: _franchiseSession.SelectedTeam != null && string.Equals(_franchiseSession.SelectedTeam.Name, awayTeam.Name, StringComparison.OrdinalIgnoreCase));
-        var homeSnapshot = BuildTeamSnapshot(homeTeam, preferFranchiseSelections: _franchiseSession.SelectedTeam != null && string.Equals(_franchiseSession.SelectedTeam.Name, homeTeam.Name, StringComparison.OrdinalIgnoreCase));
+        var useFranchiseSelectionsForAway = _mode == LiveMatchMode.Franchise && _franchiseSession.SelectedTeam != null && string.Equals(_franchiseSession.SelectedTeam.Name, awayTeam.Name, StringComparison.OrdinalIgnoreCase);
+        var useFranchiseSelectionsForHome = _mode == LiveMatchMode.Franchise && _franchiseSession.SelectedTeam != null && string.Equals(_franchiseSession.SelectedTeam.Name, homeTeam.Name, StringComparison.OrdinalIgnoreCase);
+        var awaySnapshot = BuildTeamSnapshot(awayTeam, preferFranchiseSelections: useFranchiseSelectionsForAway);
+        var homeSnapshot = BuildTeamSnapshot(homeTeam, preferFranchiseSelections: useFranchiseSelectionsForHome);
         return new MatchEngine(awaySnapshot, homeSnapshot);
     }
 
@@ -148,6 +202,11 @@ public sealed class LiveMatchPresenter
     {
         var fallbackHome = _leagueData.Teams.FirstOrDefault() ?? CreateFallbackTeam("Home", "HOME");
         var fallbackAway = _leagueData.Teams.Skip(1).FirstOrDefault() ?? CreateFallbackTeam("Visitors", "VIS");
+
+        if (_mode == LiveMatchMode.QuickMatch)
+        {
+            return SelectRandomMatchup(fallbackAway, fallbackHome);
+        }
 
         if (_franchiseSession.SelectedTeam != null)
         {
@@ -171,6 +230,29 @@ public sealed class LiveMatchPresenter
         }
 
         return (fallbackAway, fallbackHome);
+    }
+
+    private (TeamImportDto Away, TeamImportDto Home) SelectRandomMatchup(TeamImportDto fallbackAway, TeamImportDto fallbackHome)
+    {
+        if (_leagueData.Teams.Count == 0)
+        {
+            return (fallbackAway, fallbackHome);
+        }
+
+        if (_leagueData.Teams.Count == 1)
+        {
+            return (fallbackAway, _leagueData.Teams[0]);
+        }
+
+        var homeIndex = Random.Shared.Next(_leagueData.Teams.Count);
+        var awayIndex = homeIndex;
+
+        while (awayIndex == homeIndex)
+        {
+            awayIndex = Random.Shared.Next(_leagueData.Teams.Count);
+        }
+
+        return (_leagueData.Teams[awayIndex], _leagueData.Teams[homeIndex]);
     }
 
     private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)

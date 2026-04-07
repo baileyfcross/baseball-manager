@@ -22,6 +22,12 @@ public sealed class MatchEngine
         CurrentState.Field.ResetToPitcher();
     }
 
+    public MatchEngine(MatchState currentState, Random? random = null)
+    {
+        CurrentState = currentState;
+        _random = random ?? new Random();
+    }
+
     public MatchState CurrentState { get; }
 
     public ResultEvent Tick()

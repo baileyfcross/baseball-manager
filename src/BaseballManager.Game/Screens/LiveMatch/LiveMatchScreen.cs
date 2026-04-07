@@ -37,11 +37,23 @@ public sealed class LiveMatchScreen : GameScreen
 
         try
         {
-            _presenter.ResetMatch();
+            _presenter.ResetMatch(_franchiseSession.PendingLiveMatchMode);
         }
         catch (Exception ex)
         {
             _fatalErrorMessage = ex.Message;
+            Console.WriteLine(ex);
+        }
+    }
+
+    public override void OnExit()
+    {
+        try
+        {
+            _presenter.SaveMatchProgress();
+        }
+        catch (Exception ex)
+        {
             Console.WriteLine(ex);
         }
     }
@@ -156,9 +168,9 @@ public sealed class LiveMatchScreen : GameScreen
 
     private void ReturnToPreviousScreen()
     {
-        var screenName = _franchiseSession.SelectedTeam != null
-            ? nameof(FranchiseHubScreen)
-            : nameof(MainMenuScreen);
+        var screenName = _franchiseSession.PendingLiveMatchMode == LiveMatchMode.QuickMatch
+            ? nameof(MainMenuScreen)
+            : nameof(FranchiseHubScreen);
         _screenManager.TransitionTo(screenName);
     }
 }

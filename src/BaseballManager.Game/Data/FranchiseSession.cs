@@ -19,16 +19,35 @@ public sealed class FranchiseSession
             SelectedTeam = _leagueData.Teams.FirstOrDefault(team =>
                 string.Equals(team.Name, _saveState.SelectedTeamName, StringComparison.OrdinalIgnoreCase));
         }
+
+        PendingLiveMatchMode = SelectedTeam != null ? LiveMatchMode.Franchise : LiveMatchMode.QuickMatch;
+
+        if (SelectedTeam != null)
+        {
+            MigrateLegacyFranchiseMatchIfNeeded(SelectedTeam.Name);
+        }
     }
 
     public TeamImportDto? SelectedTeam { get; private set; }
 
     public string SelectedTeamName => SelectedTeam?.Name ?? "No Team Selected";
 
+    public LiveMatchMode PendingLiveMatchMode { get; private set; }
+
+    public bool HasFranchiseSaveData => SelectedTeam != null;
+
+    public bool HasAnySaveData =>
+        !string.IsNullOrWhiteSpace(_saveState.SelectedTeamName) ||
+        _saveState.Teams.Count > 0 ||
+        _saveState.CurrentLiveMatch != null ||
+        _saveState.QuickMatchLiveMatch != null;
+
     public void SelectTeam(TeamImportDto team)
     {
         SelectedTeam = team;
+        PendingLiveMatchMode = LiveMatchMode.Franchise;
         _saveState.SelectedTeamName = team.Name;
+        MigrateLegacyFranchiseMatchIfNeeded(team.Name);
         _stateStore.Save(_saveState);
     }
 
@@ -152,6 +171,97 @@ public sealed class FranchiseSession
         Save();
     }
 
+    public void PrepareQuickMatch()
+    {
+        PendingLiveMatchMode = LiveMatchMode.QuickMatch;
+    }
+
+    public void PrepareFranchiseMatch()
+    {
+        PendingLiveMatchMode = LiveMatchMode.Franchise;
+    }
+
+    public LiveMatchSaveState? GetLiveMatchState()
+    {
+        return GetLiveMatchState(PendingLiveMatchMode);
+    }
+
+    public LiveMatchSaveState? GetLiveMatchState(LiveMatchMode mode)
+    {
+        if (mode == LiveMatchMode.QuickMatch)
+        {
+            return _saveState.QuickMatchLiveMatch;
+        }
+
+        if (SelectedTeam == null)
+        {
+            return _saveState.CurrentLiveMatch;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        return teamState.CurrentLiveMatch ?? _saveState.CurrentLiveMatch;
+    }
+
+    public void SaveLiveMatchState(LiveMatchSaveState liveMatchState)
+    {
+        SaveLiveMatchState(PendingLiveMatchMode, liveMatchState);
+    }
+
+    public void SaveLiveMatchState(LiveMatchMode mode, LiveMatchSaveState liveMatchState)
+    {
+        var savedState = liveMatchState.IsGameOver ? null : liveMatchState;
+
+        if (mode == LiveMatchMode.QuickMatch)
+        {
+            _saveState.QuickMatchLiveMatch = savedState;
+        }
+        else if (SelectedTeam == null)
+        {
+            _saveState.CurrentLiveMatch = savedState;
+        }
+        else
+        {
+            var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+            teamState.CurrentLiveMatch = savedState;
+            _saveState.CurrentLiveMatch = null;
+        }
+
+        Save();
+    }
+
+    public void ClearLiveMatchState()
+    {
+        ClearLiveMatchState(PendingLiveMatchMode);
+    }
+
+    public void ClearLiveMatchState(LiveMatchMode mode)
+    {
+        var hasChanges = false;
+
+        if (mode == LiveMatchMode.QuickMatch)
+        {
+            hasChanges = _saveState.QuickMatchLiveMatch != null;
+            _saveState.QuickMatchLiveMatch = null;
+        }
+        else if (SelectedTeam == null)
+        {
+            hasChanges = _saveState.CurrentLiveMatch != null;
+            _saveState.CurrentLiveMatch = null;
+        }
+        else
+        {
+            var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+            hasChanges = teamState.CurrentLiveMatch != null || _saveState.CurrentLiveMatch != null;
+            teamState.CurrentLiveMatch = null;
+            _saveState.CurrentLiveMatch = null;
+        }
+
+        if (hasChanges)
+        {
+            Save();
+        }
+    }
+
     private TeamFranchiseState GetOrCreateTeamState(string teamName)
     {
         if (!_saveState.Teams.TryGetValue(teamName, out var teamState))
@@ -267,6 +377,18 @@ public sealed class FranchiseSession
         }
 
         return map;
+    }
+
+    private void MigrateLegacyFranchiseMatchIfNeeded(string teamName)
+    {
+        if (_saveState.CurrentLiveMatch == null)
+        {
+            return;
+        }
+
+        var teamState = GetOrCreateTeamState(teamName);
+        teamState.CurrentLiveMatch ??= _saveState.CurrentLiveMatch;
+        _saveState.CurrentLiveMatch = null;
     }
 
     private void Save()

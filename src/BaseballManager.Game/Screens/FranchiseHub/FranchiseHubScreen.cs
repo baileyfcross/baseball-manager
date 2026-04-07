@@ -108,6 +108,7 @@ public sealed class FranchiseHubScreen : GameScreen
     private void StartLiveMatch()
     {
         _startMatchUseCase.Execute();
+        _franchiseSession.PrepareFranchiseMatch();
         _screenManager.TransitionTo(nameof(LiveMatchScreen));
     }
 }

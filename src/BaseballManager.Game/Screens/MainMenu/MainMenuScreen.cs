@@ -1,4 +1,3 @@
-using BaseballManager.Application.SaveLoad;
 using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
@@ -16,7 +15,6 @@ public sealed class MainMenuScreen : GameScreen
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly List<ButtonControl> _buttons = new();
-    private readonly LoadGameUseCase _loadGameUseCase = new();
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
@@ -35,9 +33,19 @@ public sealed class MainMenuScreen : GameScreen
 
     private void InitializeButtons()
     {
-        _buttons.Add(new ButtonControl { Label = "Start Game", OnClick = () => StartNewGame() });
+        _buttons.Clear();
+
+        if (_franchiseSession.HasFranchiseSaveData)
+        {
+            _buttons.Add(new ButtonControl { Label = "Resume Game", OnClick = () => ResumeGame() });
+        }
+
+        _buttons.Add(new ButtonControl
+        {
+            Label = _franchiseSession.HasAnySaveData ? "New Game" : "Start Game",
+            OnClick = () => StartNewGame()
+        });
         _buttons.Add(new ButtonControl { Label = "Quick Match", OnClick = () => OpenQuickMatch() });
-        _buttons.Add(new ButtonControl { Label = "Load Game", OnClick = () => LoadGame() });
         _buttons.Add(new ButtonControl { Label = "Exit Game", OnClick = () => ExitGame() });
     }
 
@@ -83,16 +91,20 @@ public sealed class MainMenuScreen : GameScreen
     public override void OnEnter()
     {
         _ignoreClicksUntilRelease = true;
+        InitializeButtons();
     }
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        // Draw title
         uiRenderer.DrawText("Baseball Manager", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
 
-        // Draw buttons with labels
+        if (_franchiseSession.HasFranchiseSaveData)
+        {
+            uiRenderer.DrawText($"Current Franchise: {_franchiseSession.SelectedTeamName}", new Vector2(100, 96), Color.White);
+        }
+
         for (int i = 0; i < _buttons.Count; i++)
         {
             var button = _buttons[i];
@@ -114,27 +126,27 @@ public sealed class MainMenuScreen : GameScreen
     private void StartNewGame()
     {
         Console.WriteLine("Opening team selection...");
+        _franchiseSession.PrepareFranchiseMatch();
         _screenManager.TransitionTo(nameof(TeamSelectionScreen));
     }
 
-    private void LoadGame()
+    private void ResumeGame()
     {
-        _loadGameUseCase.Execute();
-
-        if (_franchiseSession.SelectedTeam != null)
+        if (_franchiseSession.SelectedTeam == null)
         {
-            Console.WriteLine($"Resuming franchise: {_franchiseSession.SelectedTeamName}");
-            _screenManager.TransitionTo(nameof(FranchiseHubScreen));
+            _screenManager.TransitionTo(nameof(TeamSelectionScreen));
             return;
         }
 
-        Console.WriteLine("No saved franchise team found. Opening team selection...");
-        _screenManager.TransitionTo(nameof(TeamSelectionScreen));
+        Console.WriteLine($"Resuming franchise: {_franchiseSession.SelectedTeamName}");
+        _franchiseSession.PrepareFranchiseMatch();
+        _screenManager.TransitionTo(nameof(FranchiseHubScreen));
     }
 
     private void OpenQuickMatch()
     {
         Console.WriteLine("Launching quick live match...");
+        _franchiseSession.PrepareQuickMatch();
         _screenManager.TransitionTo(nameof(LiveMatchScreen));
     }
 
