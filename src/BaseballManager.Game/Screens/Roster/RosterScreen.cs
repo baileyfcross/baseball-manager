@@ -27,6 +27,7 @@ public sealed class RosterScreen : GameScreen
     private string? _sortColumnSeasonStats;
     private string? _sortColumnLastSeasonStats;
     private string? _sortColumnScoutNotes;
+    private string? _sortColumnMedicalReport;
     private string? _sortColumnHiddenRatings;
     private bool _sortAscending = true;
     private readonly Dictionary<string, Rectangle> _headerHitBoxes = new();
@@ -53,7 +54,8 @@ public sealed class RosterScreen : GameScreen
                     RosterViewMode.Standard => RosterViewMode.SeasonStats,
                     RosterViewMode.SeasonStats => RosterViewMode.LastSeasonStats,
                     RosterViewMode.LastSeasonStats => RosterViewMode.ScoutNotes,
-                    RosterViewMode.ScoutNotes => RosterViewMode.HiddenRatings,
+                    RosterViewMode.ScoutNotes => RosterViewMode.MedicalReport,
+                    RosterViewMode.MedicalReport => RosterViewMode.HiddenRatings,
                     _ => RosterViewMode.Standard
                 };
                 _pageIndex = 0;
@@ -155,7 +157,8 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.Standard => "Season Stats",
             RosterViewMode.SeasonStats => "Last Season",
             RosterViewMode.LastSeasonStats => "Scout Notes",
-            RosterViewMode.ScoutNotes => "Secret Attributes",
+            RosterViewMode.ScoutNotes => "Medical Report",
+            RosterViewMode.MedicalReport => "Secret Attributes",
             _ => "Show Roster"
         };
         _filterButton.Label = _showFilterDropdown
@@ -167,6 +170,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.SeasonStats => "Roster - Season Stats",
             RosterViewMode.LastSeasonStats => "Roster - Last Season",
             RosterViewMode.ScoutNotes => "Roster - Scout Notes",
+            RosterViewMode.MedicalReport => "Roster - Medical Report",
             RosterViewMode.HiddenRatings => "Roster - Secret Attributes",
             _ => "Roster"
         };
@@ -215,6 +219,21 @@ public sealed class RosterScreen : GameScreen
                     }
                     break;
 
+                case RosterViewMode.MedicalReport:
+                    DrawMedicalReportHeader(uiRenderer);
+                    for (var i = 0; i < visibleRows.Count; i++)
+                    {
+                        var row = visibleRows[i];
+                        var line = string.Format(
+                            "{0,-18} {1,-3} {2,-10} {3}",
+                            Truncate(row.PlayerName, 18),
+                            row.PrimaryPosition,
+                            Truncate(row.MedicalStatus, 10),
+                            Truncate(row.MedicalReport, 54));
+                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
+                    }
+                    break;
+
                 case RosterViewMode.HiddenRatings:
                     DrawHiddenRatingsHeader(uiRenderer);
                     for (var i = 0; i < visibleRows.Count; i++)
@@ -222,19 +241,20 @@ public sealed class RosterScreen : GameScreen
                         var row = visibleRows[i];
                         var ratings = row.HiddenRatings;
                         var line = string.Format(
-                            "{0,-16} {1,-3} {2,3} {3,3} {4,3} {5,3} {6,3} {7,3} {8,3} {9,3} {10,3} {11,3}",
-                            Truncate(row.PlayerName, 16),
+                            "{0,-12} {1,-3} {2,3} {3,3} {4,4:0.#} {5,4:0.#} {6,4:0.#} {7,4:0.#} {8,4:0.#} {9,4:0.#} {10,4:0.#} {11,4:0.#} {12,4:0.#}",
+                            Truncate(row.PlayerName, 12),
                             row.PrimaryPosition,
                             ratings.OverallRating,
                             ratings.AttributeTotal,
-                            ratings.ContactRating,
-                            ratings.PowerRating,
-                            ratings.DisciplineRating,
-                            ratings.SpeedRating,
-                            ratings.FieldingRating,
-                            ratings.ArmRating,
-                            ratings.PitchingRating,
-                            ratings.DurabilityRating);
+                            ratings.ContactExactRating,
+                            ratings.PowerExactRating,
+                            ratings.DisciplineExactRating,
+                            ratings.SpeedExactRating,
+                            ratings.FieldingExactRating,
+                            ratings.ArmExactRating,
+                            ratings.PitchingExactRating,
+                            ratings.StaminaExactRating,
+                            ratings.DurabilityExactRating);
                         uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
                     }
                     break;
@@ -440,12 +460,28 @@ public sealed class RosterScreen : GameScreen
         uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
     }
 
+    private void DrawMedicalReportHeader(UiRenderer uiRenderer)
+    {
+        _headerHitBoxes.Clear();
+        var headerBuilder = new System.Text.StringBuilder();
+
+        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.MedicalReport);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.MedicalReport);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "STATUS", 10, RosterViewMode.MedicalReport);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "REPORT", 36, RosterViewMode.MedicalReport);
+
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
+    }
+
     private void DrawHiddenRatingsHeader(UiRenderer uiRenderer)
     {
         _headerHitBoxes.Clear();
         var headerBuilder = new System.Text.StringBuilder();
 
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 16, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "NAME", 12, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
@@ -453,21 +489,23 @@ public sealed class RosterScreen : GameScreen
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "TOT", 3, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "CON", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "CON", 4, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POW", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "POW", 4, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "DIS", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "DIS", 4, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "SPD", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "SPD", 4, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "FLD", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "FLD", 4, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "ARM", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "ARM", 4, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "PIT", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "PIT", 4, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "DUR", 3, RosterViewMode.HiddenRatings);
+        AppendColumn(headerBuilder, uiRenderer, "STA", 4, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "DUR", 4, RosterViewMode.HiddenRatings);
 
         uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
     }
@@ -520,6 +558,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.SeasonStats => _sortColumnSeasonStats,
             RosterViewMode.LastSeasonStats => _sortColumnLastSeasonStats,
             RosterViewMode.ScoutNotes => _sortColumnScoutNotes,
+            RosterViewMode.MedicalReport => _sortColumnMedicalReport,
             RosterViewMode.HiddenRatings => _sortColumnHiddenRatings,
             _ => null
         };
@@ -562,6 +601,9 @@ public sealed class RosterScreen : GameScreen
                 case RosterViewMode.ScoutNotes:
                     _sortColumnScoutNotes = columnName;
                     break;
+                case RosterViewMode.MedicalReport:
+                    _sortColumnMedicalReport = columnName;
+                    break;
                 case RosterViewMode.HiddenRatings:
                     _sortColumnHiddenRatings = columnName;
                     break;
@@ -578,7 +620,13 @@ public sealed class RosterScreen : GameScreen
         var currentSort = GetCurrentSortColumn(mode);
         if (string.IsNullOrEmpty(currentSort))
         {
-            return ApplyDefaultFilterSort(rows);
+            return mode == RosterViewMode.MedicalReport
+                ? rows.OrderByDescending(row => row.Health.InjuryDaysRemaining)
+                    .ThenByDescending(row => row.Health.DaysUntilAvailable)
+                    .ThenByDescending(row => row.Health.Fatigue)
+                    .ThenBy(row => row.PlayerName)
+                    .ToList()
+                : ApplyDefaultFilterSort(rows);
         }
 
         var sorted = mode switch
@@ -587,6 +635,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.SeasonStats => SortSeasonStatsRows(rows, currentSort, useLastSeasonStats: false),
             RosterViewMode.LastSeasonStats => SortSeasonStatsRows(rows, currentSort, useLastSeasonStats: true),
             RosterViewMode.ScoutNotes => SortScoutNoteRows(rows, currentSort),
+            RosterViewMode.MedicalReport => SortMedicalRows(rows, currentSort),
             RosterViewMode.HiddenRatings => SortHiddenRatingsRows(rows, currentSort),
             _ => rows
         };
@@ -655,6 +704,21 @@ public sealed class RosterScreen : GameScreen
         };
     }
 
+    private static List<RosterDisplayRow> SortMedicalRows(List<RosterDisplayRow> rows, string columnName)
+    {
+        return columnName switch
+        {
+            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
+            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "STATUS" => rows.OrderByDescending(r => r.Health.InjuryDaysRemaining)
+                .ThenByDescending(r => r.Health.DaysUntilAvailable)
+                .ThenByDescending(r => r.Health.Fatigue)
+                .ToList(),
+            "REPORT" => rows.OrderBy(r => r.MedicalReport).ToList(),
+            _ => rows
+        };
+    }
+
     private static List<RosterDisplayRow> SortHiddenRatingsRows(List<RosterDisplayRow> rows, string columnName)
     {
         return columnName switch
@@ -663,14 +727,15 @@ public sealed class RosterScreen : GameScreen
             "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
             "OVR" => rows.OrderBy(r => r.HiddenRatings.OverallRating).ToList(),
             "TOT" => rows.OrderBy(r => r.HiddenRatings.AttributeTotal).ToList(),
-            "CON" => rows.OrderBy(r => r.HiddenRatings.ContactRating).ToList(),
-            "POW" => rows.OrderBy(r => r.HiddenRatings.PowerRating).ToList(),
-            "DIS" => rows.OrderBy(r => r.HiddenRatings.DisciplineRating).ToList(),
-            "SPD" => rows.OrderBy(r => r.HiddenRatings.SpeedRating).ToList(),
-            "FLD" => rows.OrderBy(r => r.HiddenRatings.FieldingRating).ToList(),
-            "ARM" => rows.OrderBy(r => r.HiddenRatings.ArmRating).ToList(),
-            "PIT" => rows.OrderBy(r => r.HiddenRatings.PitchingRating).ToList(),
-            "DUR" => rows.OrderBy(r => r.HiddenRatings.DurabilityRating).ToList(),
+            "CON" => rows.OrderBy(r => r.HiddenRatings.ContactExactRating).ToList(),
+            "POW" => rows.OrderBy(r => r.HiddenRatings.PowerExactRating).ToList(),
+            "DIS" => rows.OrderBy(r => r.HiddenRatings.DisciplineExactRating).ToList(),
+            "SPD" => rows.OrderBy(r => r.HiddenRatings.SpeedExactRating).ToList(),
+            "FLD" => rows.OrderBy(r => r.HiddenRatings.FieldingExactRating).ToList(),
+            "ARM" => rows.OrderBy(r => r.HiddenRatings.ArmExactRating).ToList(),
+            "PIT" => rows.OrderBy(r => r.HiddenRatings.PitchingExactRating).ToList(),
+            "STA" => rows.OrderBy(r => r.HiddenRatings.StaminaExactRating).ToList(),
+            "DUR" => rows.OrderBy(r => r.HiddenRatings.DurabilityExactRating).ToList(),
             _ => rows
         };
     }
@@ -718,7 +783,10 @@ public sealed class RosterScreen : GameScreen
                 row.RotationSlot,
                 _franchiseSession.GetPlayerRatings(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
                 _franchiseSession.GetPlayerSeasonStats(row.PlayerId),
-                _franchiseSession.GetLastSeasonStats(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age)))
+                _franchiseSession.GetLastSeasonStats(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
+                _franchiseSession.GetPlayerHealth(row.PlayerId),
+                _franchiseSession.GetPlayerMedicalStatus(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
+                _franchiseSession.GetPlayerMedicalReport(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age)))
             .ToList();
     }
 
@@ -799,7 +867,10 @@ public sealed class RosterScreen : GameScreen
         int? RotationSlot,
         PlayerHiddenRatingsState HiddenRatings,
         PlayerSeasonStatsState SeasonStats,
-        PlayerSeasonStatsState LastSeasonStats);
+        PlayerSeasonStatsState LastSeasonStats,
+        PlayerHealthState Health,
+        string MedicalStatus,
+        string MedicalReport);
 
     private enum RosterViewMode
     {
@@ -807,6 +878,7 @@ public sealed class RosterScreen : GameScreen
         SeasonStats,
         LastSeasonStats,
         ScoutNotes,
+        MedicalReport,
         HiddenRatings
     }
 

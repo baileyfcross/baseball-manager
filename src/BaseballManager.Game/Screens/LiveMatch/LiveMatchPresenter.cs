@@ -101,6 +101,8 @@ public sealed class LiveMatchPresenter
             RunnerOnThirdName = thirdRunnerName,
             BatterName = state.CurrentBatter.FullName,
             PitcherName = state.CurrentPitcher.FullName,
+            PitchCount = state.DefensiveTeam.PitchCount,
+            PitcherFatigueText = BuildPitcherFatigueText(state.CurrentPitcher, state.DefensiveTeam.PitchCount),
             LatestPlayText = state.LatestEvent.Description,
             StatusText = BuildStatusText(state),
             IsPaused = _isPaused,
@@ -285,13 +287,15 @@ public sealed class LiveMatchPresenter
     private List<MatchPlayerSnapshot> BuildSelectedTeamLineup()
     {
         var lineup = _franchiseSession.GetLineupPlayers()
+            .Where(player => !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
             .OrderBy(player => player.LineupSlot)
             .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age, player.LineupSlot ?? 9, player.RotationSlot ?? 0))
             .ToList();
 
         var remainingPlayers = _franchiseSession.GetSelectedTeamRoster()
             .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
-            .OrderBy(player => player.PlayerName)
+            .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+            .ThenBy(player => player.PlayerName)
             .ToList();
 
         foreach (var player in remainingPlayers)
@@ -314,8 +318,17 @@ public sealed class LiveMatchPresenter
 
     private MatchPlayerSnapshot? BuildSelectedTeamPitcher()
     {
-        var pitcher = _franchiseSession.GetRotationPlayers().OrderBy(player => player.RotationSlot).FirstOrDefault()
-                     ?? _franchiseSession.GetSelectedTeamRoster().FirstOrDefault(player => player.PrimaryPosition is "SP" or "RP");
+        var pitcher = _franchiseSession.GetRotationPlayers()
+                          .Concat(_franchiseSession.GetBullpenPlayers())
+                          .Where(player => player.PrimaryPosition is "SP" or "RP")
+                          .OrderBy(player => ShouldRestPlayer(player.PlayerId, player.PrimaryPosition) ? 1 : 0)
+                          .ThenBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+                          .ThenBy(player => player.RotationSlot ?? 99)
+                          .FirstOrDefault()
+                     ?? _franchiseSession.GetSelectedTeamRoster()
+                          .Where(player => player.PrimaryPosition is "SP" or "RP")
+                          .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+                          .FirstOrDefault();
 
         return pitcher == null
             ? null
@@ -331,6 +344,7 @@ public sealed class LiveMatchPresenter
             .ToList();
 
         var lineup = lineupRows
+            .Where(roster => !ShouldRestPlayer(roster.PlayerId, roster.PrimaryPosition))
             .Select(roster =>
             {
                 playersById.TryGetValue(roster.PlayerId, out var playerData);
@@ -347,7 +361,8 @@ public sealed class LiveMatchPresenter
 
         var fillPlayers = _leagueData.Rosters
             .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) && lineup.All(existing => existing.Id != roster.PlayerId) && roster.PrimaryPosition is not "SP" and not "RP")
-            .OrderBy(roster => roster.PlayerName)
+            .OrderBy(roster => GetAvailabilityPriority(roster.PlayerId, roster.PrimaryPosition))
+            .ThenBy(roster => roster.PlayerName)
             .ToList();
 
         foreach (var roster in fillPlayers)
@@ -373,10 +388,12 @@ public sealed class LiveMatchPresenter
     {
         var playersById = _leagueData.Players.ToDictionary(player => player.PlayerId, player => player);
         var pitcherRow = _leagueData.Rosters
-            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(roster => roster.RotationSlot ?? 99)
+            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) && roster.PrimaryPosition is "SP" or "RP")
+            .OrderBy(roster => ShouldRestPlayer(roster.PlayerId, roster.PrimaryPosition) ? 1 : 0)
+            .ThenBy(roster => GetAvailabilityPriority(roster.PlayerId, roster.PrimaryPosition))
+            .ThenBy(roster => roster.RotationSlot ?? 99)
             .ThenBy(roster => roster.PrimaryPosition is "SP" ? 0 : 1)
-            .FirstOrDefault(roster => roster.PrimaryPosition is "SP" or "RP");
+            .FirstOrDefault();
 
         if (pitcherRow == null)
         {
@@ -397,15 +414,44 @@ public sealed class LiveMatchPresenter
             primaryPosition,
             secondaryPosition,
             age,
-            ratings.ContactRating,
-            ratings.PowerRating,
-            ratings.DisciplineRating,
-            ratings.SpeedRating,
-            ratings.PitchingRating,
-            ratings.FieldingRating,
-            ratings.ArmRating,
-            ratings.DurabilityRating,
+            ratings.EffectiveContactRating,
+            ratings.EffectivePowerRating,
+            ratings.EffectiveDisciplineRating,
+            ratings.EffectiveSpeedRating,
+            ratings.EffectivePitchingRating,
+            ratings.EffectiveFieldingRating,
+            ratings.EffectiveArmRating,
+            ratings.EffectiveStaminaRating,
+            ratings.EffectiveDurabilityRating,
             ratings.OverallRating);
+    }
+
+    private bool ShouldRestPlayer(Guid playerId, string primaryPosition)
+    {
+        var health = _franchiseSession.GetPlayerHealth(playerId);
+        if (health.InjuryDaysRemaining > 0)
+        {
+            return true;
+        }
+
+        var isPitcher = primaryPosition is "SP" or "RP";
+        return isPitcher
+            ? health.DaysUntilAvailable > 0 || health.Fatigue >= 80
+            : health.DaysUntilAvailable > 1 || health.Fatigue >= 92;
+    }
+
+    private int GetAvailabilityPriority(Guid playerId, string primaryPosition)
+    {
+        var health = _franchiseSession.GetPlayerHealth(playerId);
+        var injuryPenalty = health.InjuryDaysRemaining * 1000;
+        var recoveryPenalty = health.DaysUntilAvailable * 100;
+        var fatiguePenalty = health.Fatigue;
+        if (primaryPosition is not ("SP" or "RP") && health.Fatigue >= 90)
+        {
+            fatiguePenalty += 120;
+        }
+
+        return injuryPenalty + recoveryPenalty + fatiguePenalty;
     }
 
     private MatchPlayerSnapshot CreatePlaceholderSnapshot(string name, int lineupSlot)
@@ -444,8 +490,30 @@ public sealed class LiveMatchPresenter
             return "Game over - Esc: return to menus";
         }
 
+        var workloadText = $"Pitch Ct {state.DefensiveTeam.PitchCount} | Arm {BuildPitcherFatigueText(state.CurrentPitcher, state.DefensiveTeam.PitchCount)}";
         return _isPaused
-            ? "Paused - Space: resume - Enter: step pitch - Esc: back"
-            : "Space: pause - Enter: force next pitch - Esc: back";
+            ? $"Paused - Space: resume - Enter: step pitch - Esc: back - {workloadText}"
+            : $"Space: pause - Enter: force next pitch - Esc: back - {workloadText}";
+    }
+
+    private static string BuildPitcherFatigueText(MatchPlayerSnapshot pitcher, int pitchCount)
+    {
+        var comfortLimit = 50 + (pitcher.StaminaRating / 2);
+        if (pitchCount >= comfortLimit + 20)
+        {
+            return "Gassed";
+        }
+
+        if (pitchCount >= comfortLimit + 8)
+        {
+            return "Tiring";
+        }
+
+        if (pitchCount >= comfortLimit - 8)
+        {
+            return "Working";
+        }
+
+        return "Fresh";
     }
 }

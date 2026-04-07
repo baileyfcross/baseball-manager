@@ -45,6 +45,8 @@ public sealed class CoachingStaffScreen : GameScreen
         {
             _selectedRole = coaches[0].Role;
         }
+
+        _statusMessage = BuildRoleStatusMessage();
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -146,8 +148,9 @@ public sealed class CoachingStaffScreen : GameScreen
 
         uiRenderer.DrawText($"AVAILABLE {_selectedRole.ToUpperInvariant()} OPTIONS", new Vector2(candidatePanelBounds.X + 16, candidatePanelBounds.Y - 26), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawButton(string.Empty, candidatePanelBounds, new Color(38, 48, 56), Color.White);
-        uiRenderer.DrawTextInBounds("Current coach is highlighted in green. Drag any option onto the role to hire them.", new Rectangle(candidatePanelBounds.X + 12, candidatePanelBounds.Y + 8, candidatePanelBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds("Current coach is highlighted in green. Drag any option onto the role to hire them.", new Rectangle(candidatePanelBounds.X + 12, candidatePanelBounds.Y + 6, candidatePanelBounds.Width - 24, 20), Color.Gold, uiRenderer.UiSmallFont);
 
+        var candidateFont = candidates.Count <= 8 ? uiRenderer.UiMediumFont : uiRenderer.UiSmallFont;
         for (var i = 0; i < candidates.Count; i++)
         {
             var candidate = candidates[i];
@@ -158,8 +161,8 @@ public sealed class CoachingStaffScreen : GameScreen
             var color = isDraggingThisCoach
                 ? Color.Goldenrod
                 : (isCurrentCoach ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray));
-            var label = $"{Truncate(candidate.Name, 18)} | {Truncate(candidate.Specialty, 16)} | {candidate.Voice}";
-            uiRenderer.DrawButton(label, bounds, color, Color.White, uiRenderer.UiSmallFont);
+            var label = $"{Truncate(candidate.Name, 22)} | {Truncate(candidate.Specialty, 20)} | {candidate.Voice}";
+            uiRenderer.DrawButton(label, bounds, color, Color.White, candidateFont);
         }
 
         var statusBounds = new Rectangle(68, _viewport.Y - 110, Math.Max(540, _viewport.X - 136), 68);
@@ -186,7 +189,7 @@ public sealed class CoachingStaffScreen : GameScreen
             }
 
             _selectedRole = coaches[i].Role;
-            _statusMessage = $"Viewing the {_selectedRole} role. Drag a coach from the list to make a change.";
+            _statusMessage = BuildRoleStatusMessage();
             return true;
         }
 
@@ -246,6 +249,23 @@ public sealed class CoachingStaffScreen : GameScreen
         }
     }
 
+    private string BuildRoleStatusMessage()
+    {
+        if (_selectedRole is "Team Doctor" or "Physiologist")
+        {
+            var atRiskPlayers = _franchiseSession.GetMedicalRiskBoard(3);
+            if (atRiskPlayers.Count == 0)
+            {
+                return $"{_selectedRole} report: no major fatigue or injury concerns on the roster right now.";
+            }
+
+            var summary = string.Join(" ", atRiskPlayers.Select(player => $"{player.PlayerName} ({player.Status})"));
+            return $"{_selectedRole} report: watch {summary}.";
+        }
+
+        return $"Viewing the {_selectedRole} role. Drag a coach from the list to make a change.";
+    }
+
     private static bool IsSameCoach(CoachProfileView left, CoachProfileView right)
     {
         return string.Equals(left.Role, right.Role, StringComparison.OrdinalIgnoreCase) &&
@@ -276,12 +296,27 @@ public sealed class CoachingStaffScreen : GameScreen
     private Rectangle GetCandidatePanelBounds()
     {
         var selectedPanel = GetSelectedCoachPanelBounds();
-        return new Rectangle(selectedPanel.X, 414, selectedPanel.Width, Math.Max(160, _viewport.Y - 534));
+        var statusTop = _viewport.Y - 110;
+        var panelY = selectedPanel.Bottom + 58;
+        return new Rectangle(selectedPanel.X, panelY, selectedPanel.Width, Math.Max(180, statusTop - panelY - 12));
+    }
+
+    private int GetCandidateRowHeight(int candidateCount)
+    {
+        var panel = GetCandidatePanelBounds();
+        var count = Math.Max(1, candidateCount);
+        const int topPadding = 30;
+        const int bottomPadding = 10;
+        const int rowSpacing = 4;
+        return Math.Max(14, (panel.Height - topPadding - bottomPadding - ((count - 1) * rowSpacing)) / count);
     }
 
     private Rectangle GetCandidateBounds(int index)
     {
         var panel = GetCandidatePanelBounds();
-        return new Rectangle(panel.X + 16, panel.Y + 32 + (index * 24), panel.Width - 32, 22);
+        var candidateCount = Math.Max(1, _franchiseSession.GetCoachCandidates(_selectedRole).Count);
+        var rowHeight = GetCandidateRowHeight(candidateCount);
+        const int rowSpacing = 4;
+        return new Rectangle(panel.X + 16, panel.Y + 28 + (index * (rowHeight + rowSpacing)), panel.Width - 32, rowHeight);
     }
 }

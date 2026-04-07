@@ -76,7 +76,8 @@ public static class LiveMatchStateMapper
             StartingPitcher = team.StartingPitcher,
             BattingIndex = team.BattingIndex,
             Runs = team.Runs,
-            Hits = team.Hits
+            Hits = team.Hits,
+            PitchCount = team.PitchCount
         };
     }
 
@@ -97,7 +98,8 @@ public static class LiveMatchStateMapper
         {
             BattingIndex = Math.Max(0, saveTeam.BattingIndex),
             Runs = Math.Max(0, saveTeam.Runs),
-            Hits = Math.Max(0, saveTeam.Hits)
+            Hits = Math.Max(0, saveTeam.Hits),
+            PitchCount = Math.Max(0, saveTeam.PitchCount)
         };
 
         return runtimeTeam;
@@ -112,10 +114,11 @@ public static class LiveMatchStateMapper
         var pitching = snapshot.PitchingRating > 0 ? snapshot.PitchingRating : (snapshot.PrimaryPosition is "SP" or "RP" ? 58 : 20);
         var fielding = snapshot.FieldingRating > 0 ? snapshot.FieldingRating : 52;
         var arm = snapshot.ArmRating > 0 ? snapshot.ArmRating : 50;
+        var stamina = snapshot.StaminaRating > 0 ? snapshot.StaminaRating : (snapshot.PrimaryPosition is "SP" ? 68 : snapshot.PrimaryPosition is "RP" ? 58 : 55);
         var durability = snapshot.DurabilityRating > 0 ? snapshot.DurabilityRating : 55;
         var overall = snapshot.OverallRating > 0
             ? snapshot.OverallRating
-            : Math.Clamp((int)Math.Round((contact + power + discipline + speed + pitching + fielding + arm + durability) / 8d), 1, 99);
+            : Math.Clamp((int)Math.Round((contact + power + discipline + speed + pitching + fielding + arm + stamina + durability) / 9d), 1, 99);
 
         return snapshot with
         {
@@ -126,6 +129,7 @@ public static class LiveMatchStateMapper
             PitchingRating = pitching,
             FieldingRating = fielding,
             ArmRating = arm,
+            StaminaRating = stamina,
             DurabilityRating = durability,
             OverallRating = overall
         };

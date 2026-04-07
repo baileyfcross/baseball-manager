@@ -19,14 +19,19 @@ public sealed class PitchResolver
     {
         var batter = state.CurrentBatter;
         var pitcher = state.CurrentPitcher;
+        var comfortLimit = 50 + (pitcher.StaminaRating / 2);
+        var overage = Math.Max(0, state.DefensiveTeam.PitchCount - comfortLimit);
+        var fatiguePenalty = Math.Max(0, (state.DefensiveTeam.PitchCount - Math.Max(35, comfortLimit - 12)) / 6);
+        var effectivePitching = Math.Max(18, pitcher.PitchingRating - fatiguePenalty);
+        var effectiveOverall = Math.Max(18, pitcher.OverallRating - (fatiguePenalty / 2));
 
-        var disciplineEdge = batter.DisciplineRating - pitcher.PitchingRating;
-        var contactEdge = batter.ContactRating - pitcher.PitchingRating;
-        var overallEdge = batter.OverallRating - pitcher.OverallRating;
+        var disciplineEdge = batter.DisciplineRating - effectivePitching;
+        var contactEdge = batter.ContactRating - effectivePitching;
+        var overallEdge = batter.OverallRating - effectiveOverall;
 
-        var ballChance = Math.Clamp(18 + (disciplineEdge / 5) + (overallEdge / 12), 8, 30);
-        var calledStrikeChance = Math.Clamp(19 + ((pitcher.PitchingRating - batter.DisciplineRating) / 6) - (overallEdge / 20), 10, 28);
-        var swingingStrikeChance = Math.Clamp(17 + ((pitcher.PitchingRating - batter.ContactRating) / 6) - (overallEdge / 24), 8, 28);
+        var ballChance = Math.Clamp(18 + (disciplineEdge / 5) + (overallEdge / 12) + (overage / 8), 8, 34);
+        var calledStrikeChance = Math.Clamp(19 + ((effectivePitching - batter.DisciplineRating) / 6) - (overallEdge / 20) - (overage / 10), 8, 28);
+        var swingingStrikeChance = Math.Clamp(17 + ((effectivePitching - batter.ContactRating) / 6) - (overallEdge / 24) - (overage / 12), 7, 28);
         var foulChance = Math.Clamp(14 + (Math.Abs(contactEdge) / 20), 10, 18);
 
         var roll = random.Next(100);

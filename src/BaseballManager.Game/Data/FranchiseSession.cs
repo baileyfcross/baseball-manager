@@ -6,7 +6,20 @@ namespace BaseballManager.Game.Data;
 
 public sealed class FranchiseSession
 {
-    private static readonly string[] CoachRoleOrder = ["Manager", "Hitting Coach", "Pitching Coach", "Bench Coach", "Scouting Director"];
+    private enum PracticeDevelopmentAttribute
+    {
+        Contact,
+        Power,
+        Discipline,
+        Speed,
+        Fielding,
+        Arm,
+        Pitching,
+        Stamina,
+        Durability
+    }
+
+    private static readonly string[] CoachRoleOrder = ["Manager", "Hitting Coach", "Pitching Coach", "Bench Coach", "Scouting Director", "Team Doctor", "Physiologist"];
     private static readonly string[] CoachFirstNames = ["Alex", "Jordan", "Sam", "Casey", "Drew", "Taylor", "Riley", "Morgan", "Cameron", "Jamie", "Hayden", "Avery"];
     private static readonly string[] CoachLastNames = ["Maddox", "Sullivan", "Torres", "Bennett", "Foster", "Callahan", "Diaz", "Reed", "Hughes", "Alvarez", "Parker", "Watts"];
     private readonly ImportedLeagueData _leagueData;
@@ -21,6 +34,7 @@ public sealed class FranchiseSession
         _saveState = _stateStore.Load();
         _saveState.PlayerRatings ??= new Dictionary<Guid, PlayerHiddenRatingsState>();
         _saveState.PlayerSeasonStats ??= new Dictionary<Guid, PlayerSeasonStatsState>();
+        _saveState.PlayerHealth ??= new Dictionary<Guid, PlayerHealthState>();
         _saveState.PlayerAssignments ??= new Dictionary<Guid, string>();
         _saveState.CompletedScheduleGameKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _saveState.CompletedScheduleGameResults ??= new Dictionary<string, CompletedScheduleGameResult>(StringComparer.OrdinalIgnoreCase);
@@ -40,7 +54,7 @@ public sealed class FranchiseSession
 
         EnsureFranchiseDateInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated())
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated())
         {
             Save();
         }
@@ -238,6 +252,12 @@ public sealed class FranchiseSession
     {
         if (_saveState.PlayerRatings.TryGetValue(playerId, out var ratings))
         {
+            if (ratings.StaminaRating <= 0)
+            {
+                ratings.StaminaRating = PlayerRatingsGenerator.Generate(playerId, fullName, primaryPosition, secondaryPosition, age).StaminaRating;
+                Save();
+            }
+
             ratings.RecalculateDerivedRatings();
             return ratings;
         }
@@ -260,6 +280,18 @@ public sealed class FranchiseSession
         return stats;
     }
 
+    public PlayerHealthState GetPlayerHealth(Guid playerId)
+    {
+        if (_saveState.PlayerHealth.TryGetValue(playerId, out var health))
+        {
+            return health;
+        }
+
+        health = new PlayerHealthState();
+        _saveState.PlayerHealth[playerId] = health;
+        return health;
+    }
+
     public PlayerSeasonStatsState GetLastSeasonStats(Guid playerId, string fullName, string primaryPosition, string secondaryPosition, int age)
     {
         if (_lastSeasonStatsCache.TryGetValue(playerId, out var stats))
@@ -271,6 +303,34 @@ public sealed class FranchiseSession
         stats = GenerateLastSeasonStats(playerId, primaryPosition, age, ratings);
         _lastSeasonStatsCache[playerId] = stats;
         return stats;
+    }
+
+    public IReadOnlyList<MedicalPlayerStatus> GetMedicalRiskBoard(int maxCount = 8)
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        return GetSelectedTeamRoster()
+            .Select(player => BuildMedicalPlayerStatus(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
+            .Where(status => status.IsInjured || status.DaysUntilAvailable > 0 || status.Fatigue >= 25)
+            .OrderByDescending(status => status.IsInjured)
+            .ThenByDescending(status => status.DaysUntilAvailable)
+            .ThenByDescending(status => status.Fatigue)
+            .ThenBy(status => status.PlayerName)
+            .Take(Math.Max(1, maxCount))
+            .ToList();
+    }
+
+    public string GetPlayerMedicalReport(Guid playerId, string playerName, string primaryPosition, string secondaryPosition, int age)
+    {
+        return BuildMedicalPlayerStatus(playerId, playerName, primaryPosition, secondaryPosition, age).Report;
+    }
+
+    public string GetPlayerMedicalStatus(Guid playerId, string playerName, string primaryPosition, string secondaryPosition, int age)
+    {
+        return BuildMedicalPlayerStatus(playerId, playerName, primaryPosition, secondaryPosition, age).Status;
     }
 
     public IReadOnlyList<CoachProfileView> GetCoachingStaff()
@@ -616,6 +676,8 @@ public sealed class FranchiseSession
 
     public void ApplyPerformanceDevelopment(MatchPlayerSnapshot batter, MatchPlayerSnapshot pitcher, MatchTeamState defensiveTeam, ResultEvent result)
     {
+        TrackPitcherUsage(pitcher);
+
         if (!result.EndsPlateAppearance)
         {
             return;
@@ -941,6 +1003,7 @@ public sealed class FranchiseSession
         _saveState.QuickMatchLiveMatch = null;
         _saveState.PlayerRatings.Clear();
         _saveState.PlayerSeasonStats.Clear();
+        _saveState.PlayerHealth.Clear();
         _saveState.PlayerAssignments.Clear();
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
@@ -1030,6 +1093,24 @@ public sealed class FranchiseSession
         return _leagueData.Players.FirstOrDefault(player => player.PlayerId == playerId);
     }
 
+    private bool EnsurePlayerHealthGenerated()
+    {
+        var hasChanges = false;
+
+        foreach (var player in _leagueData.Players)
+        {
+            if (_saveState.PlayerHealth.ContainsKey(player.PlayerId))
+            {
+                continue;
+            }
+
+            _saveState.PlayerHealth[player.PlayerId] = new PlayerHealthState();
+            hasChanges = true;
+        }
+
+        return hasChanges;
+    }
+
     private bool EnsurePlayerAssignmentsGenerated()
     {
         var hasChanges = false;
@@ -1101,7 +1182,7 @@ public sealed class FranchiseSession
         var candidates = new List<CoachAssignmentState>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        for (var i = 0; i < 6; i++)
+        for (var i = 0; i < 12 && candidates.Count < 8; i++)
         {
             var firstName = CoachFirstNames[(seed + (i * 3)) % CoachFirstNames.Length];
             var lastName = CoachLastNames[(seed / 3 + (i * 5)) % CoachLastNames.Length];
@@ -1333,14 +1414,15 @@ public sealed class FranchiseSession
     {
         return
         [
-            new AttributeInsight("contact", ratings.ContactRating),
-            new AttributeInsight("power", ratings.PowerRating),
-            new AttributeInsight("discipline", ratings.DisciplineRating),
-            new AttributeInsight("speed", ratings.SpeedRating),
-            new AttributeInsight("fielding", ratings.FieldingRating),
-            new AttributeInsight("arm", ratings.ArmRating),
-            new AttributeInsight("pitching", ratings.PitchingRating),
-            new AttributeInsight("durability", ratings.DurabilityRating)
+            new AttributeInsight("contact", ratings.EffectiveContactRating),
+            new AttributeInsight("power", ratings.EffectivePowerRating),
+            new AttributeInsight("discipline", ratings.EffectiveDisciplineRating),
+            new AttributeInsight("speed", ratings.EffectiveSpeedRating),
+            new AttributeInsight("fielding", ratings.EffectiveFieldingRating),
+            new AttributeInsight("arm", ratings.EffectiveArmRating),
+            new AttributeInsight("pitching", ratings.EffectivePitchingRating),
+            new AttributeInsight("stamina", ratings.EffectiveStaminaRating),
+            new AttributeInsight("durability", ratings.EffectiveDurabilityRating)
         ];
     }
 
@@ -1348,15 +1430,19 @@ public sealed class FranchiseSession
     {
         return coachRole switch
         {
-            "Hitting Coach" when isPitcher => ["pitching", "durability", "arm", "discipline"],
+            "Hitting Coach" when isPitcher => ["pitching", "stamina", "durability", "arm"],
             "Hitting Coach" => ["contact", "power", "discipline", "speed"],
-            "Pitching Coach" when isPitcher => ["pitching", "durability", "arm", "discipline"],
+            "Pitching Coach" when isPitcher => ["pitching", "stamina", "durability", "arm"],
             "Pitching Coach" => ["arm", "fielding", "speed", "durability"],
-            "Bench Coach" when isPitcher => ["durability", "arm", "fielding", "discipline"],
+            "Bench Coach" when isPitcher => ["stamina", "durability", "arm", "discipline"],
             "Bench Coach" => ["fielding", "speed", "arm", "discipline"],
-            "Manager" when isPitcher => ["pitching", "durability", "discipline", "arm"],
+            "Manager" when isPitcher => ["pitching", "stamina", "durability", "discipline"],
             "Manager" => ["contact", "discipline", "durability", "fielding"],
-            _ when isPitcher => ["pitching", "durability", "arm", "discipline"],
+            "Team Doctor" when isPitcher => ["durability", "stamina", "pitching", "discipline"],
+            "Team Doctor" => ["durability", "speed", "fielding", "discipline"],
+            "Physiologist" when isPitcher => ["stamina", "durability", "arm", "pitching"],
+            "Physiologist" => ["speed", "durability", "fielding", "contact"],
+            _ when isPitcher => ["pitching", "stamina", "durability", "arm"],
             _ => ["contact", "power", "speed", "fielding"]
         };
     }
@@ -1386,6 +1472,9 @@ public sealed class FranchiseSession
             "pitching" => attribute.Rating >= 70
                 ? Pick(random, ["the mound stuff is good enough to miss bats", "his stuff can drive the action on the mound", "the pitch quality is what gets your attention first"])
                 : Pick(random, ["there is enough on the mound to compete", "he can survive on the hill with that mix", "the arm talent gives him a chance"]),
+            "stamina" => attribute.Rating >= 70
+                ? Pick(random, ["he looks built to carry a heavy workload", "the tank should hold up deep into games", "his recovery profile looks strong for regular use"])
+                : Pick(random, ["he can get through a reasonable workload", "there is enough gas there for steady use", "the stamina should be manageable with normal rest"]),
             _ => attribute.Rating >= 70
                 ? Pick(random, ["he looks built to hold up over a long stretch", "the body looks ready for a workload", "he should be able to handle regular action"])
                 : Pick(random, ["he can handle a fair amount of work", "the durability looks serviceable", "he should be able to stay in the mix"])
@@ -1403,6 +1492,7 @@ public sealed class FranchiseSession
             "fielding" => Pick(random, ["the glove can get a little shaky", "the defensive reliability is not fully there yet", "I would not call the fielding a strength"]),
             "arm" => Pick(random, ["the arm is a little light for impact work", "the throw does not always carry the way you want", "there is only modest arm strength there"]),
             "pitching" => Pick(random, ["the mound quality still needs work", "I am not fully sold on the pure stuff yet", "there is not enough weaponry there right now"]),
+            "stamina" => Pick(random, ["the tank may run a little light under a starter's workload", "I would watch how long he holds his stuff", "he may need careful workload management once the pitch count climbs"]),
             _ => Pick(random, ["I would want to watch how his body holds up over time", "the long-haul durability still worries me a little", "there is some risk if you ask for a heavy workload"])
         };
     }
@@ -1415,6 +1505,8 @@ public sealed class FranchiseSession
             "Hitting Coach" => ["barrel control", "plate discipline", "pull-side juice", "situational hitting"],
             "Pitching Coach" => ["mound command", "durability planning", "velocity work", "finishing secondary pitches"],
             "Bench Coach" => ["defensive positioning", "baserunning pressure", "late-game matchups", "versatility work"],
+            "Team Doctor" => ["injury prevention", "return-to-play timing", "soft-tissue care", "arm-health monitoring"],
+            "Physiologist" => ["recovery planning", "workload balance", "mobility work", "energy management"],
             _ => ["long-range projection", "ceiling reads", "makeup and instincts", "league coverage"]
         };
     }
@@ -1427,6 +1519,8 @@ public sealed class FranchiseSession
             "Hitting Coach" => ["bat-first", "plain-spoken", "detail-heavy"],
             "Pitching Coach" => ["grinder", "calm", "old-school"],
             "Bench Coach" => ["practical", "sharp-eyed", "situational"],
+            "Team Doctor" => ["clinical", "calm", "protective"],
+            "Physiologist" => ["measured", "recovery-focused", "upbeat"],
             _ => ["balanced", "optimistic", "cautious"]
         };
     }
@@ -1554,6 +1648,7 @@ public sealed class FranchiseSession
         ratings.FieldingRating = Math.Clamp(ratings.FieldingRating, 1, 99);
         ratings.ArmRating = Math.Clamp(ratings.ArmRating, 1, 99);
         ratings.PitchingRating = Math.Clamp(ratings.PitchingRating, 1, 99);
+        ratings.StaminaRating = Math.Clamp(ratings.StaminaRating, 1, 99);
         ratings.DurabilityRating = Math.Clamp(ratings.DurabilityRating, 1, 99);
     }
 
@@ -1629,7 +1724,13 @@ public sealed class FranchiseSession
             }
 
             GetPlayerSeasonStats(player.Id).GamesPlayed++;
+            if (player.Id != team.StartingPitcher.Id)
+            {
+                ApplyPositionPlayerGameFatigue(player);
+            }
         }
+
+        ApplyPitcherGameFatigue(team.StartingPitcher, team.PitchCount);
 
         var pitcherStats = GetPlayerSeasonStats(team.StartingPitcher.Id);
         pitcherStats.GamesPitched++;
@@ -1700,14 +1801,11 @@ public sealed class FranchiseSession
 
     private void AdvanceFranchiseDateToNextUnplayedGame()
     {
+        var currentDate = _saveState.CurrentFranchiseDate.Date;
         var nextGame = GetNextScheduledGameForSelectedTeam();
-        if (nextGame != null)
-        {
-            _saveState.CurrentFranchiseDate = nextGame.Date.Date;
-            return;
-        }
-
-        _saveState.CurrentFranchiseDate = _saveState.CurrentFranchiseDate.Date.AddDays(1);
+        var targetDate = nextGame?.Date.Date ?? currentDate.AddDays(1);
+        ApplyRecoveryBetweenDates(currentDate, targetDate);
+        _saveState.CurrentFranchiseDate = targetDate;
     }
 
     private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)
@@ -1731,13 +1829,15 @@ public sealed class FranchiseSession
     private List<MatchPlayerSnapshot> BuildSelectedTeamLineup()
     {
         var lineup = GetLineupPlayers()
+            .Where(player => !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
             .OrderBy(player => player.LineupSlot)
             .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
             .ToList();
 
         var remainingPlayers = GetSelectedTeamRoster()
             .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
-            .OrderBy(player => player.PlayerName)
+            .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+            .ThenBy(player => player.PlayerName)
             .ToList();
 
         foreach (var player in remainingPlayers)
@@ -1760,8 +1860,19 @@ public sealed class FranchiseSession
 
     private MatchPlayerSnapshot? BuildSelectedTeamPitcher()
     {
-        var pitcher = GetRotationPlayers().OrderBy(player => player.RotationSlot).FirstOrDefault()
-                     ?? GetSelectedTeamRoster().FirstOrDefault(player => player.PrimaryPosition is "SP" or "RP");
+        var rotationCandidates = GetRotationPlayers()
+            .Concat(GetBullpenPlayers())
+            .Where(player => player.PrimaryPosition is "SP" or "RP")
+            .OrderBy(player => ShouldRestPlayer(player.PlayerId, player.PrimaryPosition) ? 1 : 0)
+            .ThenBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+            .ThenBy(player => player.RotationSlot ?? 99)
+            .ToList();
+
+        var pitcher = rotationCandidates.FirstOrDefault()
+                     ?? GetSelectedTeamRoster()
+                         .Where(player => player.PrimaryPosition is "SP" or "RP")
+                         .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+                         .FirstOrDefault();
 
         return pitcher == null
             ? null
@@ -1771,14 +1882,15 @@ public sealed class FranchiseSession
     private List<MatchPlayerSnapshot> BuildImportedTeamLineup(string teamName)
     {
         var lineup = GetTeamRoster(teamName)
-            .Where(player => player.LineupSlot.HasValue)
+            .Where(player => player.LineupSlot.HasValue && !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
             .OrderBy(player => player.LineupSlot)
             .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
             .ToList();
 
         var fillPlayers = GetTeamRoster(teamName)
             .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
-            .OrderBy(player => player.PlayerName)
+            .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+            .ThenBy(player => player.PlayerName)
             .ToList();
 
         foreach (var player in fillPlayers)
@@ -1802,9 +1914,12 @@ public sealed class FranchiseSession
     private MatchPlayerSnapshot? BuildImportedPitcher(string teamName)
     {
         var pitcher = GetTeamRoster(teamName)
-            .OrderBy(player => player.RotationSlot ?? 99)
+            .Where(player => player.PrimaryPosition is "SP" or "RP")
+            .OrderBy(player => ShouldRestPlayer(player.PlayerId, player.PrimaryPosition) ? 1 : 0)
+            .ThenBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+            .ThenBy(player => player.RotationSlot ?? 99)
             .ThenBy(player => player.PrimaryPosition is "SP" ? 0 : 1)
-            .FirstOrDefault(player => player.PrimaryPosition is "SP" or "RP");
+            .FirstOrDefault();
 
         return pitcher == null
             ? null
@@ -1821,14 +1936,15 @@ public sealed class FranchiseSession
             primaryPosition,
             secondaryPosition,
             age,
-            ratings.ContactRating,
-            ratings.PowerRating,
-            ratings.DisciplineRating,
-            ratings.SpeedRating,
-            ratings.PitchingRating,
-            ratings.FieldingRating,
-            ratings.ArmRating,
-            ratings.DurabilityRating,
+            ratings.EffectiveContactRating,
+            ratings.EffectivePowerRating,
+            ratings.EffectiveDisciplineRating,
+            ratings.EffectiveSpeedRating,
+            ratings.EffectivePitchingRating,
+            ratings.EffectiveFieldingRating,
+            ratings.EffectiveArmRating,
+            ratings.EffectiveStaminaRating,
+            ratings.EffectiveDurabilityRating,
             ratings.OverallRating);
     }
 
@@ -1908,9 +2024,15 @@ public sealed class FranchiseSession
 
         foreach (var player in _leagueData.Players)
         {
-            if (_saveState.PlayerRatings.ContainsKey(player.PlayerId))
+            if (_saveState.PlayerRatings.TryGetValue(player.PlayerId, out var existingRatings))
             {
-                _saveState.PlayerRatings[player.PlayerId].RecalculateDerivedRatings();
+                if (existingRatings.StaminaRating <= 0)
+                {
+                    existingRatings.StaminaRating = PlayerRatingsGenerator.Generate(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age).StaminaRating;
+                    hasChanges = true;
+                }
+
+                existingRatings.RecalculateDerivedRatings();
                 continue;
             }
 
@@ -2004,6 +2126,405 @@ public sealed class FranchiseSession
             Walks = walks,
             Strikeouts = strikeouts
         };
+    }
+
+    private void TrackPitcherUsage(MatchPlayerSnapshot pitcher)
+    {
+        if (!_saveState.PlayerHealth.ContainsKey(pitcher.Id) || pitcher.PrimaryPosition is not ("SP" or "RP"))
+        {
+            return;
+        }
+
+        var health = GetPlayerHealth(pitcher.Id);
+        health.PitchCountToday = Math.Min(180, health.PitchCountToday + 1);
+    }
+
+    private void ApplyPositionPlayerGameFatigue(MatchPlayerSnapshot player)
+    {
+        if (!_saveState.PlayerHealth.ContainsKey(player.Id) || player.PrimaryPosition is "SP" or "RP")
+        {
+            return;
+        }
+
+        var health = GetPlayerHealth(player.Id);
+        var fatigueGain = player.PrimaryPosition == "C" ? 8 : 6;
+        if (player.Age >= 32)
+        {
+            fatigueGain += 1;
+        }
+
+        if (player.DurabilityRating >= 70)
+        {
+            fatigueGain = Math.Max(4, fatigueGain - 1);
+        }
+
+        health.Fatigue = Math.Clamp(health.Fatigue + fatigueGain, 0, 100);
+        if (health.Fatigue >= 90)
+        {
+            health.DaysUntilAvailable = Math.Max(health.DaysUntilAvailable, 1);
+        }
+
+        MaybeApplyFatigueInjury(player, health);
+    }
+
+    private void ApplyPitcherGameFatigue(MatchPlayerSnapshot pitcher, int matchPitchCount)
+    {
+        if (!_saveState.PlayerHealth.ContainsKey(pitcher.Id) || pitcher.PrimaryPosition is not ("SP" or "RP"))
+        {
+            return;
+        }
+
+        var health = GetPlayerHealth(pitcher.Id);
+        var pitchCount = Math.Max(matchPitchCount, health.PitchCountToday);
+        health.LastPitchCount = pitchCount;
+        health.PitchCountToday = 0;
+        health.Fatigue = Math.Clamp(health.Fatigue + CalculatePitcherFatigueGain(pitchCount, pitcher.StaminaRating, pitcher.DurabilityRating), 0, 100);
+        health.DaysUntilAvailable = Math.Max(health.DaysUntilAvailable, CalculatePitcherRecoveryDays(pitchCount, pitcher.StaminaRating, pitcher.DurabilityRating));
+        MaybeApplyFatigueInjury(pitcher, health);
+    }
+
+    private void ApplyPracticeDevelopmentBetweenDates(DateTime currentDate, DateTime targetDate)
+    {
+        if (SelectedTeam == null)
+        {
+            return;
+        }
+
+        var roster = GetSelectedTeamRoster();
+        if (roster.Count == 0)
+        {
+            return;
+        }
+
+        for (var practiceDate = currentDate.Date.AddDays(1); practiceDate < targetDate.Date; practiceDate = practiceDate.AddDays(1))
+        {
+            var focus = ResolvePracticeDevelopmentFocus(practiceDate);
+            foreach (var player in roster)
+            {
+                ApplyPracticeDevelopment(player, focus, practiceDate);
+            }
+        }
+    }
+
+    private void ApplyPracticeDevelopment(FranchiseRosterEntry player, TeamPracticeFocus focus, DateTime practiceDate)
+    {
+        var random = CreateStableRandom(player.PlayerId.ToString(), "practice-growth", practiceDate.ToString("yyyyMMdd"), focus.ToString(), player.PrimaryPosition);
+        var ratingGain = RollPracticeDevelopmentGain(random);
+        if (ratingGain <= 0d)
+        {
+            return;
+        }
+
+        var attribute = PickPracticeDevelopmentAttribute(random, focus, player.PrimaryPosition);
+        AdjustPlayerRatings(player.PlayerId, ratings => ApplyPracticeDevelopmentGain(ratings, attribute, ratingGain));
+    }
+
+    private TeamPracticeFocus ResolvePracticeDevelopmentFocus(DateTime practiceDate)
+    {
+        var focus = GetPracticeFocus(practiceDate);
+        if (SelectedTeam == null || focus == TeamPracticeFocus.Recovery || HasCustomPracticeFocus(practiceDate))
+        {
+            return focus;
+        }
+
+        var teamGames = _leagueData.Schedule
+            .Where(game =>
+                string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var previousGame = teamGames.Where(game => game.Date.Date < practiceDate.Date).OrderByDescending(game => game.Date).FirstOrDefault();
+        var nextGame = teamGames.Where(game => game.Date.Date > practiceDate.Date).OrderBy(game => game.Date).FirstOrDefault();
+        var daysSinceLastGame = previousGame == null ? 99 : (practiceDate.Date - previousGame.Date.Date).Days;
+        var daysUntilNextGame = nextGame == null ? 99 : (nextGame.Date.Date - practiceDate.Date).Days;
+
+        return daysSinceLastGame == 1 && daysUntilNextGame == 1
+            ? TeamPracticeFocus.Recovery
+            : focus;
+    }
+
+    private static double RollPracticeDevelopmentGain(Random random)
+    {
+        var roll = random.NextDouble();
+        if (roll < 0.125d)
+        {
+            return 2d;
+        }
+
+        if (roll < 0.375d)
+        {
+            return 1d;
+        }
+
+        return roll < 0.875d ? 0.5d : 0d;
+    }
+
+    private static PracticeDevelopmentAttribute PickPracticeDevelopmentAttribute(Random random, TeamPracticeFocus focus, string primaryPosition)
+    {
+        var options = GetPracticeDevelopmentAttributes(focus, primaryPosition);
+        return options[random.Next(options.Length)];
+    }
+
+    private static PracticeDevelopmentAttribute[] GetPracticeDevelopmentAttributes(TeamPracticeFocus focus, string primaryPosition)
+    {
+        var isPitcher = primaryPosition is "SP" or "RP";
+
+        return focus switch
+        {
+            TeamPracticeFocus.Hitting => [PracticeDevelopmentAttribute.Contact, PracticeDevelopmentAttribute.Power, PracticeDevelopmentAttribute.Discipline],
+            TeamPracticeFocus.Pitching when isPitcher => [PracticeDevelopmentAttribute.Pitching, PracticeDevelopmentAttribute.Stamina, PracticeDevelopmentAttribute.Durability],
+            TeamPracticeFocus.Pitching => [PracticeDevelopmentAttribute.Arm, PracticeDevelopmentAttribute.Fielding, PracticeDevelopmentAttribute.Discipline],
+            TeamPracticeFocus.Defense when string.Equals(primaryPosition, "C", StringComparison.OrdinalIgnoreCase) => [PracticeDevelopmentAttribute.Fielding, PracticeDevelopmentAttribute.Arm, PracticeDevelopmentAttribute.Durability],
+            TeamPracticeFocus.Defense => [PracticeDevelopmentAttribute.Fielding, PracticeDevelopmentAttribute.Arm, PracticeDevelopmentAttribute.Speed],
+            TeamPracticeFocus.Baserunning => [PracticeDevelopmentAttribute.Speed, PracticeDevelopmentAttribute.Discipline, PracticeDevelopmentAttribute.Durability],
+            TeamPracticeFocus.Recovery when isPitcher => [PracticeDevelopmentAttribute.Durability, PracticeDevelopmentAttribute.Stamina],
+            TeamPracticeFocus.Recovery => [PracticeDevelopmentAttribute.Durability, PracticeDevelopmentAttribute.Speed],
+            _ when isPitcher => [PracticeDevelopmentAttribute.Pitching, PracticeDevelopmentAttribute.Stamina, PracticeDevelopmentAttribute.Durability, PracticeDevelopmentAttribute.Arm, PracticeDevelopmentAttribute.Fielding],
+            _ => [PracticeDevelopmentAttribute.Contact, PracticeDevelopmentAttribute.Power, PracticeDevelopmentAttribute.Discipline, PracticeDevelopmentAttribute.Speed, PracticeDevelopmentAttribute.Fielding, PracticeDevelopmentAttribute.Arm, PracticeDevelopmentAttribute.Durability]
+        };
+    }
+
+    private static void ApplyPracticeDevelopmentGain(PlayerHiddenRatingsState ratings, PracticeDevelopmentAttribute attribute, double amount)
+    {
+        switch (attribute)
+        {
+            case PracticeDevelopmentAttribute.Contact:
+                (ratings.ContactRating, ratings.ContactProgress) = AddFractionalRating(ratings.ContactRating, ratings.ContactProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Power:
+                (ratings.PowerRating, ratings.PowerProgress) = AddFractionalRating(ratings.PowerRating, ratings.PowerProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Discipline:
+                (ratings.DisciplineRating, ratings.DisciplineProgress) = AddFractionalRating(ratings.DisciplineRating, ratings.DisciplineProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Speed:
+                (ratings.SpeedRating, ratings.SpeedProgress) = AddFractionalRating(ratings.SpeedRating, ratings.SpeedProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Fielding:
+                (ratings.FieldingRating, ratings.FieldingProgress) = AddFractionalRating(ratings.FieldingRating, ratings.FieldingProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Arm:
+                (ratings.ArmRating, ratings.ArmProgress) = AddFractionalRating(ratings.ArmRating, ratings.ArmProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Pitching:
+                (ratings.PitchingRating, ratings.PitchingProgress) = AddFractionalRating(ratings.PitchingRating, ratings.PitchingProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Stamina:
+                (ratings.StaminaRating, ratings.StaminaProgress) = AddFractionalRating(ratings.StaminaRating, ratings.StaminaProgress, amount);
+                break;
+            case PracticeDevelopmentAttribute.Durability:
+                (ratings.DurabilityRating, ratings.DurabilityProgress) = AddFractionalRating(ratings.DurabilityRating, ratings.DurabilityProgress, amount);
+                break;
+        }
+    }
+
+    private static (int Rating, double Progress) AddFractionalRating(int rating, double progress, double amount)
+    {
+        var exactRating = Math.Clamp(rating + progress + amount, 1d, 99d);
+        var wholeRating = Math.Clamp((int)Math.Floor(exactRating), 1, 99);
+        var newProgress = wholeRating >= 99
+            ? 0d
+            : Math.Round((exactRating - wholeRating) * 2d, MidpointRounding.AwayFromZero) / 2d;
+
+        return (wholeRating, newProgress);
+    }
+
+    private void ApplyRecoveryBetweenDates(DateTime currentDate, DateTime targetDate)
+    {
+        var daysElapsed = Math.Max(0, (targetDate.Date - currentDate.Date).Days);
+        if (daysElapsed <= 0)
+        {
+            return;
+        }
+
+        ApplyPracticeDevelopmentBetweenDates(currentDate, targetDate);
+
+        foreach (var player in _leagueData.Players)
+        {
+            var health = GetPlayerHealth(player.PlayerId);
+            var isPitcher = player.PrimaryPosition is "SP" or "RP";
+            var recoveryPerDay = isPitcher ? 18 : 4;
+
+            health.Fatigue = Math.Max(0, health.Fatigue - (daysElapsed * recoveryPerDay));
+            health.DaysUntilAvailable = Math.Max(0, health.DaysUntilAvailable - daysElapsed);
+            health.InjuryDaysRemaining = Math.Max(0, health.InjuryDaysRemaining - daysElapsed);
+            if (health.InjuryDaysRemaining == 0)
+            {
+                health.InjuryDescription = string.Empty;
+            }
+
+            if (daysElapsed > 0)
+            {
+                health.PitchCountToday = 0;
+            }
+        }
+    }
+
+    private bool ShouldRestPlayer(Guid playerId, string primaryPosition)
+    {
+        var health = GetPlayerHealth(playerId);
+        if (health.InjuryDaysRemaining > 0)
+        {
+            return true;
+        }
+
+        var isPitcher = primaryPosition is "SP" or "RP";
+        return isPitcher
+            ? health.DaysUntilAvailable > 0 || health.Fatigue >= 80
+            : health.DaysUntilAvailable > 1 || health.Fatigue >= 92;
+    }
+
+    private int GetAvailabilityPriority(Guid playerId, string primaryPosition)
+    {
+        var health = GetPlayerHealth(playerId);
+        var injuryPenalty = health.InjuryDaysRemaining * 1000;
+        var recoveryPenalty = health.DaysUntilAvailable * 100;
+        var fatiguePenalty = health.Fatigue;
+        if (primaryPosition is not ("SP" or "RP") && health.Fatigue >= 90)
+        {
+            fatiguePenalty += 120;
+        }
+
+        return injuryPenalty + recoveryPenalty + fatiguePenalty;
+    }
+
+    private void MaybeApplyFatigueInjury(MatchPlayerSnapshot player, PlayerHealthState health)
+    {
+        if (health.InjuryDaysRemaining > 0 || health.Fatigue < 78)
+        {
+            return;
+        }
+
+        var isPitcher = player.PrimaryPosition is "SP" or "RP";
+        var riskScore = health.Fatigue + (health.DaysUntilAvailable * 8) - (player.DurabilityRating / 4);
+        var riskThreshold = isPitcher ? 92 : 97;
+        if (riskScore < riskThreshold)
+        {
+            return;
+        }
+
+        var random = CreateStableRandom(player.Id.ToString(), GetCurrentFranchiseDate().ToString("yyyyMMdd"), health.Fatigue.ToString(), health.LastPitchCount.ToString());
+        var triggerChance = Math.Clamp(riskScore - riskThreshold + 8, 5, 28);
+        if (random.Next(100) >= triggerChance)
+        {
+            return;
+        }
+
+        var injuryOptions = isPitcher
+            ? new[] { "shoulder inflammation", "forearm tightness", "elbow soreness" }
+            : new[] { "hamstring tightness", "quad soreness", "wrist soreness" };
+        health.InjuryDescription = injuryOptions[random.Next(injuryOptions.Length)];
+        health.InjuryDaysRemaining = isPitcher ? random.Next(3, 8) : random.Next(1, 5);
+        health.DaysUntilAvailable = Math.Max(health.DaysUntilAvailable, health.InjuryDaysRemaining);
+    }
+
+    private MedicalPlayerStatus BuildMedicalPlayerStatus(Guid playerId, string playerName, string primaryPosition, string secondaryPosition, int age)
+    {
+        var health = GetPlayerHealth(playerId);
+        var ratings = GetPlayerRatings(playerId, playerName, primaryPosition, secondaryPosition, age);
+        var isPitcher = primaryPosition is "SP" or "RP";
+
+        string status;
+        string report;
+
+        if (health.InjuryDaysRemaining > 0)
+        {
+            status = $"Out {health.InjuryDaysRemaining}d";
+            report = $"{GetMedicalStaffName("Team Doctor")}: {playerName} is dealing with {health.InjuryDescription}. I would plan on about {health.InjuryDaysRemaining} more day(s) down.";
+        }
+        else if (isPitcher && health.DaysUntilAvailable > 0)
+        {
+            var recentPitchCount = Math.Max(health.LastPitchCount, health.PitchCountToday);
+            status = $"Rest {health.DaysUntilAvailable}d";
+            report = $"{GetMedicalStaffName("Physiologist")}: after {recentPitchCount} pitches, the arm still needs {health.DaysUntilAvailable} more day(s). Stamina looks {DescribeStamina(ratings.EffectiveStaminaRating)}.";
+        }
+        else if (health.Fatigue >= 75)
+        {
+            status = "High risk";
+            report = isPitcher
+                ? $"{GetMedicalStaffName("Team Doctor")}: the arm is running hot right now. I would avoid another heavy outing until he settles."
+                : $"{GetMedicalStaffName("Physiologist")}: the legs look heavy. He can play, but a rest day would help.";
+        }
+        else if (health.Fatigue >= 45)
+        {
+            status = "Watch";
+            report = isPitcher
+                ? "He is usable, but the stuff could back up once the pitch count climbs."
+                : "The workload is starting to show. I would rotate in a lighter day soon.";
+        }
+        else
+        {
+            status = "Ready";
+            report = isPitcher
+                ? "No major red flag today. He looks ready for a normal pitching load."
+                : "No major concern today. He should handle a regular game workload.";
+        }
+
+        return new MedicalPlayerStatus(playerId, playerName, primaryPosition, status, report, health.Fatigue, health.DaysUntilAvailable, health.InjuryDaysRemaining > 0);
+    }
+
+    private string GetMedicalStaffName(string role)
+    {
+        return GetCoachingStaff().FirstOrDefault(coach => string.Equals(coach.Role, role, StringComparison.OrdinalIgnoreCase))?.Name ?? role;
+    }
+
+    private static string DescribeStamina(int staminaRating)
+    {
+        return staminaRating switch
+        {
+            >= 75 => "strong",
+            >= 60 => "solid",
+            >= 45 => "average",
+            _ => "light"
+        };
+    }
+
+    private static int CalculatePitcherFatigueGain(int pitchCount, int staminaRating, int durabilityRating)
+    {
+        if (pitchCount <= 0)
+        {
+            return 0;
+        }
+
+        var comfortLimit = 50 + (staminaRating / 2);
+        var overage = Math.Max(0, pitchCount - comfortLimit);
+        var durabilityOffset = Math.Max(0, durabilityRating - 50) / 6;
+        return Math.Clamp(8 + (pitchCount / 4) + (overage / 2) - durabilityOffset, 8, 75);
+    }
+
+    private static int CalculatePitcherRecoveryDays(int pitchCount, int staminaRating, int durabilityRating)
+    {
+        if (pitchCount <= 25)
+        {
+            return 1;
+        }
+
+        var comfortLimit = 50 + (staminaRating / 2);
+        var overage = Math.Max(0, pitchCount - comfortLimit);
+        var baseDays = pitchCount switch
+        {
+            >= 115 => 5,
+            >= 100 => 4,
+            >= 85 => 3,
+            >= 65 => 2,
+            _ => 1
+        };
+
+        if (overage >= 20)
+        {
+            baseDays++;
+        }
+
+        if (durabilityRating >= 72)
+        {
+            baseDays--;
+        }
+        else if (durabilityRating <= 40)
+        {
+            baseDays++;
+        }
+
+        return Math.Clamp(baseDays, 1, 7);
     }
 
     private static double MapRating(double rating, double lowValue, double highValue)

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace BaseballManager.Game.Data;
 
 public sealed class FranchiseSaveState
@@ -15,6 +17,8 @@ public sealed class FranchiseSaveState
     public Dictionary<Guid, PlayerHiddenRatingsState> PlayerRatings { get; set; } = new();
 
     public Dictionary<Guid, PlayerSeasonStatsState> PlayerSeasonStats { get; set; } = new();
+
+    public Dictionary<Guid, PlayerHealthState> PlayerHealth { get; set; } = new();
 
     public Dictionary<Guid, string> PlayerAssignments { get; set; } = new();
 
@@ -84,29 +88,150 @@ public sealed class PlayerHiddenRatingsState
 {
     public int ContactRating { get; set; }
 
+    public double ContactProgress { get; set; }
+
     public int PowerRating { get; set; }
+
+    public double PowerProgress { get; set; }
 
     public int DisciplineRating { get; set; }
 
+    public double DisciplineProgress { get; set; }
+
     public int SpeedRating { get; set; }
+
+    public double SpeedProgress { get; set; }
 
     public int FieldingRating { get; set; }
 
+    public double FieldingProgress { get; set; }
+
     public int ArmRating { get; set; }
+
+    public double ArmProgress { get; set; }
 
     public int PitchingRating { get; set; }
 
+    public double PitchingProgress { get; set; }
+
+    public int StaminaRating { get; set; }
+
+    public double StaminaProgress { get; set; }
+
     public int DurabilityRating { get; set; }
+
+    public double DurabilityProgress { get; set; }
 
     public int AttributeTotal { get; set; }
 
     public int OverallRating { get; set; }
 
+    [JsonIgnore]
+    public double ContactExactRating => GetExactRating(ContactRating, ContactProgress);
+
+    [JsonIgnore]
+    public double PowerExactRating => GetExactRating(PowerRating, PowerProgress);
+
+    [JsonIgnore]
+    public double DisciplineExactRating => GetExactRating(DisciplineRating, DisciplineProgress);
+
+    [JsonIgnore]
+    public double SpeedExactRating => GetExactRating(SpeedRating, SpeedProgress);
+
+    [JsonIgnore]
+    public double FieldingExactRating => GetExactRating(FieldingRating, FieldingProgress);
+
+    [JsonIgnore]
+    public double ArmExactRating => GetExactRating(ArmRating, ArmProgress);
+
+    [JsonIgnore]
+    public double PitchingExactRating => GetExactRating(PitchingRating, PitchingProgress);
+
+    [JsonIgnore]
+    public double StaminaExactRating => GetExactRating(StaminaRating, StaminaProgress);
+
+    [JsonIgnore]
+    public double DurabilityExactRating => GetExactRating(DurabilityRating, DurabilityProgress);
+
+    [JsonIgnore]
+    public int EffectiveContactRating => GetEffectiveRating(ContactExactRating);
+
+    [JsonIgnore]
+    public int EffectivePowerRating => GetEffectiveRating(PowerExactRating);
+
+    [JsonIgnore]
+    public int EffectiveDisciplineRating => GetEffectiveRating(DisciplineExactRating);
+
+    [JsonIgnore]
+    public int EffectiveSpeedRating => GetEffectiveRating(SpeedExactRating);
+
+    [JsonIgnore]
+    public int EffectiveFieldingRating => GetEffectiveRating(FieldingExactRating);
+
+    [JsonIgnore]
+    public int EffectiveArmRating => GetEffectiveRating(ArmExactRating);
+
+    [JsonIgnore]
+    public int EffectivePitchingRating => GetEffectiveRating(PitchingExactRating);
+
+    [JsonIgnore]
+    public int EffectiveStaminaRating => GetEffectiveRating(StaminaExactRating);
+
+    [JsonIgnore]
+    public int EffectiveDurabilityRating => GetEffectiveRating(DurabilityExactRating);
+
     public void RecalculateDerivedRatings()
     {
-        AttributeTotal = ContactRating + PowerRating + DisciplineRating + SpeedRating + FieldingRating + ArmRating + PitchingRating + DurabilityRating;
-        OverallRating = Math.Clamp((int)Math.Round(AttributeTotal / 8d), 1, 99);
+        ContactProgress = NormalizeProgress(ContactRating, ContactProgress);
+        PowerProgress = NormalizeProgress(PowerRating, PowerProgress);
+        DisciplineProgress = NormalizeProgress(DisciplineRating, DisciplineProgress);
+        SpeedProgress = NormalizeProgress(SpeedRating, SpeedProgress);
+        FieldingProgress = NormalizeProgress(FieldingRating, FieldingProgress);
+        ArmProgress = NormalizeProgress(ArmRating, ArmProgress);
+        PitchingProgress = NormalizeProgress(PitchingRating, PitchingProgress);
+        StaminaProgress = NormalizeProgress(StaminaRating, StaminaProgress);
+        DurabilityProgress = NormalizeProgress(DurabilityRating, DurabilityProgress);
+
+        var exactTotal = ContactExactRating + PowerExactRating + DisciplineExactRating + SpeedExactRating + FieldingExactRating + ArmExactRating + PitchingExactRating + StaminaExactRating + DurabilityExactRating;
+        AttributeTotal = Math.Clamp((int)Math.Round(exactTotal, MidpointRounding.AwayFromZero), 9, 891);
+        OverallRating = Math.Clamp((int)Math.Round(exactTotal / 9d, MidpointRounding.AwayFromZero), 1, 99);
     }
+
+    private static double GetExactRating(int baseRating, double progress)
+    {
+        return Math.Clamp(baseRating + NormalizeProgress(baseRating, progress), 1d, 99d);
+    }
+
+    private static int GetEffectiveRating(double exactRating)
+    {
+        return Math.Clamp((int)Math.Round(exactRating, MidpointRounding.AwayFromZero), 1, 99);
+    }
+
+    private static double NormalizeProgress(int baseRating, double progress)
+    {
+        if (baseRating <= 1 || baseRating >= 99)
+        {
+            return 0d;
+        }
+
+        var clamped = Math.Clamp(progress, 0d, 0.5d);
+        return Math.Round(clamped * 2d, MidpointRounding.AwayFromZero) / 2d;
+    }
+}
+
+public sealed class PlayerHealthState
+{
+    public int Fatigue { get; set; }
+
+    public int PitchCountToday { get; set; }
+
+    public int LastPitchCount { get; set; }
+
+    public int DaysUntilAvailable { get; set; }
+
+    public int InjuryDaysRemaining { get; set; }
+
+    public string InjuryDescription { get; set; } = string.Empty;
 }
 
 public sealed class PlayerSeasonStatsState

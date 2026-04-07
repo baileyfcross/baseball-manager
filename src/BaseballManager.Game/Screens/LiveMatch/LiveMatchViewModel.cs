@@ -40,6 +40,10 @@ public sealed class LiveMatchViewModel
 
     public string PitcherName { get; init; } = string.Empty;
 
+    public int PitchCount { get; init; }
+
+    public string PitcherFatigueText { get; init; } = "Fresh";
+
     public string LatestPlayText { get; init; } = "First pitch coming up.";
 
     public string StatusText { get; init; } = "Live";

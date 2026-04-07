@@ -29,6 +29,12 @@ public static class PlayerRatingsGenerator
         var fielding = RollBellCurve(random, 50 + PositionBonus(normalizedPosition, "SS", "2B", "3B", "CF", "C"), 11);
         var arm = RollBellCurve(random, 49 + PositionBonus(normalizedPosition, "C", "3B", "SS", "CF", "RF"), 12);
         var durability = RollBellCurve(random, 56 + ageAdjustment, 10);
+        var stamina = normalizedPosition switch
+        {
+            "SP" => RollBellCurve(random, 70 + ageAdjustment, 10),
+            "RP" => RollBellCurve(random, 58 + ageAdjustment, 9),
+            _ => RollBellCurve(random, 55 + (ageAdjustment / 2d) + PositionBonus(normalizedPosition, "C", "SS", "CF"), 10)
+        };
 
         var pitching = normalizedPosition switch
         {
@@ -53,6 +59,7 @@ public static class PlayerRatingsGenerator
             FieldingRating = fielding,
             ArmRating = arm,
             PitchingRating = pitching,
+            StaminaRating = stamina,
             DurabilityRating = durability
         };
 

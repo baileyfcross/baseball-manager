@@ -15,7 +15,7 @@ public sealed class LiveMatchHudRenderer
         var panelWidth = sidebarWidth - (panelHorizontalMargin * 2);
         var contentWidth = panelWidth - 36;
         var scorePanel = new Rectangle(panelX, 40, panelWidth, 180);
-        var detailPanel = new Rectangle(panelX, 240, panelWidth, 220);
+        var detailPanel = new Rectangle(panelX, 240, panelWidth, 250);
         var latestPlayY = detailPanel.Bottom + 20;
         var latestPlayHeight = Math.Max(140, viewport.Height - latestPlayY - 40);
         var latestPlayPanel = new Rectangle(panelX, latestPlayY, panelWidth, latestPlayHeight);
@@ -31,9 +31,11 @@ public sealed class LiveMatchHudRenderer
         uiRenderer.DrawText($"Outs: {viewModel.Outs}", new Vector2(panelX + 18, 288), Color.White, uiRenderer.ScoreboardFont);
         uiRenderer.DrawText($"Batter: {TrimToWidth(viewModel.BatterName, contentWidth - 62, uiRenderer.UiSmallFont)}", new Vector2(panelX + 18, 324), Color.White);
         uiRenderer.DrawText($"Pitcher: {TrimToWidth(viewModel.PitcherName, contentWidth - 68, uiRenderer.UiSmallFont)}", new Vector2(panelX + 18, 352), Color.White);
-        uiRenderer.DrawText($"On 1st: {RunnerDisplay(viewModel.RunnerOnFirst, viewModel.RunnerOnFirstName)}", new Vector2(panelX + 18, 382), Color.White);
-        uiRenderer.DrawText($"On 2nd: {RunnerDisplay(viewModel.RunnerOnSecond, viewModel.RunnerOnSecondName)}", new Vector2(panelX + 18, 406), Color.White);
-        uiRenderer.DrawText($"On 3rd: {RunnerDisplay(viewModel.RunnerOnThird, viewModel.RunnerOnThirdName)}", new Vector2(panelX + 18, 430), Color.White);
+        uiRenderer.DrawText($"Pitch Ct: {viewModel.PitchCount}", new Vector2(panelX + 18, 380), Color.White);
+        uiRenderer.DrawText($"Arm: {viewModel.PitcherFatigueText}", new Vector2(panelX + 18, 404), Color.White);
+        uiRenderer.DrawText($"On 1st: {RunnerDisplay(viewModel.RunnerOnFirst, viewModel.RunnerOnFirstName)}", new Vector2(panelX + 18, 430), Color.White);
+        uiRenderer.DrawText($"On 2nd: {RunnerDisplay(viewModel.RunnerOnSecond, viewModel.RunnerOnSecondName)}", new Vector2(panelX + 18, 454), Color.White);
+        uiRenderer.DrawText($"On 3rd: {RunnerDisplay(viewModel.RunnerOnThird, viewModel.RunnerOnThirdName)}", new Vector2(panelX + 18, 478), Color.White);
 
         uiRenderer.DrawButton(string.Empty, latestPlayPanel, new Color(48, 26, 24, 210), Color.Transparent);
         uiRenderer.DrawText(viewModel.IsGameOver ? "FINAL" : "LATEST PLAY", new Vector2(panelX + 18, latestPlayPanel.Y + 16), viewModel.IsGameOver ? Color.Gold : Color.White, uiRenderer.UiMediumFont);

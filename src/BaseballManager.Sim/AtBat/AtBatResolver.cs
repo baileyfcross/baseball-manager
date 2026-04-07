@@ -30,6 +30,7 @@ public sealed class AtBatResolver
     public ResultEvent Resolve(MatchState state, Random random)
     {
         var batter = state.CurrentBatter;
+        state.DefensiveTeam.PitchCount++;
         var pitch = _pitchResolver.ResolvePitch(state, random);
 
         switch (pitch.OutcomeType)

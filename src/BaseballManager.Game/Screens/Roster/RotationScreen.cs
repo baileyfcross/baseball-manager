@@ -106,7 +106,8 @@ public sealed class RotationScreen : GameScreen
             else if (GetNextPageBounds().Contains(mousePosition))
             {
                 var bullpenRows = GetBullpenRows();
-                var maxPage = Math.Max(0, (int)Math.Ceiling(bullpenRows.Count / 10d) - 1);
+                var pageSize = GetBullpenPageSize();
+                var maxPage = Math.Max(0, (int)Math.Ceiling(bullpenRows.Count / (double)pageSize) - 1);
                 if (_pageIndex < maxPage)
                 {
                     _nextPageButton.Click();
@@ -178,7 +179,7 @@ public sealed class RotationScreen : GameScreen
             }
 
             uiRenderer.DrawText("BULLPEN / EXTRA ARMS", new Vector2(bullpenPanelBounds.X + 12, headerY), Color.White, uiRenderer.UiMediumFont);
-            var pageSize = 10;
+            var pageSize = GetBullpenPageSize();
             var startIndex = _pageIndex * pageSize;
             var visibleRows = bullpenRows.Skip(startIndex).Take(pageSize).ToList();
             for (var i = 0; i < visibleRows.Count; i++)
@@ -257,24 +258,33 @@ public sealed class RotationScreen : GameScreen
         return new Rectangle(rotationPanelBounds.Right + gap, rotationPanelBounds.Y, Math.Max(360, _viewport.X - rotationPanelBounds.Right - gap - 60), rotationPanelBounds.Height);
     }
 
-    private int GetListRowHeight(int rowCount)
+    private static int GetListRowHeight(Rectangle panelBounds, int rowCount)
     {
-        var panelHeight = GetBullpenPanelBounds().Height;
-        var spacing = 6;
-        return Math.Clamp((panelHeight - 58 - ((rowCount - 1) * spacing)) / rowCount, 28, 40);
+        const int spacing = 6;
+        const int verticalPadding = 28;
+        return Math.Clamp((panelBounds.Height - verticalPadding - ((rowCount - 1) * spacing)) / rowCount, 28, 40);
+    }
+
+    private int GetBullpenPageSize()
+    {
+        const int spacing = 6;
+        const int minRowHeight = 28;
+        const int verticalPadding = 28;
+        var panel = GetBullpenPanelBounds();
+        return Math.Max(1, (panel.Height - verticalPadding + spacing) / (minRowHeight + spacing));
     }
 
     private Rectangle GetRotationSlotBounds(int slot)
     {
         var panel = GetRotationPanelBounds();
-        var rowHeight = GetListRowHeight(5);
+        var rowHeight = GetListRowHeight(panel, 5);
         return new Rectangle(panel.X + 10, panel.Y + 14 + (slot - 1) * (rowHeight + 6), panel.Width - 20, rowHeight);
     }
 
     private Rectangle GetBullpenRowBounds(int index)
     {
         var panel = GetBullpenPanelBounds();
-        var rowHeight = GetListRowHeight(10);
+        var rowHeight = GetListRowHeight(panel, GetBullpenPageSize());
         return new Rectangle(panel.X + 10, panel.Y + 14 + index * (rowHeight + 6), panel.Width - 20, rowHeight);
     }
 
@@ -302,7 +312,7 @@ public sealed class RotationScreen : GameScreen
 
     private bool TryStartDragFromBullpen(Point position)
     {
-        var pageSize = 10;
+        var pageSize = GetBullpenPageSize();
         var visibleRows = GetBullpenRows().Skip(_pageIndex * pageSize).Take(pageSize).ToList();
         for (var i = 0; i < visibleRows.Count; i++)
         {

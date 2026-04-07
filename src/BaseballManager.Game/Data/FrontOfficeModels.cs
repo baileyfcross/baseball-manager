@@ -24,3 +24,13 @@ public sealed record CoachScoutingReport(
     string Strengths,
     string Concern,
     string TransferRecommendation);
+
+public sealed record MedicalPlayerStatus(
+    Guid PlayerId,
+    string PlayerName,
+    string PrimaryPosition,
+    string Status,
+    string Report,
+    int Fatigue,
+    int DaysUntilAvailable,
+    bool IsInjured);

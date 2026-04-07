@@ -106,7 +106,8 @@ public sealed class LineupScreen : GameScreen
             else if (GetNextPageBounds().Contains(mousePosition))
             {
                 var benchRows = GetBenchRows();
-                var maxPage = Math.Max(0, (int)Math.Ceiling(benchRows.Count / 10d) - 1);
+                var pageSize = GetBenchPageSize();
+                var maxPage = Math.Max(0, (int)Math.Ceiling(benchRows.Count / (double)pageSize) - 1);
                 if (_pageIndex < maxPage)
                 {
                     _nextPageButton.Click();
@@ -178,7 +179,7 @@ public sealed class LineupScreen : GameScreen
             }
 
             uiRenderer.DrawText("BENCH / RESERVES", new Vector2(benchPanelBounds.X + 12, headerY), Color.White, uiRenderer.UiMediumFont);
-            var pageSize = 10;
+            var pageSize = GetBenchPageSize();
             var startIndex = _pageIndex * pageSize;
             var visibleRows = benchRows.Skip(startIndex).Take(pageSize).ToList();
             for (var i = 0; i < visibleRows.Count; i++)
@@ -257,24 +258,33 @@ public sealed class LineupScreen : GameScreen
         return new Rectangle(lineupPanelBounds.Right + gap, lineupPanelBounds.Y, Math.Max(360, _viewport.X - lineupPanelBounds.Right - gap - 60), lineupPanelBounds.Height);
     }
 
-    private int GetListRowHeight(int rowCount)
+    private static int GetListRowHeight(Rectangle panelBounds, int rowCount)
     {
-        var panelHeight = GetLineupPanelBounds().Height;
-        var spacing = 6;
-        return Math.Clamp((panelHeight - 58 - ((rowCount - 1) * spacing)) / rowCount, 28, 40);
+        const int spacing = 6;
+        const int verticalPadding = 28;
+        return Math.Clamp((panelBounds.Height - verticalPadding - ((rowCount - 1) * spacing)) / rowCount, 28, 40);
+    }
+
+    private int GetBenchPageSize()
+    {
+        const int spacing = 6;
+        const int minRowHeight = 28;
+        const int verticalPadding = 28;
+        var panel = GetBenchPanelBounds();
+        return Math.Max(1, (panel.Height - verticalPadding + spacing) / (minRowHeight + spacing));
     }
 
     private Rectangle GetLineupSlotBounds(int slot)
     {
         var panel = GetLineupPanelBounds();
-        var rowHeight = GetListRowHeight(9);
+        var rowHeight = GetListRowHeight(panel, 9);
         return new Rectangle(panel.X + 10, panel.Y + 14 + (slot - 1) * (rowHeight + 6), panel.Width - 20, rowHeight);
     }
 
     private Rectangle GetBenchRowBounds(int index)
     {
         var panel = GetBenchPanelBounds();
-        var rowHeight = GetListRowHeight(10);
+        var rowHeight = GetListRowHeight(panel, GetBenchPageSize());
         return new Rectangle(panel.X + 10, panel.Y + 14 + index * (rowHeight + 6), panel.Width - 20, rowHeight);
     }
 
@@ -302,7 +312,7 @@ public sealed class LineupScreen : GameScreen
 
     private bool TryStartDragFromBench(Point position)
     {
-        var pageSize = 10;
+        var pageSize = GetBenchPageSize();
         var visibleRows = GetBenchRows().Skip(_pageIndex * pageSize).Take(pageSize).ToList();
         for (var i = 0; i < visibleRows.Count; i++)
         {

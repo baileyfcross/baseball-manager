@@ -13,5 +13,6 @@ public sealed record MatchPlayerSnapshot(
     int PitchingRating,
     int FieldingRating,
     int ArmRating,
+    int StaminaRating,
     int DurabilityRating,
     int OverallRating);

@@ -481,17 +481,17 @@ public sealed class ScoutingScreen : GameScreen
 
     private int GetPowerValue(ScoutingPlayerCard player)
     {
-        return _franchiseSession.GetPlayerRatings(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age).PowerRating;
+        return _franchiseSession.GetPlayerRatings(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age).EffectivePowerRating;
     }
 
     private int GetSpeedValue(ScoutingPlayerCard player)
     {
-        return _franchiseSession.GetPlayerRatings(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age).SpeedRating;
+        return _franchiseSession.GetPlayerRatings(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age).EffectiveSpeedRating;
     }
 
     private int GetPitchingValue(ScoutingPlayerCard player)
     {
-        return _franchiseSession.GetPlayerRatings(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age).PitchingRating;
+        return _franchiseSession.GetPlayerRatings(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age).EffectivePitchingRating;
     }
 
     private double GetLastOpsValue(ScoutingPlayerCard player)

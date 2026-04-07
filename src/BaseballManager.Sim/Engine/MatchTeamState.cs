@@ -29,6 +29,8 @@ public sealed class MatchTeamState
 
     public int Hits { get; set; }
 
+    public int PitchCount { get; set; }
+
     public MatchPlayerSnapshot CurrentBatter => Lineup[BattingIndex % Lineup.Count];
 
     public void AdvanceBatter()
@@ -87,7 +89,8 @@ public sealed class MatchTeamState
 
     private static MatchPlayerSnapshot CreatePlaceholderPlayer(string name, string position, int pitching = 24)
     {
-        var overall = (int)Math.Round((52 + 50 + 50 + 50 + pitching + 52 + 50 + 55) / 8d);
+        var stamina = string.Equals(position, "SP", StringComparison.OrdinalIgnoreCase) ? 68 : 55;
+        var overall = (int)Math.Round((52 + 50 + 50 + 50 + pitching + 52 + 50 + stamina + 55) / 9d);
 
         return new MatchPlayerSnapshot(
             Guid.NewGuid(),
@@ -102,6 +105,7 @@ public sealed class MatchTeamState
             pitching,
             52,
             50,
+            stamina,
             55,
             overall);
     }

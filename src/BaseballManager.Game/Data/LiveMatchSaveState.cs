@@ -69,6 +69,8 @@ public sealed class MatchTeamSaveState
     public int Runs { get; set; }
 
     public int Hits { get; set; }
+
+    public int PitchCount { get; set; }
 }
 
 public sealed record LiveMatchRestoreState(
