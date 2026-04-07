@@ -201,12 +201,19 @@ public sealed class LineupScreen : GameScreen
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
     {
         var maxPage = Math.Max(0, (int)Math.Ceiling(totalRows / (double)pageSize) - 1);
-        uiRenderer.DrawText($"Bench Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(700, 540), Color.White, uiRenderer.ScoreboardFont);
+        var pageLabel = $"Bench Page {_pageIndex + 1} / {maxPage + 1}";
 
         var previousBounds = GetPreviousPageBounds();
         var nextBounds = GetNextPageBounds();
         uiRenderer.DrawButton(_previousPageButton.Label, previousBounds, previousBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
         uiRenderer.DrawButton(_nextPageButton.Label, nextBounds, nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
+
+        var pageFont = uiRenderer.ScoreboardFont ?? uiRenderer.UiSmallFont;
+        var labelWidth = pageFont?.MeasureString(pageLabel).X ?? 0f;
+        var labelCenterX = (previousBounds.Left + nextBounds.Right) / 2f;
+        var labelX = labelCenterX - (labelWidth / 2f);
+        var labelY = Math.Max(previousBounds.Bottom, nextBounds.Bottom) + 8f;
+        uiRenderer.DrawText(pageLabel, new Vector2(labelX, labelY), Color.White, uiRenderer.ScoreboardFont);
     }
 
     private Rectangle GetPreviousPageBounds() => new(700, 580, 120, 40);

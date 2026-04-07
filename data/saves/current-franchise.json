@@ -1,5 +1,5 @@
 {
-  "SelectedTeamName": "Detroit Bears 2",
+  "SelectedTeamName": "Los Angeles Sharks",
   "Teams": {
     "Nashville Foxes": {
       "LineupSlots": [
@@ -99,6 +99,26 @@
         "e32c6e31-655d-429a-a986-0c5bac37c132",
         "3af2fd58-d9ae-4b7d-a089-3a272e6eb239",
         "0f684012-e19a-4689-ab13-50292d72dc25"
+      ]
+    },
+    "Portland Captains": {
+      "LineupSlots": [
+        "eddea4ba-048e-486c-9999-0f55001b063f",
+        "9d2de551-0193-47a1-b420-fe70c2656aed",
+        "806d1104-4479-4aaf-8a2e-569e92770249",
+        "956092f1-06bb-42eb-ae5f-2ca84a3d8efc",
+        "2f30db88-c078-4f5e-9455-95ad37d4e06f",
+        "7bb8b3f8-33f2-45e4-a336-cd83542b9913",
+        "1e1e1385-509e-4341-a9e0-23ff8e118412",
+        "afe2b457-5f11-44b8-990e-596b60deeac8",
+        "58959a7d-34fd-4d02-b81d-57f6a93cdd7d"
+      ],
+      "RotationSlots": [
+        "68234d8f-9720-47dd-a880-467334137c30",
+        "d644ffa7-4623-4c26-9306-efa650566b8f",
+        "4416a32d-4f5b-4af2-9da0-793bbf2d679c",
+        "a63e1f5d-d97c-4ce7-9171-a659a58dc7de",
+        "91ceb608-347e-426b-8318-1018034f4413"
       ]
     }
   }
