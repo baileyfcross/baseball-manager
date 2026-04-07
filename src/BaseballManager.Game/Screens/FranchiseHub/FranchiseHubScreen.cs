@@ -23,10 +23,10 @@ public sealed class FranchiseHubScreen : GameScreen
     private Point _viewport = new(1280, 720);
     private string _statusMessage = "";
 
-    private const int ButtonWidth = 200;
-    private const int ButtonHeight = 50;
-    private const int ButtonSpacing = 20;
-    private const int StartY = 200;
+    private const int ButtonWidth = 220;
+    private const int ButtonHeight = 42;
+    private const int ButtonSpacing = 12;
+    private const int StartY = 170;
 
     public FranchiseHubScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -43,6 +43,8 @@ public sealed class FranchiseHubScreen : GameScreen
         _buttons.Add(new ButtonControl { Label = "Lineup", OnClick = () => _screenManager.TransitionTo(nameof(LineupScreen)) });
         _buttons.Add(new ButtonControl { Label = "Rotation", OnClick = () => _screenManager.TransitionTo(nameof(RotationScreen)) });
         _buttons.Add(new ButtonControl { Label = "Schedule", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Scouting / Transfers", OnClick = () => _screenManager.TransitionTo(nameof(ScoutingScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Coaching Staff", OnClick = () => _screenManager.TransitionTo(nameof(CoachingStaffScreen)) });
         _buttons.Add(new ButtonControl { Label = "Main Menu", OnClick = () => _screenManager.TransitionTo(nameof(MainMenuScreen)) });
     }
 
@@ -50,7 +52,15 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         var centerX = viewportWidth / 2;
         var y = StartY + index * (ButtonHeight + ButtonSpacing);
-        return new Rectangle(centerX - ButtonWidth / 2, y, ButtonWidth, ButtonHeight);
+        var width = GetColumnButtonWidth();
+        return new Rectangle(centerX - width / 2, y, width, ButtonHeight);
+    }
+
+    private int GetColumnButtonWidth()
+    {
+        return _buttons.Count == 0
+            ? ButtonWidth
+            : _buttons.Max(button => ButtonControl.GetSuggestedWidth(button.Label, ButtonWidth));
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -89,7 +99,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _ignoreClicksUntilRelease = true;
         if (string.IsNullOrEmpty(_statusMessage))
         {
-            _statusMessage = "Live Match to play manually, or Sim Next Game to advance immediately.";
+            _statusMessage = "Use scouting for coach opinions and transfers, or jump straight into the next game.";
         }
     }
 
@@ -110,7 +120,12 @@ public sealed class FranchiseHubScreen : GameScreen
             uiRenderer.DrawButton(button.Label, bounds, bgColor, Color.White);
         }
 
-        uiRenderer.DrawText(_statusMessage, new Vector2(100, _viewport.Y - 54), Color.White, uiRenderer.ScoreboardFont);
+        var statusY = _viewport.Y - 72f;
+        foreach (var line in WrapText(_statusMessage, 88).Take(2))
+        {
+            uiRenderer.DrawText(line, new Vector2(100, statusY), Color.White, uiRenderer.ScoreboardFont);
+            statusY += 18f;
+        }
     }
 
     private void StartLiveMatch()
@@ -124,5 +139,38 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         _franchiseSession.SimulateNextScheduledGame(out var message);
         _statusMessage = message;
+    }
+
+    private static IEnumerable<string> WrapText(string text, int maxCharacters)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            yield break;
+        }
+
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var currentLine = string.Empty;
+
+        foreach (var word in words)
+        {
+            var candidate = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
+            if (candidate.Length <= maxCharacters)
+            {
+                currentLine = candidate;
+                continue;
+            }
+
+            if (!string.IsNullOrEmpty(currentLine))
+            {
+                yield return currentLine;
+            }
+
+            currentLine = word;
+        }
+
+        if (!string.IsNullOrEmpty(currentLine))
+        {
+            yield return currentLine;
+        }
     }
 }

@@ -16,6 +16,8 @@ public sealed class FranchiseSaveState
 
     public Dictionary<Guid, PlayerSeasonStatsState> PlayerSeasonStats { get; set; } = new();
 
+    public Dictionary<Guid, string> PlayerAssignments { get; set; } = new();
+
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }
 
     public LiveMatchSaveState? QuickMatchLiveMatch { get; set; }
@@ -29,7 +31,29 @@ public sealed class TeamFranchiseState
 
     public List<Guid?> RotationSlots { get; set; } = new();
 
+    public List<CoachAssignmentState> CoachingStaff { get; set; } = new();
+
+    public List<TransferRecordState> TransferHistory { get; set; } = new();
+
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }
+}
+
+public sealed class CoachAssignmentState
+{
+    public string Role { get; set; } = string.Empty;
+
+    public string Name { get; set; } = string.Empty;
+
+    public string Specialty { get; set; } = string.Empty;
+
+    public string Voice { get; set; } = string.Empty;
+}
+
+public sealed class TransferRecordState
+{
+    public DateTime EffectiveDate { get; set; } = DateTime.UtcNow;
+
+    public string Description { get; set; } = string.Empty;
 }
 
 public sealed class CompletedScheduleGameResult

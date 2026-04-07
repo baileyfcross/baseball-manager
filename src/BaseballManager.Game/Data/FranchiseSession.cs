@@ -6,9 +6,13 @@ namespace BaseballManager.Game.Data;
 
 public sealed class FranchiseSession
 {
+    private static readonly string[] CoachRoleOrder = ["Manager", "Hitting Coach", "Pitching Coach", "Bench Coach", "Scouting Director"];
+    private static readonly string[] CoachFirstNames = ["Alex", "Jordan", "Sam", "Casey", "Drew", "Taylor", "Riley", "Morgan", "Cameron", "Jamie", "Hayden", "Avery"];
+    private static readonly string[] CoachLastNames = ["Maddox", "Sullivan", "Torres", "Bennett", "Foster", "Callahan", "Diaz", "Reed", "Hughes", "Alvarez", "Parker", "Watts"];
     private readonly ImportedLeagueData _leagueData;
     private readonly FranchiseStateStore _stateStore;
     private readonly FranchiseSaveState _saveState;
+    private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
 
     public FranchiseSession(ImportedLeagueData leagueData, FranchiseStateStore stateStore)
     {
@@ -17,6 +21,7 @@ public sealed class FranchiseSession
         _saveState = _stateStore.Load();
         _saveState.PlayerRatings ??= new Dictionary<Guid, PlayerHiddenRatingsState>();
         _saveState.PlayerSeasonStats ??= new Dictionary<Guid, PlayerSeasonStatsState>();
+        _saveState.PlayerAssignments ??= new Dictionary<Guid, string>();
         _saveState.CompletedScheduleGameKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _saveState.CompletedScheduleGameResults ??= new Dictionary<string, CompletedScheduleGameResult>(StringComparer.OrdinalIgnoreCase);
 
@@ -35,7 +40,7 @@ public sealed class FranchiseSession
 
         EnsureFranchiseDateInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated())
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated())
         {
             Save();
         }
@@ -146,6 +151,266 @@ public sealed class FranchiseSession
         stats = new PlayerSeasonStatsState();
         _saveState.PlayerSeasonStats[playerId] = stats;
         return stats;
+    }
+
+    public PlayerSeasonStatsState GetLastSeasonStats(Guid playerId, string fullName, string primaryPosition, string secondaryPosition, int age)
+    {
+        if (_lastSeasonStatsCache.TryGetValue(playerId, out var stats))
+        {
+            return stats;
+        }
+
+        var ratings = GetPlayerRatings(playerId, fullName, primaryPosition, secondaryPosition, age);
+        stats = GenerateLastSeasonStats(playerId, primaryPosition, age, ratings);
+        _lastSeasonStatsCache[playerId] = stats;
+        return stats;
+    }
+
+    public IReadOnlyList<CoachProfileView> GetCoachingStaff()
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureCoachingStaffInitialized(teamState, SelectedTeam.Name);
+
+        return teamState.CoachingStaff
+            .OrderBy(coach => GetCoachRoleSortOrder(coach.Role))
+            .Select(coach => new CoachProfileView(coach.Role, coach.Name, coach.Specialty, coach.Voice))
+            .ToList();
+    }
+
+    public bool ChangeCoach(string role, int direction, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before changing your staff.";
+            return false;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureCoachingStaffInitialized(teamState, SelectedTeam.Name);
+
+        var coach = teamState.CoachingStaff.FirstOrDefault(entry =>
+            string.Equals(entry.Role, role, StringComparison.OrdinalIgnoreCase));
+
+        if (coach == null)
+        {
+            statusMessage = "That coaching role is not available right now.";
+            return false;
+        }
+
+        var candidatePool = BuildCoachCandidatePool(SelectedTeam.Name, role);
+        if (candidatePool.Count == 0)
+        {
+            statusMessage = "No replacement coaches are available right now.";
+            return false;
+        }
+
+        var currentIndex = candidatePool.FindIndex(candidate =>
+            string.Equals(candidate.Name, coach.Name, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(candidate.Specialty, coach.Specialty, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(candidate.Voice, coach.Voice, StringComparison.OrdinalIgnoreCase));
+
+        if (currentIndex < 0)
+        {
+            currentIndex = 0;
+        }
+
+        var step = direction >= 0 ? 1 : -1;
+        var nextIndex = (currentIndex + step + candidatePool.Count) % candidatePool.Count;
+        var replacement = candidatePool[nextIndex];
+
+        coach.Name = replacement.Name;
+        coach.Specialty = replacement.Specialty;
+        coach.Voice = replacement.Voice;
+        Save();
+
+        statusMessage = $"{coach.Name} is now your {coach.Role.ToLowerInvariant()}.";
+        return true;
+    }
+
+    public IReadOnlyList<ScoutingPlayerCard> GetScoutingBoardPlayers()
+    {
+        var selectedTeamName = SelectedTeam?.Name;
+        var teamsByName = _leagueData.Teams.ToDictionary(team => team.Name, team => team, StringComparer.OrdinalIgnoreCase);
+
+        return _leagueData.Players
+            .Select(player =>
+            {
+                var assignedTeamName = GetAssignedTeamName(player.PlayerId, player.TeamName);
+                teamsByName.TryGetValue(assignedTeamName, out var team);
+
+                return new ScoutingPlayerCard(
+                    player.PlayerId,
+                    player.FullName,
+                    assignedTeamName,
+                    team?.Abbreviation ?? "FA",
+                    player.PrimaryPosition,
+                    player.SecondaryPosition,
+                    player.Age,
+                    selectedTeamName != null && string.Equals(assignedTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase));
+            })
+            .OrderBy(card => card.IsOnSelectedTeam)
+            .ThenBy(card => card.TeamName)
+            .ThenBy(card => card.PrimaryPosition)
+            .ThenBy(card => card.PlayerName)
+            .ToList();
+    }
+
+    public IReadOnlyList<ScoutingPlayerCard> GetTradeChipPlayers()
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        return GetSelectedTeamRoster()
+            .OrderBy(player => player.RotationSlot ?? 99)
+            .ThenBy(player => player.LineupSlot ?? 99)
+            .ThenBy(player => player.PlayerName)
+            .Select(player => new ScoutingPlayerCard(
+                player.PlayerId,
+                player.PlayerName,
+                SelectedTeam.Name,
+                SelectedTeam.Abbreviation,
+                player.PrimaryPosition,
+                player.SecondaryPosition,
+                player.Age,
+                true))
+            .ToList();
+    }
+
+    public CoachScoutingReport GetCoachScoutingReport(Guid playerId, string coachRole)
+    {
+        var player = FindPlayerImport(playerId);
+        if (player == null)
+        {
+            return new CoachScoutingReport(
+                "Staff Report",
+                coachRole,
+                "Unknown Player",
+                "I need a few more looks before I can give you a real read.",
+                "",
+                "",
+                "Check back after another series.");
+        }
+
+        var availableCoaches = GetCoachingStaff();
+        var coach = availableCoaches.FirstOrDefault(entry => string.Equals(entry.Role, coachRole, StringComparison.OrdinalIgnoreCase))
+            ?? availableCoaches.FirstOrDefault()
+            ?? new CoachProfileView("Scouting Director", "Staff Report", "league coverage", "balanced");
+
+        var assignedTeamName = GetAssignedTeamName(player.PlayerId, player.TeamName);
+        var isPitcher = player.PrimaryPosition is "SP" or "RP";
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var strengths = GetTopAttributesForCoach(ratings, coach.Role, isPitcher).Take(2).ToList();
+        var concern = GetConcernAttribute(ratings, coach.Role, isPitcher);
+
+        return new CoachScoutingReport(
+            coach.Name,
+            coach.Role,
+            player.FullName,
+            BuildOverallSummary(ratings.OverallRating, player.Age, coach, isPitcher, assignedTeamName),
+            BuildStrengthsLine(strengths, coach.Role, isPitcher),
+            BuildConcernLine(concern, coach.Role, isPitcher),
+            BuildTransferRecommendation(ratings.OverallRating, player.Age, assignedTeamName, isPitcher));
+    }
+
+    public string GetQuickScoutNote(Guid playerId)
+    {
+        var report = GetCoachScoutingReport(playerId, "Scouting Director");
+        return $"{report.Summary} {report.Strengths}".Trim();
+    }
+
+    public bool TryTradeForPlayer(Guid targetPlayerId, Guid offeredPlayerId, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before trying to make a move.";
+            return false;
+        }
+
+        if (targetPlayerId == offeredPlayerId)
+        {
+            statusMessage = "Choose two different players for the swap.";
+            return false;
+        }
+
+        var targetPlayer = FindPlayerImport(targetPlayerId);
+        var offeredPlayer = FindPlayerImport(offeredPlayerId);
+        if (targetPlayer == null || offeredPlayer == null)
+        {
+            statusMessage = "One of those players could not be found.";
+            return false;
+        }
+
+        var selectedTeamName = SelectedTeam.Name;
+        var targetTeamName = GetAssignedTeamName(targetPlayerId, targetPlayer.TeamName);
+        var offeredTeamName = GetAssignedTeamName(offeredPlayerId, offeredPlayer.TeamName);
+
+        if (string.Equals(targetTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = $"{targetPlayer.FullName} is already on your club.";
+            return false;
+        }
+
+        if (!string.Equals(offeredTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "Your outgoing player has to come from your current roster.";
+            return false;
+        }
+
+        var selectedTeamState = GetOrCreateTeamState(selectedTeamName);
+        var targetTeamState = GetOrCreateTeamState(targetTeamName);
+        InitializeLineupSlots(selectedTeamState, selectedTeamName);
+        InitializeRotationSlots(selectedTeamState, selectedTeamName);
+        InitializeLineupSlots(targetTeamState, targetTeamName);
+        InitializeRotationSlots(targetTeamState, targetTeamName);
+
+        var offeredLineupIndex = FindPlayerSlotIndex(selectedTeamState.LineupSlots, offeredPlayerId);
+        var offeredRotationIndex = FindPlayerSlotIndex(selectedTeamState.RotationSlots, offeredPlayerId);
+        var targetLineupIndex = FindPlayerSlotIndex(targetTeamState.LineupSlots, targetPlayerId);
+        var targetRotationIndex = FindPlayerSlotIndex(targetTeamState.RotationSlots, targetPlayerId);
+
+        _saveState.PlayerAssignments[targetPlayerId] = selectedTeamName;
+        _saveState.PlayerAssignments[offeredPlayerId] = targetTeamName;
+
+        ClearPlayerFromSlots(selectedTeamState.LineupSlots, offeredPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.RotationSlots, offeredPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
+        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
+        ClearPlayerFromSlots(targetTeamState.LineupSlots, offeredPlayerId);
+        ClearPlayerFromSlots(targetTeamState.RotationSlots, offeredPlayerId);
+
+        TryAssignPlayerToPreviousSlots(selectedTeamState, targetPlayerId, targetPlayer.PrimaryPosition, offeredLineupIndex, offeredRotationIndex);
+        TryAssignPlayerToPreviousSlots(targetTeamState, offeredPlayerId, offeredPlayer.PrimaryPosition, targetLineupIndex, targetRotationIndex);
+
+        AddTransferRecord(selectedTeamName, $"Acquired {targetPlayer.FullName} from {targetTeamName} for {offeredPlayer.FullName}.");
+        AddTransferRecord(targetTeamName, $"Sent {targetPlayer.FullName} to {selectedTeamName} for {offeredPlayer.FullName}.");
+        Save();
+
+        statusMessage = $"Deal complete: {targetPlayer.FullName} joins {selectedTeamName} and {offeredPlayer.FullName} heads to {targetTeamName}.";
+        return true;
+    }
+
+    public IReadOnlyList<string> GetRecentTransferSummaries(int maxCount = 4)
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        return teamState.TransferHistory
+            .OrderByDescending(entry => entry.EffectiveDate)
+            .Take(Math.Max(1, maxCount))
+            .Select(entry => $"{entry.EffectiveDate:MM/dd}: {entry.Description}")
+            .ToList();
     }
 
     public bool SimulateNextScheduledGame(out string statusMessage)
@@ -287,34 +552,7 @@ public sealed class FranchiseSession
 
     public IReadOnlyList<FranchiseRosterEntry> GetSelectedTeamRoster()
     {
-        if (SelectedTeam == null)
-        {
-            return [];
-        }
-
-        var teamName = SelectedTeam.Name;
-        var playersById = _leagueData.Players.ToDictionary(player => player.PlayerId, player => player);
-        var lineupSlots = BuildLineupSlots(teamName);
-        var rotationSlots = BuildRotationSlots(teamName);
-        var lineupMap = BuildSlotMap(lineupSlots);
-        var rotationMap = BuildSlotMap(rotationSlots);
-
-        return _leagueData.Rosters
-            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase))
-            .Select(roster =>
-            {
-                playersById.TryGetValue(roster.PlayerId, out var player);
-                return new FranchiseRosterEntry(
-                    roster.PlayerId,
-                    roster.PlayerName,
-                    roster.PrimaryPosition,
-                    roster.SecondaryPosition,
-                    player?.Age ?? 0,
-                    lineupMap.TryGetValue(roster.PlayerId, out var lineupSlot) ? lineupSlot : null,
-                    rotationMap.TryGetValue(roster.PlayerId, out var rotationSlot) ? rotationSlot : null);
-            })
-            .OrderBy(entry => entry.PlayerName)
-            .ToList();
+        return SelectedTeam == null ? [] : GetTeamRoster(SelectedTeam.Name);
     }
 
     public IReadOnlyList<FranchiseRosterEntry> GetLineupPlayers()
@@ -531,6 +769,7 @@ public sealed class FranchiseSession
         _saveState.CurrentFranchiseDate = DateTime.Today;
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
+        _saveState.PlayerAssignments.Clear();
 
         if (removedTeamState || removedSelection)
         {
@@ -550,6 +789,7 @@ public sealed class FranchiseSession
         _saveState.QuickMatchLiveMatch = null;
         _saveState.PlayerRatings.Clear();
         _saveState.PlayerSeasonStats.Clear();
+        _saveState.PlayerAssignments.Clear();
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
         _saveState.CurrentFranchiseDate = DateTime.Today;
@@ -576,6 +816,38 @@ public sealed class FranchiseSession
         return teamState;
     }
 
+    private IReadOnlyList<FranchiseRosterEntry> GetTeamRoster(string teamName)
+    {
+        var rostersByPlayerId = _leagueData.Rosters
+            .GroupBy(roster => roster.PlayerId)
+            .ToDictionary(group => group.Key, group => group.First());
+        var lineupSlots = BuildLineupSlots(teamName);
+        var rotationSlots = BuildRotationSlots(teamName);
+        var lineupMap = BuildSlotMap(lineupSlots);
+        var rotationMap = BuildSlotMap(rotationSlots);
+
+        return _leagueData.Players
+            .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Select(player =>
+            {
+                rostersByPlayerId.TryGetValue(player.PlayerId, out var roster);
+                var playerName = roster?.PlayerName ?? player.FullName;
+                var primaryPosition = string.IsNullOrWhiteSpace(roster?.PrimaryPosition) ? player.PrimaryPosition : roster.PrimaryPosition;
+                var secondaryPosition = string.IsNullOrWhiteSpace(roster?.SecondaryPosition) ? player.SecondaryPosition : roster.SecondaryPosition;
+
+                return new FranchiseRosterEntry(
+                    player.PlayerId,
+                    playerName,
+                    primaryPosition,
+                    secondaryPosition,
+                    player.Age,
+                    lineupMap.TryGetValue(player.PlayerId, out var lineupSlot) ? lineupSlot : null,
+                    rotationMap.TryGetValue(player.PlayerId, out var rotationSlot) ? rotationSlot : null);
+            })
+            .OrderBy(entry => entry.PlayerName)
+            .ToList();
+    }
+
     private List<Guid?> BuildLineupSlots(string teamName)
     {
         var teamState = GetOrCreateTeamState(teamName);
@@ -590,36 +862,450 @@ public sealed class FranchiseSession
         return teamState.RotationSlots;
     }
 
-    private void InitializeLineupSlots(TeamFranchiseState teamState, string teamName)
+    private string GetAssignedTeamName(Guid playerId, string fallbackTeamName)
     {
-        if (teamState.LineupSlots.Count == 9)
+        if (_saveState.PlayerAssignments.TryGetValue(playerId, out var assignedTeamName) && !string.IsNullOrWhiteSpace(assignedTeamName))
         {
-            return;
+            return assignedTeamName;
         }
 
-        teamState.LineupSlots = Enumerable.Repeat<Guid?>(null, 9).ToList();
-        foreach (var roster in _leagueData.Rosters.Where(roster =>
-                     string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) &&
-                     roster.LineupSlot is >= 1 and <= 9))
+        return fallbackTeamName;
+    }
+
+    private PlayerImportDto? FindPlayerImport(Guid playerId)
+    {
+        return _leagueData.Players.FirstOrDefault(player => player.PlayerId == playerId);
+    }
+
+    private bool EnsurePlayerAssignmentsGenerated()
+    {
+        var hasChanges = false;
+
+        foreach (var player in _leagueData.Players)
         {
-            teamState.LineupSlots[roster.LineupSlot!.Value - 1] = roster.PlayerId;
+            if (_saveState.PlayerAssignments.TryGetValue(player.PlayerId, out var assignedTeamName) && !string.IsNullOrWhiteSpace(assignedTeamName))
+            {
+                continue;
+            }
+
+            var fallbackTeamName = !string.IsNullOrWhiteSpace(player.TeamName)
+                ? player.TeamName
+                : _leagueData.Rosters.FirstOrDefault(roster => roster.PlayerId == player.PlayerId)?.TeamName ?? string.Empty;
+
+            _saveState.PlayerAssignments[player.PlayerId] = fallbackTeamName;
+            hasChanges = true;
         }
+
+        return hasChanges;
+    }
+
+    private bool EnsureCoachingStaffGenerated()
+    {
+        var hasChanges = false;
+        foreach (var team in _leagueData.Teams)
+        {
+            hasChanges |= EnsureCoachingStaffInitialized(GetOrCreateTeamState(team.Name), team.Name);
+        }
+
+        return hasChanges;
+    }
+
+    private bool EnsureCoachingStaffInitialized(TeamFranchiseState teamState, string teamName)
+    {
+        var hasChanges = false;
+        teamState.CoachingStaff ??= new List<CoachAssignmentState>();
+
+        foreach (var role in CoachRoleOrder)
+        {
+            if (teamState.CoachingStaff.Any(coach => string.Equals(coach.Role, role, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var candidate = BuildCoachCandidatePool(teamName, role).First();
+            teamState.CoachingStaff.Add(new CoachAssignmentState
+            {
+                Role = role,
+                Name = candidate.Name,
+                Specialty = candidate.Specialty,
+                Voice = candidate.Voice
+            });
+            hasChanges = true;
+        }
+
+        teamState.CoachingStaff = teamState.CoachingStaff
+            .OrderBy(coach => GetCoachRoleSortOrder(coach.Role))
+            .ToList();
+
+        return hasChanges;
+    }
+
+    private List<CoachAssignmentState> BuildCoachCandidatePool(string teamName, string role)
+    {
+        var specialties = GetRoleSpecialties(role);
+        var voices = GetRoleVoices(role);
+        var seed = GetStableHash($"{teamName}|{role}");
+        var candidates = new List<CoachAssignmentState>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < 6; i++)
+        {
+            var firstName = CoachFirstNames[(seed + (i * 3)) % CoachFirstNames.Length];
+            var lastName = CoachLastNames[(seed / 3 + (i * 5)) % CoachLastNames.Length];
+            var specialty = specialties[(seed / 5 + i) % specialties.Length];
+            var voice = voices[(seed / 7 + i) % voices.Length];
+            var name = $"{firstName} {lastName}";
+            var key = $"{name}|{specialty}|{voice}";
+
+            if (!seen.Add(key))
+            {
+                continue;
+            }
+
+            candidates.Add(new CoachAssignmentState
+            {
+                Role = role,
+                Name = name,
+                Specialty = specialty,
+                Voice = voice
+            });
+        }
+
+        return candidates;
+    }
+
+    private void InitializeLineupSlots(TeamFranchiseState teamState, string teamName)
+    {
+        if (teamState.LineupSlots.Count != 9)
+        {
+            teamState.LineupSlots = Enumerable.Repeat<Guid?>(null, 9).ToList();
+            foreach (var roster in _leagueData.Rosters.Where(roster =>
+                         string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) &&
+                         roster.LineupSlot is >= 1 and <= 9))
+            {
+                teamState.LineupSlots[roster.LineupSlot!.Value - 1] = roster.PlayerId;
+            }
+        }
+
+        SanitizeSlotsForCurrentRoster(teamState.LineupSlots, teamName);
     }
 
     private void InitializeRotationSlots(TeamFranchiseState teamState, string teamName)
     {
-        if (teamState.RotationSlots.Count == 5)
+        if (teamState.RotationSlots.Count != 5)
         {
+            teamState.RotationSlots = Enumerable.Repeat<Guid?>(null, 5).ToList();
+            foreach (var roster in _leagueData.Rosters.Where(roster =>
+                         string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) &&
+                         roster.RotationSlot is >= 1 and <= 5))
+            {
+                teamState.RotationSlots[roster.RotationSlot!.Value - 1] = roster.PlayerId;
+            }
+        }
+
+        SanitizeSlotsForCurrentRoster(teamState.RotationSlots, teamName);
+    }
+
+    private void SanitizeSlotsForCurrentRoster(List<Guid?> slots, string teamName)
+    {
+        var validIds = _leagueData.Players
+            .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Select(player => player.PlayerId)
+            .ToHashSet();
+        var seen = new HashSet<Guid>();
+
+        for (var i = 0; i < slots.Count; i++)
+        {
+            if (!slots[i].HasValue)
+            {
+                continue;
+            }
+
+            var playerId = slots[i]!.Value;
+            if (!validIds.Contains(playerId) || !seen.Add(playerId))
+            {
+                slots[i] = null;
+            }
+        }
+    }
+
+    private void TryAssignPlayerToPreviousSlots(TeamFranchiseState teamState, Guid playerId, string primaryPosition, int lineupIndex, int rotationIndex)
+    {
+        var isPitcher = primaryPosition is "SP" or "RP";
+
+        if (isPitcher)
+        {
+            if (rotationIndex >= 0)
+            {
+                AssignPlayerToSlotWithSwap(teamState.RotationSlots, playerId, rotationIndex);
+                return;
+            }
+
+            var firstOpenRotation = teamState.RotationSlots.FindIndex(slot => !slot.HasValue);
+            if (firstOpenRotation >= 0)
+            {
+                AssignPlayerToSlotWithSwap(teamState.RotationSlots, playerId, firstOpenRotation);
+            }
+
             return;
         }
 
-        teamState.RotationSlots = Enumerable.Repeat<Guid?>(null, 5).ToList();
-        foreach (var roster in _leagueData.Rosters.Where(roster =>
-                     string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) &&
-                     roster.RotationSlot is >= 1 and <= 5))
+        if (lineupIndex >= 0)
         {
-            teamState.RotationSlots[roster.RotationSlot!.Value - 1] = roster.PlayerId;
+            AssignPlayerToSlotWithSwap(teamState.LineupSlots, playerId, lineupIndex);
+            return;
         }
+
+        var firstOpenLineup = teamState.LineupSlots.FindIndex(slot => !slot.HasValue);
+        if (firstOpenLineup >= 0)
+        {
+            AssignPlayerToSlotWithSwap(teamState.LineupSlots, playerId, firstOpenLineup);
+        }
+    }
+
+    private void AddTransferRecord(string teamName, string description)
+    {
+        var teamState = GetOrCreateTeamState(teamName);
+        teamState.TransferHistory ??= new List<TransferRecordState>();
+        teamState.TransferHistory.Insert(0, new TransferRecordState
+        {
+            EffectiveDate = GetCurrentFranchiseDate(),
+            Description = description
+        });
+
+        if (teamState.TransferHistory.Count > 12)
+        {
+            teamState.TransferHistory = teamState.TransferHistory.Take(12).ToList();
+        }
+    }
+
+    private List<AttributeInsight> GetTopAttributesForCoach(PlayerHiddenRatingsState ratings, string coachRole, bool isPitcher)
+    {
+        var focusKeys = GetFocusKeysForCoach(coachRole, isPitcher);
+        return GetAttributeInsights(ratings)
+            .Where(attribute => focusKeys.Contains(attribute.Key, StringComparer.Ordinal))
+            .OrderByDescending(attribute => attribute.Rating)
+            .ThenBy(attribute => attribute.Key)
+            .ToList();
+    }
+
+    private AttributeInsight GetConcernAttribute(PlayerHiddenRatingsState ratings, string coachRole, bool isPitcher)
+    {
+        var focusKeys = GetFocusKeysForCoach(coachRole, isPitcher);
+        return GetAttributeInsights(ratings)
+            .Where(attribute => focusKeys.Contains(attribute.Key, StringComparer.Ordinal))
+            .OrderBy(attribute => attribute.Rating)
+            .ThenBy(attribute => attribute.Key)
+            .FirstOrDefault() ?? GetAttributeInsights(ratings).OrderBy(attribute => attribute.Rating).First();
+    }
+
+    private static string BuildOverallSummary(int overallRating, int age, CoachProfileView coach, bool isPitcher, string teamName)
+    {
+        var random = CreateStableRandom(coach.Name, coach.Role, teamName, age.ToString(), overallRating.ToString());
+
+        var ceilingLine = overallRating switch
+        {
+            >= 72 => Pick(random, isPitcher
+                ? ["That's a tone-setting arm.", "He looks like a front-line mound piece.", "That is the kind of pitcher you trust in big spots."]
+                : ["That looks like a true difference-maker.", "He's the sort of player who changes a lineup.", "That's an impact everyday piece."]),
+            >= 62 => Pick(random, isPitcher
+                ? ["I see a reliable rotation arm there.", "He looks like a pitcher who can hold a staff together.", "That's a useful arm you can win with."]
+                : ["He looks like a solid regular to me.", "There's real everyday value in that player.", "I can see him helping a good club quite a bit."]),
+            >= 52 => Pick(random, isPitcher
+                ? ["There's enough there to help a staff.", "He feels like a workable innings arm.", "I see useful depth with a little upside."]
+                : ["He feels like a playable contributor.", "There's a steady role player in there.", "I can see him helping in the right setup."]),
+            >= 44 => Pick(random, isPitcher
+                ? ["More of a depth look right now.", "I see a back-end option at the moment.", "He'd be fighting for innings more than leading the group."]
+                : ["This looks more like depth than a locked-in starter.", "I'd call him a support piece right now.", "He's more useful than flashy at this stage."]),
+            _ => Pick(random, isPitcher
+                ? ["That's still a project arm.", "He needs plenty more polish on the mound.", "Right now it is more upside than certainty."]
+                : ["He still looks pretty raw to me.", "There is a long way to go before he's a sure thing.", "I would call that a developmental piece for now."])
+        };
+
+        var ageLine = age switch
+        {
+            <= 23 => Pick(random, ["He's young enough to still take another jump.", "There is room for more growth there.", "The best version of him may still be ahead."]),
+            >= 34 => Pick(random, ["At this age, you're mostly buying the finished product.", "You know more or less what you're getting now.", "The veteran knows his game, even if the ceiling is set."]),
+            _ => Pick(random, ["He looks like a fairly known quantity.", "You're getting a player who knows what he is.", "This version of him feels pretty settled."])
+        };
+
+        return $"{ceilingLine} {ageLine}";
+    }
+
+    private static string BuildStrengthsLine(IReadOnlyList<AttributeInsight> strengths, string coachRole, bool isPitcher)
+    {
+        if (strengths.Count == 0)
+        {
+            return "Nothing jumps off the page yet, but there is something to work with.";
+        }
+
+        var random = CreateStableRandom(coachRole, string.Join('|', strengths.Select(attribute => attribute.Key)), strengths.Sum(attribute => attribute.Rating).ToString(), isPitcher.ToString());
+        var firstPraise = BuildAttributePraise(strengths[0], isPitcher, random);
+
+        if (strengths.Count == 1)
+        {
+            return $"The first thing I notice is that {firstPraise}.";
+        }
+
+        var secondPraise = BuildAttributePraise(strengths[1], isPitcher, random);
+        return $"The first thing I notice is that {firstPraise}, and {secondPraise}.";
+    }
+
+    private static string BuildConcernLine(AttributeInsight concern, string coachRole, bool isPitcher)
+    {
+        var random = CreateStableRandom(coachRole, concern.Key, concern.Rating.ToString(), isPitcher.ToString());
+        return concern.Rating >= 58
+            ? Pick(random, ["There really is not a glaring hole in his game right now.", "I do not see a major red flag at first glance.", "You can nitpick, but there is not an obvious weak spot."])
+            : $"My only hesitation is that {BuildAttributeConcern(concern, isPitcher, random)}.";
+    }
+
+    private string BuildTransferRecommendation(int overallRating, int age, string teamName, bool isPitcher)
+    {
+        if (SelectedTeam != null && string.Equals(teamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            return "He is already in your room, so this is more about how you use him than whether you chase him.";
+        }
+
+        var random = CreateStableRandom(teamName, overallRating.ToString(), age.ToString(), isPitcher.ToString());
+        return overallRating switch
+        {
+            >= 68 => Pick(random, ["If the price stays sane, I would push to make the move.", "That is the kind of player worth making a real offer for.", "I would be comfortable being aggressive there."]),
+            >= 58 => Pick(random, ["I would explore it if the deal does not gut your depth.", "Worth a serious call if you can keep the cost reasonable.", "That is a move I would listen on, not force."]),
+            >= 48 => Pick(random, ["Only do it if the price stays light.", "I would treat him as a secondary target, not the headliner.", "That feels more like a depth move than a splash."]),
+            _ => Pick(random, ["I would not force that one unless you just need organizational depth.", "That is more of a wait-and-see target for me.", "I would save your bigger chips for someone else."])
+        };
+    }
+
+    private static IReadOnlyList<AttributeInsight> GetAttributeInsights(PlayerHiddenRatingsState ratings)
+    {
+        return
+        [
+            new AttributeInsight("contact", ratings.ContactRating),
+            new AttributeInsight("power", ratings.PowerRating),
+            new AttributeInsight("discipline", ratings.DisciplineRating),
+            new AttributeInsight("speed", ratings.SpeedRating),
+            new AttributeInsight("fielding", ratings.FieldingRating),
+            new AttributeInsight("arm", ratings.ArmRating),
+            new AttributeInsight("pitching", ratings.PitchingRating),
+            new AttributeInsight("durability", ratings.DurabilityRating)
+        ];
+    }
+
+    private static string[] GetFocusKeysForCoach(string coachRole, bool isPitcher)
+    {
+        return coachRole switch
+        {
+            "Hitting Coach" when isPitcher => ["pitching", "durability", "arm", "discipline"],
+            "Hitting Coach" => ["contact", "power", "discipline", "speed"],
+            "Pitching Coach" when isPitcher => ["pitching", "durability", "arm", "discipline"],
+            "Pitching Coach" => ["arm", "fielding", "speed", "durability"],
+            "Bench Coach" when isPitcher => ["durability", "arm", "fielding", "discipline"],
+            "Bench Coach" => ["fielding", "speed", "arm", "discipline"],
+            "Manager" when isPitcher => ["pitching", "durability", "discipline", "arm"],
+            "Manager" => ["contact", "discipline", "durability", "fielding"],
+            _ when isPitcher => ["pitching", "durability", "arm", "discipline"],
+            _ => ["contact", "power", "speed", "fielding"]
+        };
+    }
+
+    private static string BuildAttributePraise(AttributeInsight attribute, bool isPitcher, Random random)
+    {
+        return attribute.Key switch
+        {
+            "contact" => attribute.Rating >= 70
+                ? Pick(random, ["he squares balls up all over the zone", "the barrel keeps finding the baseball", "he makes a lot of clean contact"])
+                : Pick(random, ["there is some usable bat-to-ball feel", "he can still put together a competitive at-bat", "there is enough contact skill to work with"]),
+            "power" => attribute.Rating >= 70
+                ? Pick(random, ["the pop really jumps off the bat", "he can do damage when he gets one to his pull side", "the raw thump is pretty clear"])
+                : Pick(random, ["there is a little bit of carry in the bat", "you can see flashes of extra-base juice", "he has enough strength to sting one now and then"]),
+            "discipline" => attribute.Rating >= 70
+                ? Pick(random, ["he usually knows which pitches to leave alone", "the strike-zone judgment is advanced", "he does not give away many at-bats"])
+                : Pick(random, ["there is some feel for the zone", "he can grind through a plate appearance", "he is not up there guessing every swing"]),
+            "speed" => attribute.Rating >= 70
+                ? Pick(random, ["he covers a lot of ground in a hurry", "the quickness shows up right away", "he moves like someone who can pressure a defense"])
+                : Pick(random, ["there is enough athleticism to help", "he moves well enough to be useful", "the legs are playable"]),
+            "fielding" => attribute.Rating >= 70
+                ? Pick(random, ["the glove work looks steady and trustworthy", "he handles himself cleanly in the field", "the defensive instincts stand out"])
+                : Pick(random, ["he can hold his own with the glove", "the defense should not hurt you much", "there is enough steadiness in the field"]),
+            "arm" => attribute.Rating >= 70
+                ? Pick(random, ["the arm has real carry on it", "there is legitimate strength in the throw", "the ball comes out of his hand with life"])
+                : Pick(random, ["the arm is passable", "he has enough arm to get by", "there is some utility in the arm strength"]),
+            "pitching" => attribute.Rating >= 70
+                ? Pick(random, ["the mound stuff is good enough to miss bats", "his stuff can drive the action on the mound", "the pitch quality is what gets your attention first"])
+                : Pick(random, ["there is enough on the mound to compete", "he can survive on the hill with that mix", "the arm talent gives him a chance"]),
+            _ => attribute.Rating >= 70
+                ? Pick(random, ["he looks built to hold up over a long stretch", "the body looks ready for a workload", "he should be able to handle regular action"])
+                : Pick(random, ["he can handle a fair amount of work", "the durability looks serviceable", "he should be able to stay in the mix"])
+        };
+    }
+
+    private static string BuildAttributeConcern(AttributeInsight attribute, bool isPitcher, Random random)
+    {
+        return attribute.Key switch
+        {
+            "contact" => Pick(random, ["the contact consistency still comes and goes", "he can get a bit swing-and-miss heavy", "I do not fully trust the barrel every trip"]),
+            "power" => Pick(random, ["the raw power is light", "he is not bringing much true thump right now", "there is not a lot of extra-base impact yet"]),
+            "discipline" => Pick(random, ["he can chase more than you would like", "the at-bat quality gets loose at times", "the zone awareness is still pretty spotty"]),
+            "speed" => Pick(random, ["the foot speed is ordinary", "he is not going to pressure many defenses with his legs", "there is not much extra quickness there"]),
+            "fielding" => Pick(random, ["the glove can get a little shaky", "the defensive reliability is not fully there yet", "I would not call the fielding a strength"]),
+            "arm" => Pick(random, ["the arm is a little light for impact work", "the throw does not always carry the way you want", "there is only modest arm strength there"]),
+            "pitching" => Pick(random, ["the mound quality still needs work", "I am not fully sold on the pure stuff yet", "there is not enough weaponry there right now"]),
+            _ => Pick(random, ["I would want to watch how his body holds up over time", "the long-haul durability still worries me a little", "there is some risk if you ask for a heavy workload"])
+        };
+    }
+
+    private static string[] GetRoleSpecialties(string role)
+    {
+        return role switch
+        {
+            "Manager" => ["clubhouse balance", "game management", "steady leadership", "big-moment calm"],
+            "Hitting Coach" => ["barrel control", "plate discipline", "pull-side juice", "situational hitting"],
+            "Pitching Coach" => ["mound command", "durability planning", "velocity work", "finishing secondary pitches"],
+            "Bench Coach" => ["defensive positioning", "baserunning pressure", "late-game matchups", "versatility work"],
+            _ => ["long-range projection", "ceiling reads", "makeup and instincts", "league coverage"]
+        };
+    }
+
+    private static string[] GetRoleVoices(string role)
+    {
+        return role switch
+        {
+            "Manager" => ["steady", "direct", "measured"],
+            "Hitting Coach" => ["bat-first", "plain-spoken", "detail-heavy"],
+            "Pitching Coach" => ["grinder", "calm", "old-school"],
+            "Bench Coach" => ["practical", "sharp-eyed", "situational"],
+            _ => ["balanced", "optimistic", "cautious"]
+        };
+    }
+
+    private static int GetCoachRoleSortOrder(string role)
+    {
+        var index = Array.FindIndex(CoachRoleOrder, entry => string.Equals(entry, role, StringComparison.OrdinalIgnoreCase));
+        return index < 0 ? CoachRoleOrder.Length : index;
+    }
+
+    private static Random CreateStableRandom(params string[] parts)
+    {
+        return new Random(GetStableHash(string.Join('|', parts)));
+    }
+
+    private static int GetStableHash(string value)
+    {
+        unchecked
+        {
+            var hash = 17;
+            foreach (var character in value)
+            {
+                hash = (hash * 31) + char.ToUpperInvariant(character);
+            }
+
+            return hash & int.MaxValue;
+        }
+    }
+
+    private static string Pick(Random random, string[] options)
+    {
+        return options.Length == 0 ? string.Empty : options[random.Next(options.Length)];
     }
 
     private static void ClearPlayerFromSlots(List<Guid?> slots, Guid playerId)
@@ -931,39 +1617,25 @@ public sealed class FranchiseSession
 
     private List<MatchPlayerSnapshot> BuildImportedTeamLineup(string teamName)
     {
-        var playersById = _leagueData.Players.ToDictionary(player => player.PlayerId, player => player);
-        var lineupRows = _leagueData.Rosters
-            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) && roster.LineupSlot is >= 1 and <= 9)
-            .OrderBy(roster => roster.LineupSlot)
+        var lineup = GetTeamRoster(teamName)
+            .Where(player => player.LineupSlot.HasValue)
+            .OrderBy(player => player.LineupSlot)
+            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
             .ToList();
 
-        var lineup = lineupRows
-            .Select(roster =>
-            {
-                playersById.TryGetValue(roster.PlayerId, out var playerData);
-                return CreatePlayerSnapshot(
-                    roster.PlayerId,
-                    roster.PlayerName,
-                    roster.PrimaryPosition,
-                    roster.SecondaryPosition,
-                    playerData?.Age ?? 27);
-            })
+        var fillPlayers = GetTeamRoster(teamName)
+            .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
+            .OrderBy(player => player.PlayerName)
             .ToList();
 
-        var fillPlayers = _leagueData.Rosters
-            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) && lineup.All(existing => existing.Id != roster.PlayerId) && roster.PrimaryPosition is not "SP" and not "RP")
-            .OrderBy(roster => roster.PlayerName)
-            .ToList();
-
-        foreach (var roster in fillPlayers)
+        foreach (var player in fillPlayers)
         {
             if (lineup.Count >= 9)
             {
                 break;
             }
 
-            playersById.TryGetValue(roster.PlayerId, out var playerData);
-            lineup.Add(CreatePlayerSnapshot(roster.PlayerId, roster.PlayerName, roster.PrimaryPosition, roster.SecondaryPosition, playerData?.Age ?? 27));
+            lineup.Add(CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age));
         }
 
         while (lineup.Count < 9)
@@ -976,20 +1648,14 @@ public sealed class FranchiseSession
 
     private MatchPlayerSnapshot? BuildImportedPitcher(string teamName)
     {
-        var playersById = _leagueData.Players.ToDictionary(player => player.PlayerId, player => player);
-        var pitcherRow = _leagueData.Rosters
-            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase))
-            .OrderBy(roster => roster.RotationSlot ?? 99)
-            .ThenBy(roster => roster.PrimaryPosition is "SP" ? 0 : 1)
-            .FirstOrDefault(roster => roster.PrimaryPosition is "SP" or "RP");
+        var pitcher = GetTeamRoster(teamName)
+            .OrderBy(player => player.RotationSlot ?? 99)
+            .ThenBy(player => player.PrimaryPosition is "SP" ? 0 : 1)
+            .FirstOrDefault(player => player.PrimaryPosition is "SP" or "RP");
 
-        if (pitcherRow == null)
-        {
-            return null;
-        }
-
-        playersById.TryGetValue(pitcherRow.PlayerId, out var playerData);
-        return CreatePlayerSnapshot(pitcherRow.PlayerId, pitcherRow.PlayerName, pitcherRow.PrimaryPosition, pitcherRow.SecondaryPosition, playerData?.Age ?? 27);
+        return pitcher == null
+            ? null
+            : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age);
     }
 
     private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age)
@@ -1120,8 +1786,83 @@ public sealed class FranchiseSession
         return hasChanges;
     }
 
+    private static PlayerSeasonStatsState GenerateLastSeasonStats(Guid playerId, string primaryPosition, int age, PlayerHiddenRatingsState ratings)
+    {
+        var random = CreateStableRandom(playerId.ToString(), "last-season", primaryPosition, age.ToString());
+        var isPitcher = primaryPosition is "SP" or "RP";
+
+        if (isPitcher)
+        {
+            var gamesPitched = primaryPosition == "RP"
+                ? random.Next(42, 71)
+                : random.Next(24, 35);
+            var inningsPitched = primaryPosition == "RP"
+                ? random.Next(48, 86)
+                : random.Next(128, 216);
+            var era = Math.Clamp(MapRating(100 - ratings.PitchingRating, 5.60, 2.35) + ((random.NextDouble() - 0.5d) * 0.45d), 1.90d, 6.80d);
+            var earnedRuns = Math.Max(0, (int)Math.Round((inningsPitched / 9d) * era));
+            var hitsAllowed = Math.Max(0, (int)Math.Round(inningsPitched * MapRating(100 - ratings.PitchingRating, 1.20, 0.78)));
+            var walksAllowed = Math.Max(0, (int)Math.Round(inningsPitched * MapRating(100 - ratings.DisciplineRating, 0.48, 0.18)));
+            var pitcherStrikeouts = Math.Max(0, (int)Math.Round(inningsPitched * MapRating(ratings.PitchingRating, 0.68, 1.34)));
+            var wins = primaryPosition == "RP"
+                ? random.Next(2, 9)
+                : Math.Max(4, (int)Math.Round(MapRating(ratings.PitchingRating, 4, 18)) + random.Next(-1, 2));
+            var losses = primaryPosition == "RP"
+                ? random.Next(1, 6)
+                : Math.Max(3, (int)Math.Round(MapRating(100 - ratings.PitchingRating, 4, 12)) + random.Next(-1, 2));
+
+            return new PlayerSeasonStatsState
+            {
+                GamesPlayed = gamesPitched,
+                GamesPitched = gamesPitched,
+                InningsPitchedOuts = inningsPitched * 3,
+                HitsAllowed = hitsAllowed,
+                RunsAllowed = earnedRuns + Math.Max(0, random.Next(0, 7)),
+                EarnedRuns = earnedRuns,
+                WalksAllowed = walksAllowed,
+                StrikeoutsPitched = pitcherStrikeouts,
+                Wins = wins,
+                Losses = losses
+            };
+        }
+
+        var gamesPlayed = random.Next(96, 156);
+        var plateAppearances = gamesPlayed * random.Next(3, 6);
+        var walks = Math.Max(8, (int)Math.Round(plateAppearances * MapRating(ratings.DisciplineRating, 0.04, 0.14)));
+        var atBats = Math.Max(1, plateAppearances - walks);
+        var battingAverage = Math.Clamp(MapRating(ratings.ContactRating, 0.195, 0.338) + ((random.NextDouble() - 0.5d) * 0.020d), 0.180d, 0.360d);
+        var hits = Math.Max(0, (int)Math.Round(atBats * battingAverage));
+        var homeRuns = Math.Clamp((int)Math.Round(atBats * MapRating(ratings.PowerRating, 0.012, 0.085)), 0, hits);
+        var doubles = Math.Clamp((int)Math.Round(hits * MapRating(ratings.PowerRating, 0.14, 0.28)), 0, Math.Max(0, hits - homeRuns));
+        var triples = Math.Clamp((int)Math.Round(hits * MapRating(ratings.SpeedRating, 0.01, 0.05)), 0, Math.Max(0, hits - homeRuns - doubles));
+        var strikeouts = Math.Clamp((int)Math.Round(atBats * MapRating(100 - ratings.ContactRating, 0.10, 0.30)), 0, atBats);
+        var runsBattedIn = Math.Max(homeRuns, (int)Math.Round((hits + homeRuns) * MapRating((ratings.ContactRating + ratings.PowerRating) / 2d, 0.42, 0.88)));
+
+        return new PlayerSeasonStatsState
+        {
+            GamesPlayed = gamesPlayed,
+            PlateAppearances = plateAppearances,
+            AtBats = atBats,
+            Hits = hits,
+            Doubles = doubles,
+            Triples = triples,
+            HomeRuns = homeRuns,
+            RunsBattedIn = runsBattedIn,
+            Walks = walks,
+            Strikeouts = strikeouts
+        };
+    }
+
+    private static double MapRating(double rating, double lowValue, double highValue)
+    {
+        var normalized = Math.Clamp((rating - 1d) / 98d, 0d, 1d);
+        return lowValue + ((highValue - lowValue) * normalized);
+    }
+
     private void Save()
     {
         _stateStore.Save(_saveState);
     }
+
+    private sealed record AttributeInsight(string Key, int Rating);
 }

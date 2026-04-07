@@ -55,7 +55,8 @@ public sealed class MainMenuScreen : GameScreen
     {
         var centerX = viewportWidth / 2;
         var y = StartY + index * (ButtonHeight + ButtonSpacing);
-        return new Rectangle(centerX - ButtonWidth / 2, y, ButtonWidth, ButtonHeight);
+        var width = _buttons.Count == 0 ? ButtonWidth : _buttons.Max(button => ButtonControl.GetSuggestedWidth(button.Label, ButtonWidth));
+        return new Rectangle(centerX - width / 2, y, width, ButtonHeight);
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)

@@ -89,6 +89,7 @@ public sealed class UiRenderer
             return;
 
         var safeLabel = SanitizeText(label);
+        var selectedFont = font ?? _uiSmallFont;
         var batchStarted = false;
 
         try
@@ -101,14 +102,19 @@ public sealed class UiRenderer
 
             if (!string.IsNullOrEmpty(safeLabel))
             {
-                var selectedFont = font ?? _uiSmallFont;
                 if (selectedFont != null)
                 {
                     var textSize = selectedFont.MeasureString(safeLabel);
+                    var maxTextWidth = Math.Max(1f, bounds.Width - 20f);
+                    var maxTextHeight = Math.Max(1f, bounds.Height - 10f);
+                    var scaleX = textSize.X <= 0f ? 1f : Math.Min(1f, maxTextWidth / textSize.X);
+                    var scaleY = textSize.Y <= 0f ? 1f : Math.Min(1f, maxTextHeight / textSize.Y);
+                    var scale = Math.Min(scaleX, scaleY);
+                    var scaledSize = textSize * scale;
                     var textPosition = new Vector2(
-                        bounds.X + (bounds.Width - textSize.X) / 2,
-                        bounds.Y + (bounds.Height - textSize.Y) / 2);
-                    _spriteBatch.DrawString(selectedFont, safeLabel, textPosition, textColor);
+                        bounds.X + (bounds.Width - scaledSize.X) / 2f,
+                        bounds.Y + (bounds.Height - scaledSize.Y) / 2f);
+                    _spriteBatch.DrawString(selectedFont, safeLabel, textPosition, textColor, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
                 }
                 else
                 {
