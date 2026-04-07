@@ -62,7 +62,18 @@ public sealed class ScheduleScreen : GameScreen
     public override void OnEnter()
     {
         var franchiseDate = _franchiseSession.GetCurrentFranchiseDate().Date;
-        _visibleMonth = new DateTime(franchiseDate.Year, franchiseDate.Month, 1);
+        var seasonStart = GetCalendarStartDate();
+        var seasonEnd = GetCalendarEndDate();
+        if (franchiseDate < seasonStart)
+        {
+            franchiseDate = seasonStart;
+        }
+        else if (franchiseDate > seasonEnd)
+        {
+            franchiseDate = seasonEnd;
+        }
+
+        _visibleMonth = ClampVisibleMonth(new DateTime(franchiseDate.Year, franchiseDate.Month, 1));
         _selectedDate = franchiseDate;
         _ignoreClicksUntilRelease = true;
     }
@@ -161,10 +172,17 @@ public sealed class ScheduleScreen : GameScreen
 
     private void ChangeVisibleMonth(int monthOffset)
     {
-        _visibleMonth = _visibleMonth.AddMonths(monthOffset);
+        _visibleMonth = ClampVisibleMonth(_visibleMonth.AddMonths(monthOffset));
         if (_selectedDate.Month != _visibleMonth.Month || _selectedDate.Year != _visibleMonth.Year)
         {
-            _selectedDate = new DateTime(_visibleMonth.Year, _visibleMonth.Month, 1);
+            var seasonStart = GetCalendarStartDate();
+            var seasonEnd = GetCalendarEndDate();
+            var firstOfMonth = new DateTime(_visibleMonth.Year, _visibleMonth.Month, 1);
+            _selectedDate = firstOfMonth < seasonStart
+                ? seasonStart
+                : firstOfMonth > seasonEnd
+                    ? seasonEnd
+                    : firstOfMonth;
         }
     }
 
@@ -186,6 +204,9 @@ public sealed class ScheduleScreen : GameScreen
     private bool TrySelectCalendarDay(Point mousePosition)
     {
         var gridStartDate = GetGridStartDate();
+        var seasonStart = GetCalendarStartDate();
+        var seasonEnd = GetCalendarEndDate();
+
         for (var i = 0; i < 42; i++)
         {
             var bounds = GetDayCellBounds(i);
@@ -195,10 +216,15 @@ public sealed class ScheduleScreen : GameScreen
             }
 
             var selectedDate = gridStartDate.AddDays(i).Date;
+            if (selectedDate < seasonStart || selectedDate > seasonEnd)
+            {
+                return false;
+            }
+
             _selectedDate = selectedDate;
             if (selectedDate.Month != _visibleMonth.Month || selectedDate.Year != _visibleMonth.Year)
             {
-                _visibleMonth = new DateTime(selectedDate.Year, selectedDate.Month, 1);
+                _visibleMonth = ClampVisibleMonth(new DateTime(selectedDate.Year, selectedDate.Month, 1));
             }
 
             return true;
@@ -218,19 +244,30 @@ public sealed class ScheduleScreen : GameScreen
         }
 
         var gridStartDate = GetGridStartDate();
+        var seasonStart = GetCalendarStartDate();
+        var seasonEnd = GetCalendarEndDate();
+
         for (var index = 0; index < 42; index++)
         {
             var date = gridStartDate.AddDays(index).Date;
             var bounds = GetDayCellBounds(index);
-            var games = GetGamesForDate(date, teamGames);
-            var practicePlan = GetPracticePlan(date, teamGames);
+            var isInSeasonRange = date >= seasonStart && date <= seasonEnd;
+            var games = isInSeasonRange ? GetGamesForDate(date, teamGames) : [];
+            var practicePlan = isInSeasonRange ? GetPracticePlan(date, teamGames) : null;
             var isCurrentMonth = date.Month == _visibleMonth.Month && date.Year == _visibleMonth.Year;
-            var isSelected = date == _selectedDate.Date;
-            var isToday = date == _franchiseSession.GetCurrentFranchiseDate().Date;
-            var isHovered = bounds.Contains(Mouse.GetState().Position);
-            var backgroundColor = GetDayBackgroundColor(games.Count > 0, practicePlan != null, isCurrentMonth, isSelected, isHovered);
+            var isSelected = isInSeasonRange && date == _selectedDate.Date;
+            var isToday = isInSeasonRange && date == _franchiseSession.GetCurrentFranchiseDate().Date;
+            var isHovered = isInSeasonRange && bounds.Contains(Mouse.GetState().Position);
+            var backgroundColor = isInSeasonRange
+                ? GetDayBackgroundColor(games.Count > 0, practicePlan != null, isCurrentMonth, isSelected, isHovered)
+                : new Color(44, 44, 44);
 
             uiRenderer.DrawButton(string.Empty, bounds, backgroundColor, Color.White);
+            if (!isInSeasonRange)
+            {
+                continue;
+            }
+
             uiRenderer.DrawTextInBounds(date.Day.ToString(), new Rectangle(bounds.X + 4, bounds.Y + 2, 30, 20), isToday ? Color.Gold : (isCurrentMonth ? Color.White : Color.LightGray), uiRenderer.UiMediumFont);
 
             if (games.Count > 0)
@@ -300,7 +337,8 @@ public sealed class ScheduleScreen : GameScreen
 
         var firstGameDate = teamGames.Min(game => game.Date.Date);
         var lastGameDate = teamGames.Max(game => game.Date.Date);
-        if (date.Date < firstGameDate.AddDays(-7) || date.Date > lastGameDate)
+        var springTrainingStart = _franchiseSession.GetSpringTrainingStartDate().Date;
+        if (date.Date < springTrainingStart || date.Date > lastGameDate)
         {
             return null;
         }
@@ -403,6 +441,35 @@ public sealed class ScheduleScreen : GameScreen
     {
         var monthStart = new DateTime(_visibleMonth.Year, _visibleMonth.Month, 1);
         return monthStart.AddDays(-(int)monthStart.DayOfWeek).Date;
+    }
+
+    private DateTime GetCalendarStartDate()
+    {
+        return _franchiseSession.GetSeasonCalendarStartDate().Date;
+    }
+
+    private DateTime GetCalendarEndDate()
+    {
+        return _franchiseSession.GetSeasonCalendarEndDate().Date;
+    }
+
+    private DateTime ClampVisibleMonth(DateTime month)
+    {
+        var candidate = new DateTime(month.Year, month.Month, 1);
+        var minMonth = new DateTime(GetCalendarStartDate().Year, GetCalendarStartDate().Month, 1);
+        var maxMonth = new DateTime(GetCalendarEndDate().Year, GetCalendarEndDate().Month, 1);
+
+        if (candidate < minMonth)
+        {
+            return minMonth;
+        }
+
+        if (candidate > maxMonth)
+        {
+            return maxMonth;
+        }
+
+        return candidate;
     }
 
     private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);

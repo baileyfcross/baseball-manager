@@ -56,6 +56,7 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         _screenManager.Register(new LineupScreen(_screenManager, _leagueData, _franchiseSession));
         _screenManager.Register(new RotationScreen(_screenManager, _leagueData, _franchiseSession));
         _screenManager.Register(new ScheduleScreen(_screenManager, _leagueData, _franchiseSession));
+        _screenManager.Register(new TrainingReportsScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new ScoutingScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new CoachingStaffScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new LiveMatchScreen(_screenManager, _leagueData, _franchiseSession));

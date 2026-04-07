@@ -158,6 +158,7 @@ public sealed class LineupScreen : GameScreen
         {
             uiRenderer.DrawWrappedTextInBounds("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Rectangle(100, 126, Math.Max(560, _viewport.X - 220), 24), Color.White, uiRenderer.ScoreboardFont, 1);
             uiRenderer.DrawTextInBounds($"Selected: {GetSelectedPlayerName()}", new Rectangle(100, 154, Math.Max(560, _viewport.X - 220), 22), Color.White, uiRenderer.ScoreboardFont);
+            uiRenderer.DrawTextInBounds(GetSelectedPlayerRecentStatsLine(), new Rectangle(100, 180, Math.Max(760, _viewport.X - 220), 22), Color.Gold, uiRenderer.UiSmallFont);
 
             uiRenderer.DrawButton(string.Empty, lineupPanelBounds, new Color(38, 48, 56), Color.White);
             uiRenderer.DrawButton(string.Empty, benchPanelBounds, new Color(38, 48, 56), Color.White);
@@ -381,6 +382,17 @@ public sealed class LineupScreen : GameScreen
 
         var player = _franchiseSession.GetSelectedTeamRoster().FirstOrDefault(entry => entry.PlayerId == _selectedPlayerId.Value);
         return player?.PlayerName ?? "None";
+    }
+
+    private string GetSelectedPlayerRecentStatsLine()
+    {
+        if (!_selectedPlayerId.HasValue)
+        {
+            return "Last 10 G: select a player to view recent batting stats.";
+        }
+
+        var recent = _franchiseSession.GetRecentPlayerStats(_selectedPlayerId.Value, 10);
+        return $"Last 10 G: GP {recent.GamesPlayed} | H {recent.Hits} | HR {recent.HomeRuns} | AVG {recent.BattingAverageDisplay} | OPS {recent.OpsDisplay} | SO {recent.Strikeouts}";
     }
 
     private static string Truncate(string value, int maxLength)

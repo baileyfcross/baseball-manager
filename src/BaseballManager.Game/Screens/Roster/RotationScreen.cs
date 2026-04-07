@@ -158,6 +158,7 @@ public sealed class RotationScreen : GameScreen
         {
             uiRenderer.DrawWrappedTextInBounds("Drag a pitcher to a rotation slot to assign. Drag from a slot to move pitchers.", new Rectangle(100, 126, Math.Max(560, _viewport.X - 220), 24), Color.White, uiRenderer.ScoreboardFont, 1);
             uiRenderer.DrawTextInBounds($"Selected: {GetSelectedPlayerName()}", new Rectangle(100, 154, Math.Max(560, _viewport.X - 220), 22), Color.White, uiRenderer.ScoreboardFont);
+            uiRenderer.DrawTextInBounds(GetSelectedPlayerRecentStatsLine(), new Rectangle(100, 180, Math.Max(760, _viewport.X - 220), 22), Color.Gold, uiRenderer.UiSmallFont);
 
             uiRenderer.DrawButton(string.Empty, rotationPanelBounds, new Color(38, 48, 56), Color.White);
             uiRenderer.DrawButton(string.Empty, bullpenPanelBounds, new Color(38, 48, 56), Color.White);
@@ -381,6 +382,17 @@ public sealed class RotationScreen : GameScreen
 
         var player = _franchiseSession.GetSelectedTeamRoster().FirstOrDefault(entry => entry.PlayerId == _selectedPlayerId.Value);
         return player?.PlayerName ?? "None";
+    }
+
+    private string GetSelectedPlayerRecentStatsLine()
+    {
+        if (!_selectedPlayerId.HasValue)
+        {
+            return "Last 10 G: select a player to view recent stats.";
+        }
+
+        var recent = _franchiseSession.GetRecentPlayerStats(_selectedPlayerId.Value, 10);
+        return $"Last 10 G: GP {recent.GamesPlayed} | IP {recent.InningsPitchedDisplay} | ERA {recent.EraDisplay} | K {recent.PitcherStrikeouts} | W {recent.Wins} | L {recent.Losses}";
     }
 
     private static string Truncate(string value, int maxLength)

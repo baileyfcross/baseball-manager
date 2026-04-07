@@ -24,7 +24,6 @@ public sealed class FranchiseHubScreen : GameScreen
     private string _statusMessage = "";
 
     private const int ButtonWidth = 240;
-    private const int ButtonSpacing = 10;
 
     public FranchiseHubScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -36,11 +35,13 @@ public sealed class FranchiseHubScreen : GameScreen
     private void InitializeButtons()
     {
         _buttons.Add(new ButtonControl { Label = "Live Match", OnClick = () => StartLiveMatch() });
+        _buttons.Add(new ButtonControl { Label = "Sim Day", OnClick = () => SimDay() });
         _buttons.Add(new ButtonControl { Label = "Sim Next Game", OnClick = () => SimNextGame() });
         _buttons.Add(new ButtonControl { Label = "Roster", OnClick = () => _screenManager.TransitionTo(nameof(RosterScreen)) });
         _buttons.Add(new ButtonControl { Label = "Lineup", OnClick = () => _screenManager.TransitionTo(nameof(LineupScreen)) });
         _buttons.Add(new ButtonControl { Label = "Rotation", OnClick = () => _screenManager.TransitionTo(nameof(RotationScreen)) });
         _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Training Reports", OnClick = () => _screenManager.TransitionTo(nameof(TrainingReportsScreen)) });
         _buttons.Add(new ButtonControl { Label = "Scouting / Transfers", OnClick = () => _screenManager.TransitionTo(nameof(ScoutingScreen)) });
         _buttons.Add(new ButtonControl { Label = "Coaching Staff", OnClick = () => _screenManager.TransitionTo(nameof(CoachingStaffScreen)) });
         _buttons.Add(new ButtonControl { Label = "Main Menu", OnClick = () => _screenManager.TransitionTo(nameof(MainMenuScreen)) });
@@ -50,25 +51,33 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         var panelBounds = GetMenuPanelBounds(viewportWidth, viewportHeight);
         var buttonHeight = GetButtonHeight(viewportHeight);
+        var buttonSpacing = GetButtonSpacing();
         var width = Math.Min(panelBounds.Width - 24, GetColumnButtonWidth());
         var x = panelBounds.X + ((panelBounds.Width - width) / 2);
-        var y = panelBounds.Y + 18 + index * (buttonHeight + ButtonSpacing);
+        var y = panelBounds.Y + 18 + index * (buttonHeight + buttonSpacing);
         return new Rectangle(x, y, width, buttonHeight);
     }
 
     private Rectangle GetMenuPanelBounds(int viewportWidth, int viewportHeight)
     {
         var buttonHeight = GetButtonHeight(viewportHeight);
-        var totalHeight = (_buttons.Count * buttonHeight) + (Math.Max(0, _buttons.Count - 1) * ButtonSpacing) + 36;
+        var buttonSpacing = GetButtonSpacing();
+        var totalHeight = (_buttons.Count * buttonHeight) + (Math.Max(0, _buttons.Count - 1) * buttonSpacing) + 36;
         var width = Math.Clamp(viewportWidth / 3, 320, 460);
         var x = (viewportWidth - width) / 2;
-        var y = Math.Max(128, (viewportHeight - totalHeight - 120) / 2);
+        var y = Math.Max(102, (viewportHeight - totalHeight - 132) / 2);
         return new Rectangle(x, y, width, totalHeight);
     }
 
-    private static int GetButtonHeight(int viewportHeight)
+    private int GetButtonHeight(int viewportHeight)
     {
-        return Math.Clamp(viewportHeight / 16, 38, 50);
+        var divisor = _buttons.Count >= 10 ? 20 : 16;
+        return Math.Clamp(viewportHeight / divisor, 34, 50);
+    }
+
+    private int GetButtonSpacing()
+    {
+        return _buttons.Count >= 10 ? 6 : 10;
     }
 
     private int GetColumnButtonWidth()
@@ -114,7 +123,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _ignoreClicksUntilRelease = true;
         if (string.IsNullOrEmpty(_statusMessage))
         {
-            _statusMessage = "Use the schedule screen for a monthly game-and-practice calendar, or jump straight into the next game.";
+            _statusMessage = "Use Sim Day to move one calendar day at a time with coach feedback from practices, or Sim Next Game to jump ahead.";
         }
     }
 
@@ -138,10 +147,10 @@ public sealed class FranchiseHubScreen : GameScreen
             uiRenderer.DrawButton(button.Label, bounds, bgColor, Color.White);
         }
 
-        var statusBounds = new Rectangle(68, _viewport.Y - 108, Math.Max(520, _viewport.X - 136), 72);
+        var statusBounds = new Rectangle(68, _viewport.Y - 138, Math.Max(520, _viewport.X - 136), 102);
         uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
         uiRenderer.DrawTextInBounds("Latest Update", new Rectangle(statusBounds.X + 12, statusBounds.Y + 6, 200, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 12, statusBounds.Y + 26, statusBounds.Width - 24, statusBounds.Height - 32), Color.White, uiRenderer.UiSmallFont, 3);
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 12, statusBounds.Y + 26, statusBounds.Width - 24, statusBounds.Height - 32), Color.White, uiRenderer.UiSmallFont, 5);
     }
 
     private void StartLiveMatch()
@@ -149,6 +158,12 @@ public sealed class FranchiseHubScreen : GameScreen
         _startMatchUseCase.Execute();
         _franchiseSession.PrepareFranchiseMatch();
         _screenManager.TransitionTo(nameof(LiveMatchScreen));
+    }
+
+    private void SimDay()
+    {
+        _franchiseSession.SimulateCurrentDay(out var message);
+        _statusMessage = message;
     }
 
     private void SimNextGame()

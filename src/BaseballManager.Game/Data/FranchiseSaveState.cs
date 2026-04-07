@@ -18,6 +18,10 @@ public sealed class FranchiseSaveState
 
     public Dictionary<Guid, PlayerSeasonStatsState> PlayerSeasonStats { get; set; } = new();
 
+    public Dictionary<Guid, List<PlayerRecentGameStatState>> PlayerRecentGameStats { get; set; } = new();
+
+    public Dictionary<Guid, PlayerRecentTotalsState> PlayerRecentTrackingTotals { get; set; } = new();
+
     public Dictionary<Guid, PlayerHealthState> PlayerHealth { get; set; } = new();
 
     public Dictionary<Guid, string> PlayerAssignments { get; set; } = new();
@@ -43,6 +47,8 @@ public sealed class TeamFranchiseState
 
     public List<TransferRecordState> TransferHistory { get; set; } = new();
 
+    public List<TrainingReportState> TrainingReports { get; set; } = new();
+
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }
 }
 
@@ -62,6 +68,21 @@ public sealed class TransferRecordState
     public DateTime EffectiveDate { get; set; } = DateTime.UtcNow;
 
     public string Description { get; set; } = string.Empty;
+}
+
+public sealed class TrainingReportState
+{
+    public DateTime ReportDate { get; set; }
+
+    public int SeasonYear { get; set; }
+
+    public string Title { get; set; } = string.Empty;
+
+    public string FocusLabel { get; set; } = string.Empty;
+
+    public string Summary { get; set; } = string.Empty;
+
+    public List<string> CoachNotes { get; set; } = new();
 }
 
 public sealed class CompletedScheduleGameResult
@@ -232,6 +253,68 @@ public sealed class PlayerHealthState
     public int InjuryDaysRemaining { get; set; }
 
     public string InjuryDescription { get; set; } = string.Empty;
+}
+
+public sealed class PlayerRecentGameStatState
+{
+    public DateTime GameDate { get; set; }
+
+    public int GamesPlayed { get; set; }
+
+    public int InningsPitchedOuts { get; set; }
+
+    public int EarnedRuns { get; set; }
+
+    public int Wins { get; set; }
+
+    public int Losses { get; set; }
+
+    public int AtBats { get; set; }
+
+    public int Hits { get; set; }
+
+    public int Doubles { get; set; }
+
+    public int Triples { get; set; }
+
+    public int HomeRuns { get; set; }
+
+    public int Walks { get; set; }
+
+    public int Strikeouts { get; set; }
+
+    public int PitcherStrikeouts { get; set; }
+}
+
+public sealed class PlayerRecentTotalsState
+{
+    public int GamesPlayed { get; set; }
+
+    public int GamesPitched { get; set; }
+
+    public int InningsPitchedOuts { get; set; }
+
+    public int EarnedRuns { get; set; }
+
+    public int Wins { get; set; }
+
+    public int Losses { get; set; }
+
+    public int AtBats { get; set; }
+
+    public int Hits { get; set; }
+
+    public int Doubles { get; set; }
+
+    public int Triples { get; set; }
+
+    public int HomeRuns { get; set; }
+
+    public int Walks { get; set; }
+
+    public int Strikeouts { get; set; }
+
+    public int PitcherStrikeouts { get; set; }
 }
 
 public sealed class PlayerSeasonStatsState
