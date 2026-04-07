@@ -36,6 +36,28 @@ public sealed class OptionsScreen : GameScreen
     private bool _showRealTimeClock;
     private string _statusMessage = "Adjust display settings or manage saves.";
 
+    private const int LayoutHorizontalPadding = 24;
+    private const int MaxContentWidth = 760;
+    private const int SelectorLabelWidth = 210;
+    private const int SelectorArrowWidth = 44;
+    private const int SelectorGap = 12;
+    private const int SelectorValueMinWidth = 180;
+    private const int SelectorValueMaxWidth = 320;
+    private const int SelectorRowHeight = 42;
+    private const int SelectorRowSpacing = 70;
+    private const int DeleteButtonWidth = 300;
+    private const int DeleteButtonHeight = 44;
+    private const int StatusHeight = 38;
+    private const int LayoutBottomPadding = 16;
+    private const int BaseWindowModeY = 160;
+    private const int BaseResolutionY = 230;
+    private const int BaseRefreshY = 300;
+    private const int BaseClockY = 370;
+    private const int BaseDeleteCurrentY = 430;
+    private const int BaseDeleteQuickMatchY = 486;
+    private const int BaseDeleteAllY = 542;
+    private const int BaseStatusY = 598;
+
     public OptionsScreen(ScreenManager screenManager, FranchiseSession franchiseSession, GameRoot gameRoot)
     {
         _screenManager = screenManager;
@@ -77,55 +99,75 @@ public sealed class OptionsScreen : GameScreen
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
-
-        uiRenderer.DrawText("Options", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawTextInBounds($"Current Team: {_franchiseSession.SelectedTeamName}", new Rectangle(168, 82, 380, 22), Color.White, uiRenderer.UiSmallFont);
-
-        var contentLeft = Math.Max(80, (_viewport.X - 680) / 2);
+        var layout = GetLayoutMetrics();
         var mousePosition = Mouse.GetState().Position;
+
+        uiRenderer.DrawTextInBounds("Options", new Rectangle(layout.ContentLeft, 42, layout.ContentWidth, 30), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds($"Current Team: {_franchiseSession.SelectedTeamName}", new Rectangle(layout.ContentLeft, 82, layout.ContentWidth, 22), Color.White, uiRenderer.UiSmallFont);
+
+        var windowLabelBounds = GetSelectorLabelBounds(0, layout);
+        var windowLeftBounds = GetSelectorLeftBounds(0, layout);
+        var windowValueBounds = GetSelectorValueBounds(0, layout);
+        var windowRightBounds = GetSelectorRightBounds(0, layout);
+        var resolutionLabelBounds = GetSelectorLabelBounds(1, layout);
+        var resolutionLeftBounds = GetSelectorLeftBounds(1, layout);
+        var resolutionValueBounds = GetSelectorValueBounds(1, layout);
+        var resolutionRightBounds = GetSelectorRightBounds(1, layout);
+        var refreshLabelBounds = GetSelectorLabelBounds(2, layout);
+        var refreshLeftBounds = GetSelectorLeftBounds(2, layout);
+        var refreshValueBounds = GetSelectorValueBounds(2, layout);
+        var refreshRightBounds = GetSelectorRightBounds(2, layout);
+        var clockLabelBounds = GetSelectorLabelBounds(3, layout);
+        var clockLeftBounds = GetSelectorLeftBounds(3, layout);
+        var clockValueBounds = GetSelectorValueBounds(3, layout);
+        var clockRightBounds = GetSelectorRightBounds(3, layout);
 
         DrawSelectorRow(
             uiRenderer,
             "Window Mode",
             GetWindowModeLabel(),
-            GetWindowModeLeftBounds(contentLeft),
-            GetWindowModeValueBounds(contentLeft),
-            GetWindowModeRightBounds(contentLeft),
+            windowLabelBounds,
+            windowLeftBounds,
+            windowValueBounds,
+            windowRightBounds,
             mousePosition);
 
         DrawSelectorRow(
             uiRenderer,
             "Screen Size",
             GetResolutionLabel(),
-            GetResolutionLeftBounds(contentLeft),
-            GetResolutionValueBounds(contentLeft),
-            GetResolutionRightBounds(contentLeft),
+            resolutionLabelBounds,
+            resolutionLeftBounds,
+            resolutionValueBounds,
+            resolutionRightBounds,
             mousePosition);
 
         DrawSelectorRow(
             uiRenderer,
             "Refresh Rate",
             GetRefreshRateLabel(),
-            GetRefreshLeftBounds(contentLeft),
-            GetRefreshValueBounds(contentLeft),
-            GetRefreshRightBounds(contentLeft),
+            refreshLabelBounds,
+            refreshLeftBounds,
+            refreshValueBounds,
+            refreshRightBounds,
             mousePosition);
 
         DrawSelectorRow(
             uiRenderer,
             "Real-Time Clock",
             GetClockLabel(),
-            GetClockLeftBounds(contentLeft),
-            GetClockValueBounds(contentLeft),
-            GetClockRightBounds(contentLeft),
+            clockLabelBounds,
+            clockLeftBounds,
+            clockValueBounds,
+            clockRightBounds,
             mousePosition);
 
         var hasTeamSave = _franchiseSession.HasFranchiseSaveData;
         var hasQuickMatchSave = _franchiseSession.HasQuickMatchSaveData;
         var hasAnySaveData = _franchiseSession.HasAnySaveData;
-        var deleteCurrentTeamBounds = GetDeleteCurrentTeamBounds(contentLeft);
-        var deleteQuickMatchBounds = GetDeleteQuickMatchBounds(contentLeft);
-        var deleteAllBounds = GetDeleteAllBounds(contentLeft);
+        var deleteCurrentTeamBounds = GetDeleteCurrentTeamBounds(layout);
+        var deleteQuickMatchBounds = GetDeleteQuickMatchBounds(layout);
+        var deleteAllBounds = GetDeleteAllBounds(layout);
         var backBounds = GetBackButtonBounds();
 
         uiRenderer.DrawButton(
@@ -152,15 +194,28 @@ public sealed class OptionsScreen : GameScreen
                 : Color.DimGray,
             Color.White);
 
-        var statusBounds = new Rectangle(contentLeft, _viewport.Y - 112, 540, 38);
+        var statusBounds = GetStatusBounds(layout);
         uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
-        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 10, statusBounds.Y + 5, statusBounds.Width - 20, statusBounds.Height - 10), Color.White, uiRenderer.ScoreboardFont, 2);
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 10, statusBounds.Y + 5, statusBounds.Width - 20, statusBounds.Height - 10), Color.White, uiRenderer.UiSmallFont, 2);
         uiRenderer.DrawButton("Back", backBounds, backBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
     }
 
     private void HandleClick(Point mousePosition)
     {
-        var contentLeft = Math.Max(80, (_viewport.X - 680) / 2);
+        var layout = GetLayoutMetrics();
+        var windowLeftBounds = GetSelectorLeftBounds(0, layout);
+        var windowValueBounds = GetSelectorValueBounds(0, layout);
+        var windowRightBounds = GetSelectorRightBounds(0, layout);
+        var resolutionLeftBounds = GetSelectorLeftBounds(1, layout);
+        var resolutionRightBounds = GetSelectorRightBounds(1, layout);
+        var refreshLeftBounds = GetSelectorLeftBounds(2, layout);
+        var refreshRightBounds = GetSelectorRightBounds(2, layout);
+        var clockLeftBounds = GetSelectorLeftBounds(3, layout);
+        var clockValueBounds = GetSelectorValueBounds(3, layout);
+        var clockRightBounds = GetSelectorRightBounds(3, layout);
+        var deleteCurrentTeamBounds = GetDeleteCurrentTeamBounds(layout);
+        var deleteQuickMatchBounds = GetDeleteQuickMatchBounds(layout);
+        var deleteAllBounds = GetDeleteAllBounds(layout);
 
         if (GetBackButtonBounds().Contains(mousePosition))
         {
@@ -168,51 +223,51 @@ public sealed class OptionsScreen : GameScreen
             return;
         }
 
-        if (GetWindowModeLeftBounds(contentLeft).Contains(mousePosition))
+        if (windowLeftBounds.Contains(mousePosition))
         {
             ChangeWindowMode(-1);
             return;
         }
 
-        if (GetWindowModeRightBounds(contentLeft).Contains(mousePosition))
+        if (windowRightBounds.Contains(mousePosition) || windowValueBounds.Contains(mousePosition))
         {
             ChangeWindowMode(1);
             return;
         }
 
-        if (GetResolutionLeftBounds(contentLeft).Contains(mousePosition))
+        if (resolutionLeftBounds.Contains(mousePosition))
         {
             ChangeResolution(-1);
             return;
         }
 
-        if (GetResolutionRightBounds(contentLeft).Contains(mousePosition))
+        if (resolutionRightBounds.Contains(mousePosition))
         {
             ChangeResolution(1);
             return;
         }
 
-        if (GetRefreshLeftBounds(contentLeft).Contains(mousePosition))
+        if (refreshLeftBounds.Contains(mousePosition))
         {
             ChangeRefreshRate(-1);
             return;
         }
 
-        if (GetRefreshRightBounds(contentLeft).Contains(mousePosition))
+        if (refreshRightBounds.Contains(mousePosition))
         {
             ChangeRefreshRate(1);
             return;
         }
 
-        if (GetClockLeftBounds(contentLeft).Contains(mousePosition) ||
-            GetClockRightBounds(contentLeft).Contains(mousePosition) ||
-            GetClockValueBounds(contentLeft).Contains(mousePosition))
+        if (clockLeftBounds.Contains(mousePosition) ||
+            clockRightBounds.Contains(mousePosition) ||
+            clockValueBounds.Contains(mousePosition))
         {
             ToggleClockVisibility();
             return;
         }
 
-        if (GetDeleteCurrentTeamBounds(contentLeft).Contains(mousePosition))
+        if (deleteCurrentTeamBounds.Contains(mousePosition))
         {
             var deleted = _franchiseSession.DeleteCurrentTeamSave();
             _statusMessage = deleted
@@ -221,7 +276,7 @@ public sealed class OptionsScreen : GameScreen
             return;
         }
 
-        if (GetDeleteQuickMatchBounds(contentLeft).Contains(mousePosition))
+        if (deleteQuickMatchBounds.Contains(mousePosition))
         {
             var deleted = _franchiseSession.DeleteQuickMatchSave();
             _statusMessage = deleted
@@ -230,7 +285,7 @@ public sealed class OptionsScreen : GameScreen
             return;
         }
 
-        if (GetDeleteAllBounds(contentLeft).Contains(mousePosition))
+        if (deleteAllBounds.Contains(mousePosition))
         {
             var deleted = _franchiseSession.DeleteAllSaveData();
             _statusMessage = deleted
@@ -327,12 +382,13 @@ public sealed class OptionsScreen : GameScreen
         UiRenderer uiRenderer,
         string label,
         string value,
+        Rectangle labelBounds,
         Rectangle leftBounds,
         Rectangle valueBounds,
         Rectangle rightBounds,
         Point mousePosition)
     {
-        uiRenderer.DrawText(label, new Vector2(valueBounds.X - 190, valueBounds.Y + 8), Color.White);
+        uiRenderer.DrawTextInBounds(label, labelBounds, Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawButton("<", leftBounds, leftBounds.Contains(mousePosition) ? Color.SteelBlue : Color.SlateGray, Color.White);
         uiRenderer.DrawButton(value, valueBounds, valueBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.DarkSlateGray, Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawButton(">", rightBounds, rightBounds.Contains(mousePosition) ? Color.SteelBlue : Color.SlateGray, Color.White);
@@ -369,35 +425,77 @@ public sealed class OptionsScreen : GameScreen
         return _showRealTimeClock ? "On" : "Off";
     }
 
+    private LayoutMetrics GetLayoutMetrics()
+    {
+        var availableWidth = Math.Max(420, _viewport.X - (LayoutHorizontalPadding * 2));
+        var contentWidth = Math.Min(MaxContentWidth, availableWidth);
+        var contentLeft = (_viewport.X - contentWidth) / 2;
+        var verticalOffset = GetLayoutVerticalOffset();
+
+        var valueWidthBudget = contentWidth - SelectorLabelWidth - (SelectorArrowWidth * 2) - (SelectorGap * 3);
+        var valueWidth = Math.Clamp(valueWidthBudget, SelectorValueMinWidth, SelectorValueMaxWidth);
+        var rowClusterWidth = SelectorLabelWidth + (SelectorGap * 3) + (SelectorArrowWidth * 2) + valueWidth;
+        var clusterLeft = (_viewport.X - rowClusterWidth) / 2;
+
+        return new LayoutMetrics(contentLeft, contentWidth, verticalOffset, clusterLeft, valueWidth);
+    }
+
+    private int GetLayoutVerticalOffset()
+    {
+        var targetBottom = _viewport.Y - LayoutBottomPadding;
+        var layoutBottom = BaseStatusY + StatusHeight;
+        return Math.Min(0, targetBottom - layoutBottom);
+    }
+
+    private static int GetSelectorRowY(int rowIndex, LayoutMetrics layout)
+    {
+        return BaseWindowModeY + (rowIndex * SelectorRowSpacing) + layout.VerticalOffset;
+    }
+
+    private static Rectangle GetSelectorLabelBounds(int rowIndex, LayoutMetrics layout)
+    {
+        return new Rectangle(layout.ClusterLeft, GetSelectorRowY(rowIndex, layout), SelectorLabelWidth, SelectorRowHeight);
+    }
+
+    private static Rectangle GetSelectorLeftBounds(int rowIndex, LayoutMetrics layout)
+    {
+        var labelBounds = GetSelectorLabelBounds(rowIndex, layout);
+        return new Rectangle(labelBounds.Right + SelectorGap, labelBounds.Y, SelectorArrowWidth, SelectorRowHeight);
+    }
+
+    private static Rectangle GetSelectorValueBounds(int rowIndex, LayoutMetrics layout)
+    {
+        var leftBounds = GetSelectorLeftBounds(rowIndex, layout);
+        return new Rectangle(leftBounds.Right + SelectorGap, leftBounds.Y, layout.SelectorValueWidth, SelectorRowHeight);
+    }
+
+    private static Rectangle GetSelectorRightBounds(int rowIndex, LayoutMetrics layout)
+    {
+        var valueBounds = GetSelectorValueBounds(rowIndex, layout);
+        return new Rectangle(valueBounds.Right + SelectorGap, valueBounds.Y, SelectorArrowWidth, SelectorRowHeight);
+    }
+
+    private static Rectangle GetDeleteCurrentTeamBounds(LayoutMetrics layout)
+    {
+        return new Rectangle(layout.ContentLeft + ((layout.ContentWidth - DeleteButtonWidth) / 2), BaseDeleteCurrentY + layout.VerticalOffset, DeleteButtonWidth, DeleteButtonHeight);
+    }
+
+    private static Rectangle GetDeleteQuickMatchBounds(LayoutMetrics layout)
+    {
+        return new Rectangle(layout.ContentLeft + ((layout.ContentWidth - DeleteButtonWidth) / 2), BaseDeleteQuickMatchY + layout.VerticalOffset, DeleteButtonWidth, DeleteButtonHeight);
+    }
+
+    private static Rectangle GetDeleteAllBounds(LayoutMetrics layout)
+    {
+        return new Rectangle(layout.ContentLeft + ((layout.ContentWidth - DeleteButtonWidth) / 2), BaseDeleteAllY + layout.VerticalOffset, DeleteButtonWidth, DeleteButtonHeight);
+    }
+
+    private static Rectangle GetStatusBounds(LayoutMetrics layout)
+    {
+        return new Rectangle(layout.ContentLeft, BaseStatusY + layout.VerticalOffset, layout.ContentWidth, StatusHeight);
+    }
+
     private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
-    private static Rectangle GetWindowModeLeftBounds(int contentLeft) => new(contentLeft + 180, 160, 44, 42);
-
-    private static Rectangle GetWindowModeValueBounds(int contentLeft) => new(contentLeft + 236, 160, 240, 42);
-
-    private static Rectangle GetWindowModeRightBounds(int contentLeft) => new(contentLeft + 488, 160, 44, 42);
-
-    private static Rectangle GetResolutionLeftBounds(int contentLeft) => new(contentLeft + 180, 230, 44, 42);
-
-    private static Rectangle GetResolutionValueBounds(int contentLeft) => new(contentLeft + 236, 230, 240, 42);
-
-    private static Rectangle GetResolutionRightBounds(int contentLeft) => new(contentLeft + 488, 230, 44, 42);
-
-    private static Rectangle GetRefreshLeftBounds(int contentLeft) => new(contentLeft + 180, 300, 44, 42);
-
-    private static Rectangle GetRefreshValueBounds(int contentLeft) => new(contentLeft + 236, 300, 240, 42);
-
-    private static Rectangle GetRefreshRightBounds(int contentLeft) => new(contentLeft + 488, 300, 44, 42);
-
-    private static Rectangle GetClockLeftBounds(int contentLeft) => new(contentLeft + 180, 370, 44, 42);
-
-    private static Rectangle GetClockValueBounds(int contentLeft) => new(contentLeft + 236, 370, 240, 42);
-
-    private static Rectangle GetClockRightBounds(int contentLeft) => new(contentLeft + 488, 370, 44, 42);
-
-    private static Rectangle GetDeleteCurrentTeamBounds(int contentLeft) => new(contentLeft + 180, 430, 260, 44);
-
-    private static Rectangle GetDeleteQuickMatchBounds(int contentLeft) => new(contentLeft + 180, 486, 260, 44);
-
-    private static Rectangle GetDeleteAllBounds(int contentLeft) => new(contentLeft + 180, 542, 260, 44);
+    private readonly record struct LayoutMetrics(int ContentLeft, int ContentWidth, int VerticalOffset, int ClusterLeft, int SelectorValueWidth);
 }
