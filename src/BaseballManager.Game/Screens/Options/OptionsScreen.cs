@@ -33,6 +33,7 @@ public sealed class OptionsScreen : GameScreen
     private int _windowModeIndex;
     private int _resolutionIndex;
     private int _refreshRateIndex;
+    private bool _showRealTimeClock;
     private string _statusMessage = "Adjust display settings or manage saves.";
 
     public OptionsScreen(ScreenManager screenManager, FranchiseSession franchiseSession, GameRoot gameRoot)
@@ -110,6 +111,15 @@ public sealed class OptionsScreen : GameScreen
             GetRefreshRightBounds(contentLeft),
             mousePosition);
 
+        DrawSelectorRow(
+            uiRenderer,
+            "Real-Time Clock",
+            GetClockLabel(),
+            GetClockLeftBounds(contentLeft),
+            GetClockValueBounds(contentLeft),
+            GetClockRightBounds(contentLeft),
+            mousePosition);
+
         var hasTeamSave = _franchiseSession.HasFranchiseSaveData;
         var hasQuickMatchSave = _franchiseSession.HasQuickMatchSaveData;
         var hasAnySaveData = _franchiseSession.HasAnySaveData;
@@ -142,7 +152,7 @@ public sealed class OptionsScreen : GameScreen
                 : Color.DimGray,
             Color.White);
 
-        uiRenderer.DrawText(_statusMessage, new Vector2(contentLeft, 590), Color.White);
+        uiRenderer.DrawText(_statusMessage, new Vector2(contentLeft, _viewport.Y - 110), Color.White);
         uiRenderer.DrawButton("Back", backBounds, backBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
     }
 
@@ -192,6 +202,14 @@ public sealed class OptionsScreen : GameScreen
             return;
         }
 
+        if (GetClockLeftBounds(contentLeft).Contains(mousePosition) ||
+            GetClockRightBounds(contentLeft).Contains(mousePosition) ||
+            GetClockValueBounds(contentLeft).Contains(mousePosition))
+        {
+            ToggleClockVisibility();
+            return;
+        }
+
         if (GetDeleteCurrentTeamBounds(contentLeft).Contains(mousePosition))
         {
             var deleted = _franchiseSession.DeleteCurrentTeamSave();
@@ -237,6 +255,13 @@ public sealed class OptionsScreen : GameScreen
         ApplyDisplaySettings();
     }
 
+    private void ToggleClockVisibility()
+    {
+        _showRealTimeClock = !_showRealTimeClock;
+        _franchiseSession.UpdateClockVisibility(_showRealTimeClock);
+        _statusMessage = $"Real-time clock {(_showRealTimeClock ? "enabled" : "disabled")}.";
+    }
+
     private void ApplyDisplaySettings()
     {
         var windowMode = _windowModeOptions[_windowModeIndex];
@@ -254,6 +279,7 @@ public sealed class OptionsScreen : GameScreen
         _windowModeIndex = FindWindowModeIndex(displaySettings.WindowMode);
         _resolutionIndex = FindResolutionIndex(displaySettings.ScreenWidth, displaySettings.ScreenHeight);
         _refreshRateIndex = FindRefreshRateIndex(displaySettings.RefreshRate);
+        _showRealTimeClock = displaySettings.ShowRealTimeClock;
     }
 
     private int FindWindowModeIndex(DisplayWindowMode windowMode)
@@ -336,6 +362,11 @@ public sealed class OptionsScreen : GameScreen
         return $"{_refreshRateOptions[_refreshRateIndex]} Hz";
     }
 
+    private string GetClockLabel()
+    {
+        return _showRealTimeClock ? "On" : "Off";
+    }
+
     private Rectangle GetBackButtonBounds() => new(40, _viewport.Y - 70, 140, 44);
 
     private static Rectangle GetWindowModeLeftBounds(int contentLeft) => new(contentLeft + 180, 160, 44, 42);
@@ -356,9 +387,15 @@ public sealed class OptionsScreen : GameScreen
 
     private static Rectangle GetRefreshRightBounds(int contentLeft) => new(contentLeft + 488, 300, 44, 42);
 
-    private static Rectangle GetDeleteCurrentTeamBounds(int contentLeft) => new(contentLeft + 180, 380, 260, 48);
+    private static Rectangle GetClockLeftBounds(int contentLeft) => new(contentLeft + 180, 370, 44, 42);
 
-    private static Rectangle GetDeleteQuickMatchBounds(int contentLeft) => new(contentLeft + 180, 445, 260, 48);
+    private static Rectangle GetClockValueBounds(int contentLeft) => new(contentLeft + 236, 370, 240, 42);
 
-    private static Rectangle GetDeleteAllBounds(int contentLeft) => new(contentLeft + 180, 510, 260, 48);
+    private static Rectangle GetClockRightBounds(int contentLeft) => new(contentLeft + 488, 370, 44, 42);
+
+    private static Rectangle GetDeleteCurrentTeamBounds(int contentLeft) => new(contentLeft + 180, 440, 260, 48);
+
+    private static Rectangle GetDeleteQuickMatchBounds(int contentLeft) => new(contentLeft + 180, 505, 260, 48);
+
+    private static Rectangle GetDeleteAllBounds(int contentLeft) => new(contentLeft + 180, 570, 260, 48);
 }

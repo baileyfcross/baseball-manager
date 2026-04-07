@@ -4,6 +4,12 @@ public sealed class FranchiseSaveState
 {
     public string? SelectedTeamName { get; set; }
 
+    public DateTime CurrentFranchiseDate { get; set; }
+
+    public HashSet<string> CompletedScheduleGameKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public Dictionary<string, CompletedScheduleGameResult> CompletedScheduleGameResults { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public DisplaySettingsState DisplaySettings { get; set; } = new();
 
     public Dictionary<Guid, PlayerHiddenRatingsState> PlayerRatings { get; set; } = new();
@@ -26,6 +32,13 @@ public sealed class TeamFranchiseState
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }
 }
 
+public sealed class CompletedScheduleGameResult
+{
+    public int AwayRuns { get; set; }
+
+    public int HomeRuns { get; set; }
+}
+
 public sealed class DisplaySettingsState
 {
     public int ScreenWidth { get; set; } = 1280;
@@ -35,6 +48,8 @@ public sealed class DisplaySettingsState
     public int RefreshRate { get; set; } = 60;
 
     public DisplayWindowMode WindowMode { get; set; } = DisplayWindowMode.Windowed;
+
+    public bool ShowRealTimeClock { get; set; } = true;
 }
 
 public sealed class PlayerHiddenRatingsState

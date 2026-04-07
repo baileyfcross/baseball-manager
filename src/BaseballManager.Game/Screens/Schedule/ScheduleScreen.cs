@@ -91,15 +91,16 @@ public sealed class ScheduleScreen : GameScreen
     {
         uiRenderer.DrawText("Schedule", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
+        uiRenderer.DrawText($"Franchise Date: {_franchiseSession.GetCurrentFranchiseDate():yyyy-MM-dd}", new Vector2(100, 116), Color.Gold, uiRenderer.ScoreboardFont);
 
         var teamGames = GetScheduleRows();
         if (teamGames.Count == 0)
         {
-            uiRenderer.DrawText("No schedule data found for the selected team.", new Vector2(100, 140), Color.White);
+            uiRenderer.DrawText("No schedule data found for the selected team.", new Vector2(100, 150), Color.White);
         }
         else
         {
-            uiRenderer.DrawText("DATE         OPPONENT                 SITE  GAME", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
+            uiRenderer.DrawText("DATE         OPPONENT                 SITE  GAME  SCORE", new Vector2(100, 150), Color.White, uiRenderer.ScoreboardFont);
             var pageSize = 14;
             var startIndex = _pageIndex * pageSize;
             var visibleRows = teamGames.Skip(startIndex).Take(pageSize).ToList();
@@ -107,12 +108,13 @@ public sealed class ScheduleScreen : GameScreen
             {
                 var row = visibleRows[i];
                 var line = string.Format(
-                    "{0}   {1,-22} {2,-4} {3,3}",
+                    "{0}   {1,-22} {2,-4} {3,3}  {4,7}",
                     row.Date.ToString("yyyy-MM-dd"),
                     Truncate(row.Opponent, 22),
                     row.Site,
-                    row.GameNumber ?? 0);
-                uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White, uiRenderer.ScoreboardFont);
+                    row.GameNumber ?? 0,
+                    row.Score);
+                uiRenderer.DrawText(line, new Vector2(100, 190 + i * 28), Color.White, uiRenderer.ScoreboardFont);
             }
 
             DrawPagingButtons(uiRenderer, teamGames.Count, pageSize);
@@ -154,7 +156,8 @@ public sealed class ScheduleScreen : GameScreen
                 game.Date,
                 string.Equals(game.HomeTeamName, _franchiseSession.SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ? game.AwayTeamName : game.HomeTeamName,
                 string.Equals(game.HomeTeamName, _franchiseSession.SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ? "HOME" : "AWAY",
-                game.GameNumber))
+                game.GameNumber,
+                _franchiseSession.GetScheduledGameScore(game)))
             .ToList();
     }
 
@@ -163,5 +166,5 @@ public sealed class ScheduleScreen : GameScreen
         return value.Length <= maxLength ? value : value[..maxLength];
     }
 
-    private sealed record ScheduleDisplayRow(DateTime Date, string Opponent, string Site, int? GameNumber);
+    private sealed record ScheduleDisplayRow(DateTime Date, string Opponent, string Site, int? GameNumber, string Score);
 }

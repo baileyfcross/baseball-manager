@@ -126,6 +126,22 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
 
         GraphicsDevice.Clear(backgroundColor);
         _screenManager.Draw(gameTime, _uiRenderer);
+        DrawTopRightDateTime();
         base.Draw(gameTime);
+    }
+
+    private void DrawTopRightDateTime()
+    {
+        var displaySettings = _franchiseSession.GetDisplaySettings();
+        var franchiseDateText = $"Franchise: {_franchiseSession.GetCurrentFranchiseDate():yyyy-MM-dd}";
+        var clockText = DateTime.Now.ToString("hh:mm:ss tt");
+        var combined = displaySettings.ShowRealTimeClock
+            ? $"{franchiseDateText}   {clockText}"
+            : franchiseDateText;
+
+        var font = _uiRenderer.ScoreboardFont;
+        var textWidth = font?.MeasureString(combined).X ?? (combined.Length * 8f);
+        var x = _uiRenderer.Viewport.Width - textWidth - 24f;
+        _uiRenderer.DrawText(combined, new Vector2(Math.Max(12f, x), 12f), Color.White, font);
     }
 }

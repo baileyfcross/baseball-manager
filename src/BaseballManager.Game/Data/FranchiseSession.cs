@@ -17,6 +17,8 @@ public sealed class FranchiseSession
         _saveState = _stateStore.Load();
         _saveState.PlayerRatings ??= new Dictionary<Guid, PlayerHiddenRatingsState>();
         _saveState.PlayerSeasonStats ??= new Dictionary<Guid, PlayerSeasonStatsState>();
+        _saveState.CompletedScheduleGameKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        _saveState.CompletedScheduleGameResults ??= new Dictionary<string, CompletedScheduleGameResult>(StringComparer.OrdinalIgnoreCase);
 
         if (!string.IsNullOrWhiteSpace(_saveState.SelectedTeamName))
         {
@@ -30,6 +32,8 @@ public sealed class FranchiseSession
         {
             MigrateLegacyFranchiseMatchIfNeeded(SelectedTeam.Name);
         }
+
+        EnsureFranchiseDateInitialized();
 
         if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated())
         {
@@ -69,12 +73,52 @@ public sealed class FranchiseSession
         Save();
     }
 
+    public void UpdateClockVisibility(bool showRealTimeClock)
+    {
+        var displaySettings = GetDisplaySettings();
+        if (displaySettings.ShowRealTimeClock == showRealTimeClock)
+        {
+            return;
+        }
+
+        displaySettings.ShowRealTimeClock = showRealTimeClock;
+        Save();
+    }
+
+    public DateTime GetCurrentFranchiseDate()
+    {
+        EnsureFranchiseDateInitialized();
+        return _saveState.CurrentFranchiseDate.Date;
+    }
+
+    public bool IsScheduledGameCompleted(ScheduleImportDto game)
+    {
+        return _saveState.CompletedScheduleGameKeys.Contains(BuildScheduleGameKey(game));
+    }
+
+    public string GetScheduledGameScore(ScheduleImportDto game)
+    {
+        if (_saveState.CompletedScheduleGameResults.TryGetValue(BuildScheduleGameKey(game), out var result))
+        {
+            return $"{result.AwayRuns}-{result.HomeRuns}";
+        }
+
+        return "-";
+    }
+
+    public ScheduleImportDto? GetNextScheduledGame()
+    {
+        return GetNextScheduledGameForSelectedTeam();
+    }
+
     public void SelectTeam(TeamImportDto team)
     {
         SelectedTeam = team;
         PendingLiveMatchMode = LiveMatchMode.Franchise;
         _saveState.SelectedTeamName = team.Name;
+        _saveState.CurrentFranchiseDate = default;
         MigrateLegacyFranchiseMatchIfNeeded(team.Name);
+        EnsureFranchiseDateInitialized();
         _stateStore.Save(_saveState);
     }
 
@@ -102,6 +146,55 @@ public sealed class FranchiseSession
         stats = new PlayerSeasonStatsState();
         _saveState.PlayerSeasonStats[playerId] = stats;
         return stats;
+    }
+
+    public bool SimulateNextScheduledGame(out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before simulating games.";
+            return false;
+        }
+
+        var nextGame = GetNextScheduledGameForSelectedTeam();
+        if (nextGame == null)
+        {
+            statusMessage = "No remaining scheduled games found.";
+            return false;
+        }
+
+        var awayTeam = FindTeamByName(nextGame.AwayTeamName);
+        var homeTeam = FindTeamByName(nextGame.HomeTeamName);
+        if (awayTeam == null || homeTeam == null)
+        {
+            statusMessage = "Could not resolve teams for the scheduled game.";
+            return false;
+        }
+
+        _saveState.CurrentFranchiseDate = nextGame.Date.Date;
+
+        var useFranchiseSelectionsForAway = string.Equals(SelectedTeam.Name, awayTeam.Name, StringComparison.OrdinalIgnoreCase);
+        var useFranchiseSelectionsForHome = string.Equals(SelectedTeam.Name, homeTeam.Name, StringComparison.OrdinalIgnoreCase);
+        var awaySnapshot = BuildTeamSnapshot(awayTeam, useFranchiseSelectionsForAway);
+        var homeSnapshot = BuildTeamSnapshot(homeTeam, useFranchiseSelectionsForHome);
+        var engine = new MatchEngine(awaySnapshot, homeSnapshot);
+
+        while (!engine.CurrentState.IsGameOver)
+        {
+            var batter = engine.CurrentState.CurrentBatter;
+            var pitcher = engine.CurrentState.CurrentPitcher;
+            var defensiveTeam = engine.CurrentState.DefensiveTeam;
+            var result = engine.Tick();
+            ApplyPerformanceDevelopment(batter, pitcher, defensiveTeam, result);
+        }
+
+        RecordCompletedGame(engine.CurrentState);
+        FinalizeFranchiseScheduledGame(engine.CurrentState, nextGame);
+        ClearLiveMatchState(LiveMatchMode.Franchise);
+        Save();
+
+        statusMessage = $"Simulated {awayTeam.Abbreviation} {engine.CurrentState.AwayTeam.Runs} - {engine.CurrentState.HomeTeam.Runs} {homeTeam.Abbreviation} on {nextGame.Date:yyyy-MM-dd}.";
+        return true;
     }
 
     public void ApplyPerformanceDevelopment(MatchPlayerSnapshot batter, MatchPlayerSnapshot pitcher, MatchTeamState defensiveTeam, ResultEvent result)
@@ -435,6 +528,9 @@ public sealed class FranchiseSession
         SelectedTeam = null;
         PendingLiveMatchMode = LiveMatchMode.QuickMatch;
         _saveState.CurrentLiveMatch = null;
+        _saveState.CurrentFranchiseDate = DateTime.Today;
+        _saveState.CompletedScheduleGameKeys.Clear();
+        _saveState.CompletedScheduleGameResults.Clear();
 
         if (removedTeamState || removedSelection)
         {
@@ -454,6 +550,9 @@ public sealed class FranchiseSession
         _saveState.QuickMatchLiveMatch = null;
         _saveState.PlayerRatings.Clear();
         _saveState.PlayerSeasonStats.Clear();
+        _saveState.CompletedScheduleGameKeys.Clear();
+        _saveState.CompletedScheduleGameResults.Clear();
+        _saveState.CurrentFranchiseDate = DateTime.Today;
         _saveState.Teams.Clear();
         SelectedTeam = null;
         PendingLiveMatchMode = LiveMatchMode.QuickMatch;
@@ -703,6 +802,285 @@ public sealed class FranchiseSession
         {
             pitcherStats.Losses++;
         }
+    }
+
+    private void EnsureFranchiseDateInitialized()
+    {
+        if (_saveState.CurrentFranchiseDate != default)
+        {
+            return;
+        }
+
+        var firstScheduled = SelectedTeam == null
+            ? _leagueData.Schedule.OrderBy(game => game.Date).FirstOrDefault()?.Date
+            : _leagueData.Schedule
+                .Where(game => string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(game => game.Date)
+                .ThenBy(game => game.GameNumber)
+                .FirstOrDefault()?.Date;
+
+        _saveState.CurrentFranchiseDate = (firstScheduled ?? DateTime.Today).Date;
+    }
+
+    private ScheduleImportDto? GetNextScheduledGameForSelectedTeam()
+    {
+        if (SelectedTeam == null)
+        {
+            return null;
+        }
+
+        EnsureFranchiseDateInitialized();
+        var teamName = SelectedTeam.Name;
+        var today = _saveState.CurrentFranchiseDate.Date;
+
+        var next = _leagueData.Schedule
+            .Where(game =>
+                (string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase)) &&
+                game.Date.Date >= today &&
+                !IsScheduledGameCompleted(game))
+            .OrderBy(game => game.Date)
+            .ThenBy(game => game.GameNumber)
+            .FirstOrDefault();
+
+        if (next != null)
+        {
+            return next;
+        }
+
+        return _leagueData.Schedule
+            .Where(game =>
+                (string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase)) &&
+                !IsScheduledGameCompleted(game))
+            .OrderBy(game => game.Date)
+            .ThenBy(game => game.GameNumber)
+            .FirstOrDefault();
+    }
+
+    private void AdvanceFranchiseDateToNextUnplayedGame()
+    {
+        var nextGame = GetNextScheduledGameForSelectedTeam();
+        if (nextGame != null)
+        {
+            _saveState.CurrentFranchiseDate = nextGame.Date.Date;
+            return;
+        }
+
+        _saveState.CurrentFranchiseDate = _saveState.CurrentFranchiseDate.Date.AddDays(1);
+    }
+
+    private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)
+    {
+        var lineup = preferFranchiseSelections
+            ? BuildSelectedTeamLineup()
+            : BuildImportedTeamLineup(team.Name);
+
+        if (lineup.Count == 0)
+        {
+            lineup = BuildPlaceholderLineup(team.Name);
+        }
+
+        var pitcher = preferFranchiseSelections
+            ? BuildSelectedTeamPitcher() ?? lineup.First()
+            : BuildImportedPitcher(team.Name) ?? lineup.First();
+
+        return new MatchTeamState(team.Name, team.Abbreviation, lineup, pitcher);
+    }
+
+    private List<MatchPlayerSnapshot> BuildSelectedTeamLineup()
+    {
+        var lineup = GetLineupPlayers()
+            .OrderBy(player => player.LineupSlot)
+            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
+            .ToList();
+
+        var remainingPlayers = GetSelectedTeamRoster()
+            .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
+            .OrderBy(player => player.PlayerName)
+            .ToList();
+
+        foreach (var player in remainingPlayers)
+        {
+            if (lineup.Count >= 9)
+            {
+                break;
+            }
+
+            lineup.Add(CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age));
+        }
+
+        while (lineup.Count < 9)
+        {
+            lineup.Add(CreatePlaceholderSnapshot($"Bench Fill {lineup.Count + 1}", lineup.Count + 1));
+        }
+
+        return lineup;
+    }
+
+    private MatchPlayerSnapshot? BuildSelectedTeamPitcher()
+    {
+        var pitcher = GetRotationPlayers().OrderBy(player => player.RotationSlot).FirstOrDefault()
+                     ?? GetSelectedTeamRoster().FirstOrDefault(player => player.PrimaryPosition is "SP" or "RP");
+
+        return pitcher == null
+            ? null
+            : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age);
+    }
+
+    private List<MatchPlayerSnapshot> BuildImportedTeamLineup(string teamName)
+    {
+        var playersById = _leagueData.Players.ToDictionary(player => player.PlayerId, player => player);
+        var lineupRows = _leagueData.Rosters
+            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) && roster.LineupSlot is >= 1 and <= 9)
+            .OrderBy(roster => roster.LineupSlot)
+            .ToList();
+
+        var lineup = lineupRows
+            .Select(roster =>
+            {
+                playersById.TryGetValue(roster.PlayerId, out var playerData);
+                return CreatePlayerSnapshot(
+                    roster.PlayerId,
+                    roster.PlayerName,
+                    roster.PrimaryPosition,
+                    roster.SecondaryPosition,
+                    playerData?.Age ?? 27);
+            })
+            .ToList();
+
+        var fillPlayers = _leagueData.Rosters
+            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) && lineup.All(existing => existing.Id != roster.PlayerId) && roster.PrimaryPosition is not "SP" and not "RP")
+            .OrderBy(roster => roster.PlayerName)
+            .ToList();
+
+        foreach (var roster in fillPlayers)
+        {
+            if (lineup.Count >= 9)
+            {
+                break;
+            }
+
+            playersById.TryGetValue(roster.PlayerId, out var playerData);
+            lineup.Add(CreatePlayerSnapshot(roster.PlayerId, roster.PlayerName, roster.PrimaryPosition, roster.SecondaryPosition, playerData?.Age ?? 27));
+        }
+
+        while (lineup.Count < 9)
+        {
+            lineup.Add(CreatePlaceholderSnapshot($"{teamName} Fill {lineup.Count + 1}", lineup.Count + 1));
+        }
+
+        return lineup;
+    }
+
+    private MatchPlayerSnapshot? BuildImportedPitcher(string teamName)
+    {
+        var playersById = _leagueData.Players.ToDictionary(player => player.PlayerId, player => player);
+        var pitcherRow = _leagueData.Rosters
+            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(roster => roster.RotationSlot ?? 99)
+            .ThenBy(roster => roster.PrimaryPosition is "SP" ? 0 : 1)
+            .FirstOrDefault(roster => roster.PrimaryPosition is "SP" or "RP");
+
+        if (pitcherRow == null)
+        {
+            return null;
+        }
+
+        playersById.TryGetValue(pitcherRow.PlayerId, out var playerData);
+        return CreatePlayerSnapshot(pitcherRow.PlayerId, pitcherRow.PlayerName, pitcherRow.PrimaryPosition, pitcherRow.SecondaryPosition, playerData?.Age ?? 27);
+    }
+
+    private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age)
+    {
+        var ratings = GetPlayerRatings(playerId, name, primaryPosition, secondaryPosition, age);
+
+        return new MatchPlayerSnapshot(
+            playerId,
+            name,
+            primaryPosition,
+            secondaryPosition,
+            age,
+            ratings.ContactRating,
+            ratings.PowerRating,
+            ratings.DisciplineRating,
+            ratings.SpeedRating,
+            ratings.PitchingRating,
+            ratings.FieldingRating,
+            ratings.ArmRating,
+            ratings.DurabilityRating,
+            ratings.OverallRating);
+    }
+
+    private MatchPlayerSnapshot CreatePlaceholderSnapshot(string name, int lineupSlot)
+    {
+        return CreatePlayerSnapshot(Guid.NewGuid(), name, lineupSlot % 2 == 0 ? "IF" : "OF", string.Empty, 27);
+    }
+
+    private List<MatchPlayerSnapshot> BuildPlaceholderLineup(string teamName)
+    {
+        return Enumerable.Range(1, 9)
+            .Select(slot => CreatePlaceholderSnapshot($"{teamName} Batter {slot}", slot))
+            .ToList();
+    }
+
+    private TeamImportDto? FindTeamByName(string teamName)
+    {
+        return _leagueData.Teams.FirstOrDefault(team => string.Equals(team.Name, teamName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string BuildScheduleGameKey(ScheduleImportDto game)
+    {
+        return $"{game.Date:yyyyMMdd}|{game.HomeTeamName}|{game.AwayTeamName}|{game.GameNumber ?? 1}";
+    }
+
+    public void FinalizeFranchiseScheduledGame(MatchState finalState)
+    {
+        FinalizeFranchiseScheduledGame(finalState, preferredGame: null);
+    }
+
+    private void FinalizeFranchiseScheduledGame(MatchState finalState, ScheduleImportDto? preferredGame)
+    {
+        if (SelectedTeam == null)
+        {
+            return;
+        }
+
+        var gameToMark = preferredGame;
+        if (gameToMark == null)
+        {
+            gameToMark = GetNextScheduledGameForSelectedTeam();
+        }
+
+        if (gameToMark == null ||
+            !string.Equals(gameToMark.AwayTeamName, finalState.AwayTeam.Name, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(gameToMark.HomeTeamName, finalState.HomeTeam.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            gameToMark = _leagueData.Schedule
+                .Where(game =>
+                    !IsScheduledGameCompleted(game) &&
+                    string.Equals(game.AwayTeamName, finalState.AwayTeam.Name, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(game.HomeTeamName, finalState.HomeTeam.Name, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(game => game.Date)
+                .ThenBy(game => game.GameNumber)
+                .FirstOrDefault();
+        }
+
+        if (gameToMark == null)
+        {
+            return;
+        }
+
+        var key = BuildScheduleGameKey(gameToMark);
+        _saveState.CompletedScheduleGameKeys.Add(key);
+        _saveState.CompletedScheduleGameResults[key] = new CompletedScheduleGameResult
+        {
+            AwayRuns = finalState.AwayTeam.Runs,
+            HomeRuns = finalState.HomeTeam.Runs
+        };
+
+        AdvanceFranchiseDateToNextUnplayedGame();
     }
 
     private bool EnsurePlayerRatingsGenerated()

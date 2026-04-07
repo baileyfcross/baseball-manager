@@ -138,6 +138,7 @@ public sealed class LiveMatchPresenter
             if (result.IsGameOver)
             {
                 _franchiseSession.RecordCompletedGame(_engine.CurrentState);
+                _franchiseSession.FinalizeFranchiseScheduledGame(_engine.CurrentState);
             }
         }
 
@@ -224,12 +225,7 @@ public sealed class LiveMatchPresenter
         if (_franchiseSession.SelectedTeam != null)
         {
             var selectedTeam = _franchiseSession.SelectedTeam;
-            var scheduledGame = _leagueData.Schedule
-                .Where(game => string.Equals(game.HomeTeamName, selectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
-                               string.Equals(game.AwayTeamName, selectedTeam.Name, StringComparison.OrdinalIgnoreCase))
-                .OrderBy(game => game.Date)
-                .ThenBy(game => game.GameNumber)
-                .FirstOrDefault();
+            var scheduledGame = _franchiseSession.GetNextScheduledGame();
 
             if (scheduledGame != null)
             {

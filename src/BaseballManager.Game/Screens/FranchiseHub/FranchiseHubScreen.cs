@@ -21,6 +21,7 @@ public sealed class FranchiseHubScreen : GameScreen
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
+    private string _statusMessage = "";
 
     private const int ButtonWidth = 200;
     private const int ButtonHeight = 50;
@@ -37,6 +38,7 @@ public sealed class FranchiseHubScreen : GameScreen
     private void InitializeButtons()
     {
         _buttons.Add(new ButtonControl { Label = "Live Match", OnClick = () => StartLiveMatch() });
+        _buttons.Add(new ButtonControl { Label = "Sim Next Game", OnClick = () => SimNextGame() });
         _buttons.Add(new ButtonControl { Label = "Roster", OnClick = () => _screenManager.TransitionTo(nameof(RosterScreen)) });
         _buttons.Add(new ButtonControl { Label = "Lineup", OnClick = () => _screenManager.TransitionTo(nameof(LineupScreen)) });
         _buttons.Add(new ButtonControl { Label = "Rotation", OnClick = () => _screenManager.TransitionTo(nameof(RotationScreen)) });
@@ -85,6 +87,10 @@ public sealed class FranchiseHubScreen : GameScreen
     public override void OnEnter()
     {
         _ignoreClicksUntilRelease = true;
+        if (string.IsNullOrEmpty(_statusMessage))
+        {
+            _statusMessage = "Live Match to play manually, or Sim Next Game to advance immediately.";
+        }
     }
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
@@ -103,6 +109,8 @@ public sealed class FranchiseHubScreen : GameScreen
 
             uiRenderer.DrawButton(button.Label, bounds, bgColor, Color.White);
         }
+
+        uiRenderer.DrawText(_statusMessage, new Vector2(100, _viewport.Y - 54), Color.White, uiRenderer.ScoreboardFont);
     }
 
     private void StartLiveMatch()
@@ -110,5 +118,11 @@ public sealed class FranchiseHubScreen : GameScreen
         _startMatchUseCase.Execute();
         _franchiseSession.PrepareFranchiseMatch();
         _screenManager.TransitionTo(nameof(LiveMatchScreen));
+    }
+
+    private void SimNextGame()
+    {
+        _franchiseSession.SimulateNextScheduledGame(out var message);
+        _statusMessage = message;
     }
 }
