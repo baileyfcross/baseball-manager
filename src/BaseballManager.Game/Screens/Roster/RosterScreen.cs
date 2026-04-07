@@ -116,8 +116,9 @@ public sealed class RosterScreen : GameScreen
             {
                 _filterButton.Click();
             }
-            else if (_showFilterDropdown && TrySelectFilterOption(currentMouseState.Position))
+            else if (_showFilterDropdown)
             {
+                TrySelectFilterOption(currentMouseState.Position);
             }
             else if (GetPreviousPageBounds().Contains(currentMouseState.Position))
             {

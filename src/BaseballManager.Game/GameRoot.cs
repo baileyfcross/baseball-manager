@@ -70,10 +70,23 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         var safeHeight = Math.Max(600, screenHeight);
         var targetRefreshRate = Math.Clamp(refreshRate, 30, 240);
         var desktopMode = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+        var windowedWidth = Math.Min(safeWidth, Math.Max(800, desktopMode.Width - 160));
+        var windowedHeight = Math.Min(safeHeight, Math.Max(600, desktopMode.Height - 160));
 
         _graphics.SynchronizeWithVerticalRetrace = true;
         IsFixedTimeStep = true;
         TargetElapsedTime = TimeSpan.FromSeconds(1d / targetRefreshRate);
+
+        if ((_graphics.IsFullScreen || Window.IsBorderless) && windowMode != DisplayWindowMode.Fullscreen)
+        {
+            _graphics.HardwareModeSwitch = false;
+            _graphics.IsFullScreen = false;
+            Window.IsBorderless = false;
+            _graphics.PreferredBackBufferWidth = windowedWidth;
+            _graphics.PreferredBackBufferHeight = windowedHeight;
+            _graphics.ApplyChanges();
+        }
+
         Window.IsBorderless = false;
         _graphics.HardwareModeSwitch = windowMode == DisplayWindowMode.Fullscreen;
 
@@ -94,8 +107,9 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
 
             default:
                 _graphics.IsFullScreen = false;
-                _graphics.PreferredBackBufferWidth = safeWidth;
-                _graphics.PreferredBackBufferHeight = safeHeight;
+                Window.IsBorderless = false;
+                _graphics.PreferredBackBufferWidth = windowedWidth;
+                _graphics.PreferredBackBufferHeight = windowedHeight;
                 break;
         }
 
@@ -105,6 +119,17 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         {
             Window.Position = Point.Zero;
         }
+        else if (windowMode == DisplayWindowMode.Windowed)
+        {
+            CenterWindowOnDesktop(windowedWidth, windowedHeight, desktopMode.Width, desktopMode.Height);
+        }
+    }
+
+    private void CenterWindowOnDesktop(int windowWidth, int windowHeight, int desktopWidth, int desktopHeight)
+    {
+        var centeredX = Math.Max(0, (desktopWidth - windowWidth) / 2);
+        var centeredY = Math.Max(0, (desktopHeight - windowHeight) / 2);
+        Window.Position = new Point(centeredX, centeredY);
     }
 
     protected override void LoadContent()

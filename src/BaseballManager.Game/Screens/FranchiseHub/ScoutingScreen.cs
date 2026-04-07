@@ -111,8 +111,9 @@ public sealed class ScoutingScreen : GameScreen
             {
                 _filterButton.Click();
             }
-            else if (_showFilterDropdown && TrySelectFilterOption(mousePosition))
+            else if (_showFilterDropdown)
             {
+                TrySelectFilterOption(mousePosition);
             }
             else if (GetMarketPreviousBounds().Contains(mousePosition))
             {
@@ -167,10 +168,6 @@ public sealed class ScoutingScreen : GameScreen
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
         var filterBounds = GetFilterButtonBounds();
         uiRenderer.DrawButton(_filterButton.Label, filterBounds, filterBounds.Contains(Mouse.GetState().Position) || _showFilterDropdown ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
-        if (_showFilterDropdown)
-        {
-            DrawFilterDropdown(uiRenderer);
-        }
 
         var introY = 120f;
         foreach (var introLine in WrapText("Talk to a coach, get a plain-English read, then swap players if you want to make the move.", 92))
@@ -185,8 +182,13 @@ public sealed class ScoutingScreen : GameScreen
         DrawReportArea(uiRenderer, coaches, marketPlayers);
 
         var mousePosition = Mouse.GetState().Position;
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_tradeButton.Label, _tradeButtonBounds, _tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !_showFilterDropdown && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_tradeButton.Label, _tradeButtonBounds, !_showFilterDropdown && _tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+
+        if (_showFilterDropdown)
+        {
+            DrawFilterDropdown(uiRenderer);
+        }
     }
 
     private void DrawCoaches(UiRenderer uiRenderer, IReadOnlyList<CoachProfileView> coaches)
@@ -197,7 +199,7 @@ public sealed class ScoutingScreen : GameScreen
         {
             var coach = coaches[i];
             var bounds = GetCoachRowBounds(i);
-            var isHovered = bounds.Contains(Mouse.GetState().Position);
+            var isHovered = !_showFilterDropdown && bounds.Contains(Mouse.GetState().Position);
             var isSelected = string.Equals(_selectedCoachRole, coach.Role, StringComparison.OrdinalIgnoreCase);
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
             uiRenderer.DrawButton($"{coach.Role}: {Truncate(coach.Name, 14)}", bounds, color, Color.White);
@@ -213,7 +215,7 @@ public sealed class ScoutingScreen : GameScreen
         {
             var player = visiblePlayers[i];
             var bounds = GetMarketRowBounds(i);
-            var isHovered = bounds.Contains(Mouse.GetState().Position);
+            var isHovered = !_showFilterDropdown && bounds.Contains(Mouse.GetState().Position);
             var isSelected = _selectedPlayerId == player.PlayerId;
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
             var ownTag = player.IsOnSelectedTeam ? " (Yours)" : string.Empty;
@@ -233,7 +235,7 @@ public sealed class ScoutingScreen : GameScreen
         {
             var player = visiblePlayers[i];
             var bounds = GetOfferRowBounds(i);
-            var isHovered = bounds.Contains(Mouse.GetState().Position);
+            var isHovered = !_showFilterDropdown && bounds.Contains(Mouse.GetState().Position);
             var isSelected = _selectedOfferPlayerId == player.PlayerId;
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
             var label = $"{Truncate(player.PlayerName, 18)} {player.PrimaryPosition}/{player.SecondaryPosition} Age {player.Age}";
@@ -302,8 +304,8 @@ public sealed class ScoutingScreen : GameScreen
 
     private void DrawListPaging(UiRenderer uiRenderer, Rectangle previousBounds, Rectangle nextBounds, int currentPage, int totalItems)
     {
-        uiRenderer.DrawButton(_marketPreviousButton.Label, previousBounds, previousBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_marketNextButton.Label, nextBounds, nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_marketPreviousButton.Label, previousBounds, !_showFilterDropdown && previousBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_marketNextButton.Label, nextBounds, !_showFilterDropdown && nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
 
         var pageLabel = $"Page {currentPage + 1} / {GetMaxPage(totalItems) + 1}";
         var labelX = previousBounds.X;
