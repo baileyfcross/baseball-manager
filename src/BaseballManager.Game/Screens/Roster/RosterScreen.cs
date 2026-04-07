@@ -4,6 +4,7 @@ using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 
 namespace BaseballManager.Game.Screens.Roster;
@@ -22,6 +23,14 @@ public sealed class RosterScreen : GameScreen
     private bool _ignoreClicksUntilRelease = true;
     private RosterViewMode _viewMode;
     private int _pageIndex;
+    private string? _sortColumnStandard;
+    private string? _sortColumnSeasonStats;
+    private string? _sortColumnHiddenRatings;
+    private bool _sortAscending = true;
+    private readonly Dictionary<string, Rectangle> _headerHitBoxes = new();
+    private const int HeaderX = 100;
+    private const int HeaderY = 140;
+    private const int HeaderHeight = 28;
 
     public RosterScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -63,6 +72,7 @@ public sealed class RosterScreen : GameScreen
         _pageIndex = 0;
         _viewMode = RosterViewMode.Standard;
         _ignoreClicksUntilRelease = true;
+        _sortAscending = true;
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -104,6 +114,15 @@ public sealed class RosterScreen : GameScreen
                     _nextPageButton.Click();
                 }
             }
+            else if (currentMouseState.Y >= HeaderY && currentMouseState.Y < HeaderY + HeaderHeight)
+            {
+                // Handle header click for sorting
+                var clickedColumn = GetClickedColumn(currentMouseState.X);
+                if (!string.IsNullOrEmpty(clickedColumn))
+                {
+                    HandleColumnSort(clickedColumn);
+                }
+            }
         }
 
         _previousMouseState = currentMouseState;
@@ -129,7 +148,11 @@ public sealed class RosterScreen : GameScreen
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         var rosterRows = GetRosterRows();
-        if (rosterRows.Count == 0)
+
+        // Apply sorting to all rows BEFORE pagination
+        var sortedRows = ApplySorting(rosterRows, _viewMode);
+
+        if (sortedRows.Count == 0)
         {
             uiRenderer.DrawText("No roster data found for the selected team.", new Vector2(100, 140), Color.White);
         }
@@ -137,11 +160,11 @@ public sealed class RosterScreen : GameScreen
         {
             var pageSize = 14;
             var startIndex = _pageIndex * pageSize;
-            var visibleRows = rosterRows.Skip(startIndex).Take(pageSize).ToList();
+            var visibleRows = sortedRows.Skip(startIndex).Take(pageSize).ToList();
 
             if (_viewMode == RosterViewMode.HiddenRatings)
             {
-                uiRenderer.DrawText("NAME               POS OVR TOT CON POW DIS SPD FLD ARM PIT DUR", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
+                DrawHiddenRatingsHeader(uiRenderer);
                 for (var i = 0; i < visibleRows.Count; i++)
                 {
                     var row = visibleRows[i];
@@ -165,7 +188,7 @@ public sealed class RosterScreen : GameScreen
             }
             else if (_viewMode == RosterViewMode.SeasonStats)
             {
-                uiRenderer.DrawText("NAME               POS  AVG  HR RBI  OPS  ERA  W-L", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
+                DrawSeasonStatsHeader(uiRenderer);
                 for (var i = 0; i < visibleRows.Count; i++)
                 {
                     var row = visibleRows[i];
@@ -185,7 +208,7 @@ public sealed class RosterScreen : GameScreen
             }
             else
             {
-                uiRenderer.DrawText("ID        NAME                    POS  SEC  AGE  LINEUP  ROT", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
+                DrawStandardHeader(uiRenderer);
                 for (var i = 0; i < visibleRows.Count; i++)
                 {
                     var row = visibleRows[i];
@@ -202,7 +225,7 @@ public sealed class RosterScreen : GameScreen
                 }
             }
 
-            DrawPagingButtons(uiRenderer, rosterRows.Count, pageSize);
+            DrawPagingButtons(uiRenderer, sortedRows.Count, pageSize);
         }
 
         var mousePosition = Mouse.GetState().Position;
@@ -227,6 +250,278 @@ public sealed class RosterScreen : GameScreen
     private Rectangle GetPreviousPageBounds() => new(100, 640, 120, 40);
 
     private Rectangle GetNextPageBounds() => new(240, 640, 120, 40);
+
+    private void DrawStandardHeader(UiRenderer uiRenderer)
+    {
+        _headerHitBoxes.Clear();
+        var headerBuilder = new System.Text.StringBuilder();
+
+        AppendStatic(headerBuilder, "ID        ");
+        AppendColumn(headerBuilder, uiRenderer, "NAME", 22, RosterViewMode.Standard);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "POS", 4, RosterViewMode.Standard);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "SEC", 4, RosterViewMode.Standard);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.Standard);
+        AppendStatic(headerBuilder, "   ");
+        AppendColumn(headerBuilder, uiRenderer, "LINEUP", 6, RosterViewMode.Standard);
+        AppendStatic(headerBuilder, "  ");
+        AppendColumn(headerBuilder, uiRenderer, "ROT", 3, RosterViewMode.Standard);
+
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(HeaderX, HeaderY), Color.White, uiRenderer.ScoreboardFont);
+    }
+
+    private void DrawSeasonStatsHeader(UiRenderer uiRenderer)
+    {
+        _headerHitBoxes.Clear();
+        var headerBuilder = new System.Text.StringBuilder();
+
+        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.SeasonStats);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.SeasonStats);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "AVG", 5, RosterViewMode.SeasonStats);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "HR", 3, RosterViewMode.SeasonStats);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "RBI", 3, RosterViewMode.SeasonStats);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "OPS", 5, RosterViewMode.SeasonStats);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "ERA", 5, RosterViewMode.SeasonStats);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "W-L", 5, RosterViewMode.SeasonStats);
+
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(HeaderX, HeaderY), Color.White, uiRenderer.ScoreboardFont);
+    }
+
+    private void DrawHiddenRatingsHeader(UiRenderer uiRenderer)
+    {
+        _headerHitBoxes.Clear();
+        var headerBuilder = new System.Text.StringBuilder();
+
+        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "OVR", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "TOT", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "CON", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "POW", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "DIS", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "SPD", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "FLD", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "ARM", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "PIT", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "DUR", 3, RosterViewMode.HiddenRatings);
+
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(HeaderX, HeaderY), Color.White, uiRenderer.ScoreboardFont);
+    }
+
+    private static void AppendStatic(System.Text.StringBuilder builder, string value)
+    {
+        builder.Append(value);
+    }
+
+    private void AppendColumn(System.Text.StringBuilder builder, UiRenderer uiRenderer, string columnName, int width, RosterViewMode mode)
+    {
+        var prefix = builder.ToString();
+        var visibleLabel = GetDisplayColumnLabel(columnName, mode);
+        var paddedColumn = visibleLabel.PadRight(width);
+
+        var left = HeaderX + (int)MathF.Floor(MeasureTextWidth(prefix, uiRenderer.ScoreboardFont));
+        var labelWidth = (int)MathF.Ceiling(MeasureTextWidth(visibleLabel, uiRenderer.ScoreboardFont));
+        _headerHitBoxes[columnName] = new Rectangle(left, HeaderY, Math.Max(1, labelWidth), HeaderHeight);
+
+        builder.Append(paddedColumn);
+    }
+
+    private static float MeasureTextWidth(string text, SpriteFont? font)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            return 0f;
+        }
+
+        return font?.MeasureString(text).X ?? (text.Length * 8f);
+    }
+
+    private string GetDisplayColumnLabel(string columnName, RosterViewMode mode)
+    {
+        var currentSort = mode switch
+        {
+            RosterViewMode.Standard => _sortColumnStandard,
+            RosterViewMode.SeasonStats => _sortColumnSeasonStats,
+            RosterViewMode.HiddenRatings => _sortColumnHiddenRatings,
+            _ => null
+        };
+
+        if (currentSort == columnName)
+        {
+            var arrow = _sortAscending ? "^" : "v";
+            return $"{columnName}{arrow}";
+        }
+
+        return columnName;
+    }
+
+    private string FormatColumnHeader(string columnName, int width, RosterViewMode mode)
+    {
+        return GetDisplayColumnLabel(columnName, mode).PadRight(width);
+    }
+
+    private string? GetClickedColumn(int mouseX)
+    {
+        foreach (var (columnName, hitBox) in _headerHitBoxes)
+        {
+            if (mouseX >= hitBox.Left && mouseX < hitBox.Right)
+            {
+                return columnName;
+            }
+        }
+
+        return null;
+    }
+
+    private void HandleColumnSort(string columnName)
+    {
+        var currentSort = _viewMode switch
+        {
+            RosterViewMode.Standard => _sortColumnStandard,
+            RosterViewMode.SeasonStats => _sortColumnSeasonStats,
+            RosterViewMode.HiddenRatings => _sortColumnHiddenRatings,
+            _ => null
+        };
+
+        if (currentSort == columnName)
+        {
+            // Toggle sort direction
+            _sortAscending = !_sortAscending;
+        }
+        else
+        {
+            // New column selected, start with ascending
+            switch (_viewMode)
+            {
+                case RosterViewMode.Standard:
+                    _sortColumnStandard = columnName;
+                    break;
+                case RosterViewMode.SeasonStats:
+                    _sortColumnSeasonStats = columnName;
+                    break;
+                case RosterViewMode.HiddenRatings:
+                    _sortColumnHiddenRatings = columnName;
+                    break;
+            }
+            _sortAscending = true;
+        }
+
+        _pageIndex = 0; // Reset to first page when sorting changes
+    }
+
+    private List<RosterDisplayRow> ApplySorting(List<RosterDisplayRow> rows, RosterViewMode mode)
+    {
+        var currentSort = mode switch
+        {
+            RosterViewMode.Standard => _sortColumnStandard,
+            RosterViewMode.SeasonStats => _sortColumnSeasonStats,
+            RosterViewMode.HiddenRatings => _sortColumnHiddenRatings,
+            _ => null
+        };
+
+        if (string.IsNullOrEmpty(currentSort))
+        {
+            return rows;
+        }
+
+        var sorted = mode switch
+        {
+            RosterViewMode.Standard => SortStandardRows(rows, currentSort),
+            RosterViewMode.SeasonStats => SortSeasonStatsRows(rows, currentSort),
+            RosterViewMode.HiddenRatings => SortHiddenRatingsRows(rows, currentSort),
+            _ => rows
+        };
+
+        return _sortAscending ? sorted : sorted.AsEnumerable().Reverse().ToList();
+    }
+
+    private List<RosterDisplayRow> SortStandardRows(List<RosterDisplayRow> rows, string columnName)
+    {
+        return columnName switch
+        {
+            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
+            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "SEC" => rows.OrderBy(r => r.SecondaryPosition).ToList(),
+            "AGE" => rows.OrderBy(r => r.Age).ToList(),
+            "LINEUP" => rows.OrderBy(r => r.LineupSlot ?? 99).ToList(),
+            "ROT" => rows.OrderBy(r => r.RotationSlot ?? 99).ToList(),
+            _ => rows
+        };
+    }
+
+    private List<RosterDisplayRow> SortSeasonStatsRows(List<RosterDisplayRow> rows, string columnName)
+    {
+        return columnName switch
+        {
+            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
+            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "AVG" => rows.OrderBy(r => r.SeasonStats.AtBats == 0 ? 0 : r.SeasonStats.Hits / (double)r.SeasonStats.AtBats).ToList(),
+            "HR" => rows.OrderBy(r => r.SeasonStats.HomeRuns).ToList(),
+            "RBI" => rows.OrderBy(r => r.SeasonStats.RunsBattedIn).ToList(),
+            "OPS" => rows.OrderBy(r => CalculateOps(r.SeasonStats)).ToList(),
+            "ERA" => rows.OrderBy(r => CalculateEra(r.SeasonStats)).ToList(),
+            "W-L" => rows.OrderBy(r => r.SeasonStats.Wins).ToList(),
+            _ => rows
+        };
+    }
+
+    private double CalculateOps(PlayerSeasonStatsState stats)
+    {
+        var obp = stats.PlateAppearances == 0 ? 0d : (stats.Hits + stats.Walks) / (double)stats.PlateAppearances;
+        var slg = stats.AtBats == 0 ? 0d : GetTotalBases(stats) / (double)stats.AtBats;
+        return obp + slg;
+    }
+
+    private double CalculateEra(PlayerSeasonStatsState stats)
+    {
+        return stats.InningsPitchedOuts == 0 ? 0 : (stats.EarnedRuns * 9d) / (stats.InningsPitchedOuts / 3d);
+    }
+
+    private int GetTotalBases(PlayerSeasonStatsState stats)
+    {
+        var singles = Math.Max(0, stats.Hits - stats.Doubles - stats.Triples - stats.HomeRuns);
+        return singles + (stats.Doubles * 2) + (stats.Triples * 3) + (stats.HomeRuns * 4);
+    }
+
+    private List<RosterDisplayRow> SortHiddenRatingsRows(List<RosterDisplayRow> rows, string columnName)
+    {
+        return columnName switch
+        {
+            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
+            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "OVR" => rows.OrderBy(r => r.HiddenRatings.OverallRating).ToList(),
+            "TOT" => rows.OrderBy(r => r.HiddenRatings.AttributeTotal).ToList(),
+            "CON" => rows.OrderBy(r => r.HiddenRatings.ContactRating).ToList(),
+            "POW" => rows.OrderBy(r => r.HiddenRatings.PowerRating).ToList(),
+            "DIS" => rows.OrderBy(r => r.HiddenRatings.DisciplineRating).ToList(),
+            "SPD" => rows.OrderBy(r => r.HiddenRatings.SpeedRating).ToList(),
+            "FLD" => rows.OrderBy(r => r.HiddenRatings.FieldingRating).ToList(),
+            "ARM" => rows.OrderBy(r => r.HiddenRatings.ArmRating).ToList(),
+            "PIT" => rows.OrderBy(r => r.HiddenRatings.PitchingRating).ToList(),
+            "DUR" => rows.OrderBy(r => r.HiddenRatings.DurabilityRating).ToList(),
+            _ => rows
+        };
+    }
 
     private List<RosterDisplayRow> GetRosterRows()
     {
