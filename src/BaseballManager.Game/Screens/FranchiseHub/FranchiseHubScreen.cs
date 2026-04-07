@@ -1,6 +1,8 @@
+using BaseballManager.Application.Franchise;
 using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
+using BaseballManager.Game.Screens.LiveMatch;
 using BaseballManager.Game.Screens.MainMenu;
 using BaseballManager.Game.Screens.Roster;
 using BaseballManager.Game.Screens.Schedule;
@@ -14,6 +16,7 @@ public sealed class FranchiseHubScreen : GameScreen
 {
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
+    private readonly StartMatchUseCase _startMatchUseCase = new();
     private readonly List<ButtonControl> _buttons = new();
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
@@ -33,6 +36,7 @@ public sealed class FranchiseHubScreen : GameScreen
 
     private void InitializeButtons()
     {
+        _buttons.Add(new ButtonControl { Label = "Live Match", OnClick = () => StartLiveMatch() });
         _buttons.Add(new ButtonControl { Label = "Roster", OnClick = () => _screenManager.TransitionTo(nameof(RosterScreen)) });
         _buttons.Add(new ButtonControl { Label = "Lineup", OnClick = () => _screenManager.TransitionTo(nameof(LineupScreen)) });
         _buttons.Add(new ButtonControl { Label = "Rotation", OnClick = () => _screenManager.TransitionTo(nameof(RotationScreen)) });
@@ -99,5 +103,11 @@ public sealed class FranchiseHubScreen : GameScreen
 
             uiRenderer.DrawButton(button.Label, bounds, bgColor, Color.White);
         }
+    }
+
+    private void StartLiveMatch()
+    {
+        _startMatchUseCase.Execute();
+        _screenManager.TransitionTo(nameof(LiveMatchScreen));
     }
 }

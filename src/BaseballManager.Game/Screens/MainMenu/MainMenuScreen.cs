@@ -3,6 +3,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
+using BaseballManager.Game.Screens.LiveMatch;
 using BaseballManager.Game.Screens.TeamSelection;
 using BaseballManager.Game.UI.Controls;
 using Microsoft.Xna.Framework;
@@ -35,6 +36,7 @@ public sealed class MainMenuScreen : GameScreen
     private void InitializeButtons()
     {
         _buttons.Add(new ButtonControl { Label = "Start Game", OnClick = () => StartNewGame() });
+        _buttons.Add(new ButtonControl { Label = "Quick Match", OnClick = () => OpenQuickMatch() });
         _buttons.Add(new ButtonControl { Label = "Load Game", OnClick = () => LoadGame() });
         _buttons.Add(new ButtonControl { Label = "Exit Game", OnClick = () => ExitGame() });
     }
@@ -128,6 +130,12 @@ public sealed class MainMenuScreen : GameScreen
 
         Console.WriteLine("No saved franchise team found. Opening team selection...");
         _screenManager.TransitionTo(nameof(TeamSelectionScreen));
+    }
+
+    private void OpenQuickMatch()
+    {
+        Console.WriteLine("Launching quick live match...");
+        _screenManager.TransitionTo(nameof(LiveMatchScreen));
     }
 
     private void ExitGame()
