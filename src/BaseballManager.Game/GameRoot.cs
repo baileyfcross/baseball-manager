@@ -5,6 +5,7 @@ using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens;
 using BaseballManager.Game.Screens.LiveMatch;
 using BaseballManager.Game.Screens.MainMenu;
+using BaseballManager.Game.Screens.Options;
 using BaseballManager.Game.Screens.Roster;
 using BaseballManager.Game.Screens.Schedule;
 using BaseballManager.Game.Screens.TeamSelection;
@@ -43,10 +44,14 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         _franchiseStateStore = new FranchiseStateStore();
         _franchiseSession = new FranchiseSession(_leagueData, _franchiseStateStore);
 
+        var displaySettings = _franchiseSession.GetDisplaySettings();
+        ApplyDisplaySettings(displaySettings.ScreenWidth, displaySettings.ScreenHeight, displaySettings.RefreshRate, displaySettings.WindowMode);
+
         var mainMenuScreen = new MainMenuScreen(_screenManager, _franchiseSession);
         _screenManager.Register(mainMenuScreen);
         _screenManager.Register(new TeamSelectionScreen(_screenManager, _leagueData, _franchiseSession));
         _screenManager.Register(new FranchiseHubScreen(_screenManager, _franchiseSession));
+        _screenManager.Register(new OptionsScreen(_screenManager, _franchiseSession, this));
         _screenManager.Register(new RosterScreen(_screenManager, _leagueData, _franchiseSession));
         _screenManager.Register(new LineupScreen(_screenManager, _leagueData, _franchiseSession));
         _screenManager.Register(new RotationScreen(_screenManager, _leagueData, _franchiseSession));
@@ -55,6 +60,49 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
 
         _screenManager.SetInitialScreen(mainMenuScreen);
         base.Initialize();
+    }
+
+    public void ApplyDisplaySettings(int screenWidth, int screenHeight, int refreshRate, DisplayWindowMode windowMode)
+    {
+        var safeWidth = Math.Max(800, screenWidth);
+        var safeHeight = Math.Max(600, screenHeight);
+        var targetRefreshRate = Math.Clamp(refreshRate, 30, 240);
+        var desktopMode = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+
+        _graphics.SynchronizeWithVerticalRetrace = true;
+        IsFixedTimeStep = true;
+        TargetElapsedTime = TimeSpan.FromSeconds(1d / targetRefreshRate);
+        Window.IsBorderless = false;
+        _graphics.HardwareModeSwitch = windowMode == DisplayWindowMode.Fullscreen;
+
+        switch (windowMode)
+        {
+            case DisplayWindowMode.Fullscreen:
+                _graphics.IsFullScreen = true;
+                _graphics.PreferredBackBufferWidth = safeWidth;
+                _graphics.PreferredBackBufferHeight = safeHeight;
+                break;
+
+            case DisplayWindowMode.BorderlessWindow:
+                _graphics.IsFullScreen = false;
+                Window.IsBorderless = true;
+                _graphics.PreferredBackBufferWidth = desktopMode.Width;
+                _graphics.PreferredBackBufferHeight = desktopMode.Height;
+                break;
+
+            default:
+                _graphics.IsFullScreen = false;
+                _graphics.PreferredBackBufferWidth = safeWidth;
+                _graphics.PreferredBackBufferHeight = safeHeight;
+                break;
+        }
+
+        _graphics.ApplyChanges();
+
+        if (windowMode == DisplayWindowMode.BorderlessWindow)
+        {
+            Window.Position = Point.Zero;
+        }
     }
 
     protected override void LoadContent()

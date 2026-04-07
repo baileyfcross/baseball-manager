@@ -36,11 +36,29 @@ public sealed class FranchiseSession
 
     public bool HasFranchiseSaveData => SelectedTeam != null;
 
+    public bool HasQuickMatchSaveData => _saveState.QuickMatchLiveMatch != null;
+
     public bool HasAnySaveData =>
         !string.IsNullOrWhiteSpace(_saveState.SelectedTeamName) ||
         _saveState.Teams.Count > 0 ||
         _saveState.CurrentLiveMatch != null ||
         _saveState.QuickMatchLiveMatch != null;
+
+    public DisplaySettingsState GetDisplaySettings()
+    {
+        _saveState.DisplaySettings ??= new DisplaySettingsState();
+        return _saveState.DisplaySettings;
+    }
+
+    public void UpdateDisplaySettings(int screenWidth, int screenHeight, int refreshRate, DisplayWindowMode windowMode)
+    {
+        var displaySettings = GetDisplaySettings();
+        displaySettings.ScreenWidth = Math.Max(800, screenWidth);
+        displaySettings.ScreenHeight = Math.Max(600, screenHeight);
+        displaySettings.RefreshRate = Math.Clamp(refreshRate, 30, 240);
+        displaySettings.WindowMode = windowMode;
+        Save();
+    }
 
     public void SelectTeam(TeamImportDto team)
     {
@@ -260,6 +278,67 @@ public sealed class FranchiseSession
         {
             Save();
         }
+    }
+
+    public bool DeleteQuickMatchSave()
+    {
+        var hadQuickMatchSave = _saveState.QuickMatchLiveMatch != null;
+        _saveState.QuickMatchLiveMatch = null;
+
+        if (hadQuickMatchSave)
+        {
+            Save();
+        }
+
+        return hadQuickMatchSave;
+    }
+
+    public bool DeleteCurrentTeamSave()
+    {
+        if (SelectedTeam == null)
+        {
+            return false;
+        }
+
+        var teamName = SelectedTeam.Name;
+        var removedTeamState = _saveState.Teams.Remove(teamName);
+        var removedSelection = string.Equals(_saveState.SelectedTeamName, teamName, StringComparison.OrdinalIgnoreCase);
+
+        if (removedSelection)
+        {
+            _saveState.SelectedTeamName = null;
+        }
+
+        SelectedTeam = null;
+        PendingLiveMatchMode = LiveMatchMode.QuickMatch;
+        _saveState.CurrentLiveMatch = null;
+
+        if (removedTeamState || removedSelection)
+        {
+            Save();
+            return true;
+        }
+
+        return false;
+    }
+
+    public bool DeleteAllSaveData()
+    {
+        var hadSaveData = HasAnySaveData;
+
+        _saveState.SelectedTeamName = null;
+        _saveState.CurrentLiveMatch = null;
+        _saveState.QuickMatchLiveMatch = null;
+        _saveState.Teams.Clear();
+        SelectedTeam = null;
+        PendingLiveMatchMode = LiveMatchMode.QuickMatch;
+
+        if (hadSaveData)
+        {
+            Save();
+        }
+
+        return hadSaveData;
     }
 
     private TeamFranchiseState GetOrCreateTeamState(string teamName)
