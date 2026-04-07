@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <XnaContent xmlns:Graphics="Microsoft.Xna.Framework.Content.Pipeline.Graphics">
   <Asset Type="Graphics:FontDescription">
-    <FontName>UiSans.ttf</FontName>
+    <FontName>Inter/static/Inter_18pt-Regular.ttf</FontName>
     <Size>14</Size>
     <Spacing>1</Spacing>
     <UseKerning>true</UseKerning>

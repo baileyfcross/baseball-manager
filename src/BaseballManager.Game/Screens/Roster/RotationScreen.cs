@@ -136,7 +136,7 @@ public sealed class RotationScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        uiRenderer.DrawText("Rotation", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText("Rotation", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         var rotationRows = GetRotationRows();
@@ -151,7 +151,7 @@ public sealed class RotationScreen : GameScreen
             uiRenderer.DrawText("Drag a pitcher to a rotation slot to assign. Drag from a slot to move pitchers.", new Vector2(100, 130), Color.White);
             uiRenderer.DrawText($"Selected: {GetSelectedPlayerName()}", new Vector2(100, 160), Color.White);
 
-            uiRenderer.DrawText("STARTING ROTATION", new Vector2(100, 200), Color.White);
+            uiRenderer.DrawText("STARTING ROTATION", new Vector2(100, 200), Color.White, uiRenderer.UiMediumFont);
             for (var slot = 1; slot <= 5; slot++)
             {
                 var bounds = GetRotationSlotBounds(slot);
@@ -168,7 +168,7 @@ public sealed class RotationScreen : GameScreen
                 uiRenderer.DrawButton(label, bounds, color, Color.White);
             }
 
-            uiRenderer.DrawText("BULLPEN / EXTRA ARMS", new Vector2(700, 200), Color.White);
+            uiRenderer.DrawText("BULLPEN / EXTRA ARMS", new Vector2(700, 200), Color.White, uiRenderer.UiMediumFont);
             var pageSize = 10;
             var startIndex = _pageIndex * pageSize;
             var visibleRows = bullpenRows.Skip(startIndex).Take(pageSize).ToList();
@@ -201,7 +201,7 @@ public sealed class RotationScreen : GameScreen
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
     {
         var maxPage = Math.Max(0, (int)Math.Ceiling(totalRows / (double)pageSize) - 1);
-        uiRenderer.DrawText($"Bullpen Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(700, 540), Color.White);
+        uiRenderer.DrawText($"Bullpen Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(700, 540), Color.White, uiRenderer.ScoreboardFont);
 
         var previousBounds = GetPreviousPageBounds();
         var nextBounds = GetNextPageBounds();

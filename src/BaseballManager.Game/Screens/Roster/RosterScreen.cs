@@ -89,7 +89,7 @@ public sealed class RosterScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        uiRenderer.DrawText("Roster", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText("Roster", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         var rosterRows = GetRosterRows();
@@ -99,7 +99,7 @@ public sealed class RosterScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawText("ID        NAME                    POS  SEC  AGE  LINEUP  ROT", new Vector2(100, 140), Color.White);
+            uiRenderer.DrawText("ID        NAME                    POS  SEC  AGE  LINEUP  ROT", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
 
             var pageSize = 14;
             var startIndex = _pageIndex * pageSize;
@@ -116,7 +116,7 @@ public sealed class RosterScreen : GameScreen
                     row.Age,
                     row.LineupSlot?.ToString() ?? "-",
                     row.RotationSlot?.ToString() ?? "-");
-                uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White);
+                uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White, uiRenderer.ScoreboardFont);
             }
 
             DrawPagingButtons(uiRenderer, rosterRows.Count, pageSize);
@@ -130,7 +130,7 @@ public sealed class RosterScreen : GameScreen
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
     {
         var maxPage = Math.Max(0, (int)Math.Ceiling(totalRows / (double)pageSize) - 1);
-        uiRenderer.DrawText($"Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(100, 600), Color.White);
+        uiRenderer.DrawText($"Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(100, 600), Color.White, uiRenderer.ScoreboardFont);
 
         var previousBounds = GetPreviousPageBounds();
         var nextBounds = GetNextPageBounds();

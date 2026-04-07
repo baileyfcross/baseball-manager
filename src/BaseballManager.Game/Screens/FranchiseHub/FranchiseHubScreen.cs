@@ -87,7 +87,7 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        uiRenderer.DrawText("Franchise Hub", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText("Franchise Hub", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         for (int i = 0; i < _buttons.Count; i++)

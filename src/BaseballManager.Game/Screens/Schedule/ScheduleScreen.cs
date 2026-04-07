@@ -89,7 +89,7 @@ public sealed class ScheduleScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        uiRenderer.DrawText("Schedule", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText("Schedule", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         var teamGames = GetScheduleRows();
@@ -99,7 +99,7 @@ public sealed class ScheduleScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawText("DATE         OPPONENT                 SITE  GAME", new Vector2(100, 140), Color.White);
+            uiRenderer.DrawText("DATE         OPPONENT                 SITE  GAME", new Vector2(100, 140), Color.White, uiRenderer.ScoreboardFont);
             var pageSize = 14;
             var startIndex = _pageIndex * pageSize;
             var visibleRows = teamGames.Skip(startIndex).Take(pageSize).ToList();
@@ -112,7 +112,7 @@ public sealed class ScheduleScreen : GameScreen
                     Truncate(row.Opponent, 22),
                     row.Site,
                     row.GameNumber ?? 0);
-                uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White);
+                uiRenderer.DrawText(line, new Vector2(100, 180 + i * 28), Color.White, uiRenderer.ScoreboardFont);
             }
 
             DrawPagingButtons(uiRenderer, teamGames.Count, pageSize);
@@ -126,7 +126,7 @@ public sealed class ScheduleScreen : GameScreen
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
     {
         var maxPage = Math.Max(0, (int)Math.Ceiling(totalRows / (double)pageSize) - 1);
-        uiRenderer.DrawText($"Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(100, 600), Color.White);
+        uiRenderer.DrawText($"Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(100, 600), Color.White, uiRenderer.ScoreboardFont);
 
         var previousBounds = GetPreviousPageBounds();
         var nextBounds = GetNextPageBounds();

@@ -88,7 +88,7 @@ public sealed class MainMenuScreen : GameScreen
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
         // Draw title
-        uiRenderer.DrawText("Baseball Manager", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText("Baseball Manager", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
 
         // Draw buttons with labels
         for (int i = 0; i < _buttons.Count; i++)

@@ -80,7 +80,7 @@ public sealed class TeamSelectionScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        uiRenderer.DrawText("Select A Team", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText("Select A Team", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
 
         if (!_leagueData.HasData)
         {

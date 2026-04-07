@@ -136,7 +136,7 @@ public sealed class LineupScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        uiRenderer.DrawText("Lineup", new Vector2(100, 50), Color.White);
+        uiRenderer.DrawText("Lineup", new Vector2(100, 50), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawText(_franchiseSession.SelectedTeamName, new Vector2(100, 90), Color.White);
 
         var lineupRows = GetLineupRows();
@@ -151,7 +151,7 @@ public sealed class LineupScreen : GameScreen
             uiRenderer.DrawText("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Vector2(100, 130), Color.White);
             uiRenderer.DrawText($"Selected: {GetSelectedPlayerName()}", new Vector2(100, 160), Color.White);
 
-            uiRenderer.DrawText("LINEUP", new Vector2(100, 200), Color.White);
+            uiRenderer.DrawText("LINEUP", new Vector2(100, 200), Color.White, uiRenderer.UiMediumFont);
             for (var slot = 1; slot <= 9; slot++)
             {
                 var bounds = GetLineupSlotBounds(slot);
@@ -168,7 +168,7 @@ public sealed class LineupScreen : GameScreen
                 uiRenderer.DrawButton(label, bounds, color, Color.White);
             }
 
-            uiRenderer.DrawText("BENCH / RESERVES", new Vector2(700, 200), Color.White);
+            uiRenderer.DrawText("BENCH / RESERVES", new Vector2(700, 200), Color.White, uiRenderer.UiMediumFont);
             var pageSize = 10;
             var startIndex = _pageIndex * pageSize;
             var visibleRows = benchRows.Skip(startIndex).Take(pageSize).ToList();
@@ -201,7 +201,7 @@ public sealed class LineupScreen : GameScreen
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
     {
         var maxPage = Math.Max(0, (int)Math.Ceiling(totalRows / (double)pageSize) - 1);
-        uiRenderer.DrawText($"Bench Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(700, 540), Color.White);
+        uiRenderer.DrawText($"Bench Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(700, 540), Color.White, uiRenderer.ScoreboardFont);
 
         var previousBounds = GetPreviousPageBounds();
         var nextBounds = GetNextPageBounds();

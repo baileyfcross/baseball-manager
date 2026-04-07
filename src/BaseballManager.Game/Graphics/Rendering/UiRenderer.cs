@@ -1,3 +1,4 @@
+using BaseballManager.Game.UI;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Content;
 using Microsoft.Xna.Framework.Graphics;
@@ -7,9 +8,11 @@ namespace BaseballManager.Game.Graphics.Rendering;
 public sealed class UiRenderer
 {
     private readonly GraphicsDevice _graphicsDevice;
+    private readonly FontCatalog _fontCatalog = new();
     private ContentManager? _contentManager;
     private SpriteFont? _uiSmallFont;
     private SpriteFont? _uiMediumFont;
+    private SpriteFont? _scoreboardFont;
     private SpriteBatch? _spriteBatch;
 
     public UiRenderer(GraphicsDevice graphicsDevice)
@@ -19,6 +22,12 @@ public sealed class UiRenderer
 
     public Viewport Viewport => _graphicsDevice.Viewport;
 
+    public SpriteFont? UiSmallFont => _uiSmallFont;
+
+    public SpriteFont? UiMediumFont => _uiMediumFont;
+
+    public SpriteFont? ScoreboardFont => _scoreboardFont;
+
     public void LoadContent(ContentManager contentManager)
     {
         _contentManager = contentManager;
@@ -26,8 +35,9 @@ public sealed class UiRenderer
 
         try
         {
-            _uiSmallFont = contentManager.Load<SpriteFont>("Fonts/UiSmall");
-            _uiMediumFont = contentManager.Load<SpriteFont>("Fonts/UiMedium");
+            _uiSmallFont = contentManager.Load<SpriteFont>(_fontCatalog.UiSmall);
+            _uiMediumFont = contentManager.Load<SpriteFont>(_fontCatalog.UiMedium);
+            _scoreboardFont = contentManager.Load<SpriteFont>(_fontCatalog.Scoreboard);
         }
         catch (ContentLoadException ex)
         {
@@ -41,10 +51,11 @@ public sealed class UiRenderer
         if (_spriteBatch == null)
             return;
 
-        if (_uiSmallFont != null)
+        var selectedFont = font ?? _uiSmallFont;
+        if (selectedFont != null)
         {
             _spriteBatch.Begin();
-            _spriteBatch.DrawString(_uiSmallFont, text, position, color);
+            _spriteBatch.DrawString(selectedFont, text, position, color);
             _spriteBatch.End();
         }
         else
@@ -69,13 +80,14 @@ public sealed class UiRenderer
         DrawRectangleOutline(bounds, Color.Black);
 
         // Draw button text
-        if (_uiSmallFont != null)
+        var selectedFont = font ?? _uiSmallFont;
+        if (selectedFont != null)
         {
-            var textSize = _uiSmallFont.MeasureString(label);
+            var textSize = selectedFont.MeasureString(label);
             var textPosition = new Vector2(
                 bounds.X + (bounds.Width - textSize.X) / 2,
                 bounds.Y + (bounds.Height - textSize.Y) / 2);
-            _spriteBatch.DrawString(_uiSmallFont, label, textPosition, textColor);
+            _spriteBatch.DrawString(selectedFont, label, textPosition, textColor);
         }
         else
         {
