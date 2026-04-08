@@ -25,6 +25,12 @@ public sealed class FranchiseSession
     private static readonly string[] CoachRoleOrder = ["Manager", "Hitting Coach", "Pitching Coach", "Bench Coach", "Scouting Director", "Team Doctor", "Physiologist"];
     private static readonly string[] CoachFirstNames = ["Alex", "Jordan", "Sam", "Casey", "Drew", "Taylor", "Riley", "Morgan", "Cameron", "Jamie", "Hayden", "Avery"];
     private static readonly string[] CoachLastNames = ["Maddox", "Sullivan", "Torres", "Bennett", "Foster", "Callahan", "Diaz", "Reed", "Hughes", "Alvarez", "Parker", "Watts"];
+    private static readonly string[] ScoutingCountryOptions = ["U.S. High School", "Dominican Republic", "Venezuela", "Japan", "South Korea", "Mexico", "Canada", "Cuba", "Puerto Rico"];
+    private static readonly string[] ScoutingPositionOptions = ["Any", "C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"];
+    private static readonly string[] ScoutingTraitOptions = ["Best Athlete", "Power Hitter", "Contact Hitter", "Disciplined Hitter", "Speed / Defense", "Power Pitcher", "Location Pitcher", "Workhorse Starter", "Late-Inning Arm"];
+    private static readonly string[] ScoutAssignmentModeOptions = ["Unassigned", "Region Search", "Player Follow"];
+    private static readonly string[] ProspectFirstNames = ["Mason", "Jace", "Noah", "Liam", "Elijah", "Carter", "Diego", "Luis", "Mateo", "Yuki", "Hiro", "Seong", "Min", "Adrian", "Roman", "Trey"];
+    private static readonly string[] ProspectLastNames = ["Johnson", "Miller", "Clark", "Ramirez", "De La Cruz", "Santos", "Kim", "Park", "Tanaka", "Sato", "Rivera", "Torres", "Gonzalez", "Lee", "Martinez", "Flores"];
     private readonly ImportedLeagueData _leagueData;
     private readonly FranchiseStateStore _stateStore;
     private readonly FranchiseSaveState _saveState;
@@ -65,7 +71,7 @@ public sealed class FranchiseSession
 
         EnsureFranchiseDateInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated() || EnsureTeamEconomyGenerated())
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
         {
             Save();
         }
@@ -578,6 +584,370 @@ public sealed class FranchiseSession
     {
         var report = GetCoachScoutingReport(playerId, "Scouting Director");
         return $"{report.Summary} {report.Strengths}".Trim();
+    }
+
+    public IReadOnlyList<ScoutAssignmentView> GetScoutDepartment()
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureCoachingStaffInitialized(teamState, SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+
+        var department = new List<ScoutAssignmentView>();
+        var headScout = teamState.CoachingStaff.FirstOrDefault(coach => string.Equals(coach.Role, "Scouting Director", StringComparison.OrdinalIgnoreCase));
+        if (headScout != null)
+        {
+            department.Add(new ScoutAssignmentView(
+                -1,
+                "Head Scout",
+                headScout.Name,
+                headScout.Specialty,
+                headScout.Voice,
+                "Department oversight",
+                "All positions",
+                "Balanced coverage",
+                "Department Lead",
+                "Organization-wide coverage",
+                0,
+                true,
+                false));
+        }
+
+        department.AddRange(teamState.AssistantScouts
+            .OrderBy(scout => scout.SlotIndex)
+            .Take(3)
+            .Select(scout => new ScoutAssignmentView(
+                scout.SlotIndex,
+                $"Scout {scout.SlotIndex + 1}",
+                string.IsNullOrWhiteSpace(scout.Name) ? "Open Slot" : scout.Name,
+                string.IsNullOrWhiteSpace(scout.Specialty) ? "regional coverage" : scout.Specialty,
+                string.IsNullOrWhiteSpace(scout.Voice) ? "balanced" : scout.Voice,
+                scout.Country,
+                scout.PositionFocus,
+                scout.TraitFocus,
+                scout.AssignmentMode,
+                GetScoutAssignmentTargetLabel(teamState, scout),
+                scout.DaysUntilNextDiscovery,
+                false,
+                string.IsNullOrWhiteSpace(scout.Name))));
+
+        return department;
+    }
+
+    public IReadOnlyList<CoachProfileView> GetAvailableAssistantScoutCandidates(int slotIndex)
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        return BuildScoutCandidatePool(SelectedTeam.Name, slotIndex)
+            .Select(candidate => new CoachProfileView($"Scout {slotIndex + 1}", candidate.Name, candidate.Specialty, candidate.Voice))
+            .ToList();
+    }
+
+    public bool HireAssistantScout(int slotIndex, int candidateIndex, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before changing your scouts.";
+            return false;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null)
+        {
+            statusMessage = "That scout slot is not available right now.";
+            return false;
+        }
+
+        var candidatePool = BuildScoutCandidatePool(SelectedTeam.Name, slotIndex);
+        if (candidatePool.Count == 0)
+        {
+            statusMessage = "No scout candidates are available right now.";
+            return false;
+        }
+
+        if (candidateIndex < 0 || candidateIndex >= candidatePool.Count)
+        {
+            statusMessage = "That scout candidate is no longer available.";
+            return false;
+        }
+
+        var replacement = candidatePool[candidateIndex];
+        ClearScoutPlayerAssignment(teamState, slotIndex);
+        scout.Name = replacement.Name;
+        scout.Specialty = replacement.Specialty;
+        scout.Voice = replacement.Voice;
+        scout.AssignmentMode = "Unassigned";
+        scout.AssignmentTarget = string.Empty;
+        scout.DaysUntilNextDiscovery = 0;
+        Save();
+
+        statusMessage = $"{scout.Name} has been hired into Scout {scout.SlotIndex + 1}. Assign him to a region or player when you're ready.";
+        return true;
+    }
+
+    public bool ChangeAssistantScout(int slotIndex, int direction, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before changing your scouts.";
+            return false;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null)
+        {
+            statusMessage = "That scout slot is not available right now.";
+            return false;
+        }
+
+        var candidatePool = BuildScoutCandidatePool(SelectedTeam.Name, slotIndex);
+        if (candidatePool.Count == 0)
+        {
+            statusMessage = "No scout candidates are available right now.";
+            return false;
+        }
+
+        var currentIndex = candidatePool.FindIndex(candidate =>
+            string.Equals(candidate.Name, scout.Name, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(candidate.Specialty, scout.Specialty, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(candidate.Voice, scout.Voice, StringComparison.OrdinalIgnoreCase));
+
+        var step = direction >= 0 ? 1 : -1;
+        var nextIndex = currentIndex < 0
+            ? (step > 0 ? 0 : candidatePool.Count - 1)
+            : (currentIndex + step + candidatePool.Count) % candidatePool.Count;
+
+        return HireAssistantScout(slotIndex, nextIndex, out statusMessage);
+    }
+
+    public bool ReleaseAssistantScout(int slotIndex, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before changing your scouts.";
+            return false;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null)
+        {
+            statusMessage = "That scout slot is not available right now.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(scout.Name))
+        {
+            statusMessage = $"Scout {slotIndex + 1} is already open.";
+            return false;
+        }
+
+        ClearScoutPlayerAssignment(teamState, slotIndex);
+        scout.Name = string.Empty;
+        scout.Specialty = string.Empty;
+        scout.Voice = string.Empty;
+        scout.AssignmentMode = "Unassigned";
+        scout.AssignmentTarget = string.Empty;
+        scout.DaysUntilNextDiscovery = 0;
+        Save();
+
+        statusMessage = $"Scout {slotIndex + 1} is now open. Any players already found stay on your board at their current scouting percentage.";
+        return true;
+    }
+
+    public string CycleAssistantScoutCountry(int slotIndex, int direction)
+    {
+        return CycleAssistantScoutSetting(slotIndex, direction, ScoutingCountryOptions, scout => scout.Country, (scout, value) => scout.Country = value, "country");
+    }
+
+    public string CycleAssistantScoutPositionFocus(int slotIndex, int direction)
+    {
+        return CycleAssistantScoutSetting(slotIndex, direction, ScoutingPositionOptions, scout => scout.PositionFocus, (scout, value) => scout.PositionFocus = value, "position focus");
+    }
+
+    public string CycleAssistantScoutTraitFocus(int slotIndex, int direction)
+    {
+        return CycleAssistantScoutSetting(slotIndex, direction, ScoutingTraitOptions, scout => scout.TraitFocus, (scout, value) => scout.TraitFocus = value, "trait focus");
+    }
+
+    public IReadOnlyList<string> GetScoutCountryOptions() => ScoutingCountryOptions;
+
+    public IReadOnlyList<string> GetScoutPositionOptions() => ScoutingPositionOptions;
+
+    public IReadOnlyList<string> GetScoutTraitOptions() => ScoutingTraitOptions;
+
+    public IReadOnlyList<string> GetScoutAssignmentModes() => ScoutAssignmentModeOptions;
+
+    public string SetAssistantScoutCountry(int slotIndex, string country)
+    {
+        return SetAssistantScoutSetting(slotIndex, country, ScoutingCountryOptions, scout => scout.Country, (scout, value) => scout.Country = value, "country");
+    }
+
+    public string SetAssistantScoutPositionFocus(int slotIndex, string positionFocus)
+    {
+        return SetAssistantScoutSetting(slotIndex, positionFocus, ScoutingPositionOptions, scout => scout.PositionFocus, (scout, value) => scout.PositionFocus = value, "position focus");
+    }
+
+    public string SetAssistantScoutTraitFocus(int slotIndex, string traitFocus)
+    {
+        return SetAssistantScoutSetting(slotIndex, traitFocus, ScoutingTraitOptions, scout => scout.TraitFocus, (scout, value) => scout.TraitFocus = value, "trait focus");
+    }
+
+    public string AssignScoutToRegionSearch(int slotIndex)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before assigning your scouts.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null || string.IsNullOrWhiteSpace(scout.Name))
+        {
+            return $"Hire Scout {slotIndex + 1} before assigning a region search.";
+        }
+
+        ClearScoutPlayerAssignment(teamState, slotIndex);
+        scout.AssignmentMode = "Region Search";
+        scout.AssignmentTarget = $"{scout.Country}|{scout.PositionFocus}|{scout.TraitFocus}";
+        scout.DaysUntilNextDiscovery = Math.Max(2, GetScoutDiscoveryDays(SelectedTeam.Name, scout));
+        Save();
+        return $"{scout.Name} is now scouting {scout.Country} for {GetScoutFocusText(scout.PositionFocus, scout.TraitFocus)}. First report in {scout.DaysUntilNextDiscovery} day(s).";
+    }
+
+    public string AssignScoutToScoutedPlayer(int slotIndex, string prospectKey)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before assigning your scouts.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null || string.IsNullOrWhiteSpace(scout.Name))
+        {
+            return $"Hire Scout {slotIndex + 1} before assigning a player follow.";
+        }
+
+        var prospect = teamState.ScoutedPlayers.FirstOrDefault(player => string.Equals(player.ProspectKey, prospectKey, StringComparison.OrdinalIgnoreCase));
+        if (prospect == null)
+        {
+            return "That player is not on your scouted board yet.";
+        }
+
+        ClearScoutPlayerAssignment(teamState, slotIndex);
+        scout.AssignmentMode = "Player Follow";
+        scout.AssignmentTarget = prospect.ProspectKey;
+        scout.DaysUntilNextDiscovery = 0;
+        prospect.AssignedScoutSlotIndex = slotIndex;
+        prospect.AssignedScoutName = scout.Name;
+        Save();
+        return $"{scout.Name} is now following {prospect.PlayerName}. The file is {prospect.ScoutingProgress}% complete.";
+    }
+
+    public string ClearScoutAssignment(int slotIndex)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before assigning your scouts.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null)
+        {
+            return "That scout slot is not available right now.";
+        }
+
+        ClearScoutPlayerAssignment(teamState, slotIndex);
+        scout.AssignmentMode = "Unassigned";
+        scout.AssignmentTarget = string.Empty;
+        scout.DaysUntilNextDiscovery = 0;
+        Save();
+
+        var scoutLabel = string.IsNullOrWhiteSpace(scout.Name) ? $"Scout {slotIndex + 1}" : scout.Name;
+        return $"{scoutLabel} is now unassigned.";
+    }
+
+    public IReadOnlyList<AmateurProspectView> GetScoutedPlayers(bool targetListOnly = false)
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+
+        return teamState.ScoutedPlayers
+            .Where(player => targetListOnly ? player.IsOnTargetList : !player.IsOnTargetList)
+            .OrderByDescending(player => player.ScoutingProgress)
+            .ThenByDescending(player => player.FoundDate)
+            .ThenBy(player => player.PlayerName)
+            .Select(BuildAmateurProspectView)
+            .ToList();
+    }
+
+    public IReadOnlyList<AmateurProspectView> GetScoutFoundPlayers(int slotIndex)
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+
+        return teamState.ScoutedPlayers
+            .Where(player => player.FoundByScoutSlotIndex == slotIndex)
+            .OrderByDescending(player => player.FoundDate)
+            .ThenByDescending(player => player.ScoutingProgress)
+            .ThenBy(player => player.PlayerName)
+            .Select(BuildAmateurProspectView)
+            .ToList();
+    }
+
+    public string AddScoutedPlayerToTargetList(string prospectKey)
+    {
+        return SetScoutedPlayerTargetStatus(prospectKey, true);
+    }
+
+    public string RemoveScoutedPlayerFromTargetList(string prospectKey)
+    {
+        return SetScoutedPlayerTargetStatus(prospectKey, false);
+    }
+
+    public IReadOnlyList<AmateurProspectView> GetAmateurScoutingProspects()
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+
+        return teamState.ScoutedPlayers
+            .OrderByDescending(player => player.ScoutingProgress)
+            .ThenByDescending(player => player.FoundDate)
+            .ThenBy(player => player.PlayerName)
+            .Select(BuildAmateurProspectView)
+            .ToList();
     }
 
     public bool TryTradeForPlayer(Guid targetPlayerId, Guid offeredPlayerId, out string statusMessage)
@@ -1571,6 +1941,17 @@ public sealed class FranchiseSession
         return hasChanges;
     }
 
+    private bool EnsureScoutingDepartmentGenerated()
+    {
+        var hasChanges = false;
+        foreach (var team in _leagueData.Teams)
+        {
+            hasChanges |= EnsureScoutDepartmentInitialized(GetOrCreateTeamState(team.Name), team.Name);
+        }
+
+        return hasChanges;
+    }
+
     private bool EnsureTeamEconomyGenerated()
     {
         var hasChanges = false;
@@ -1837,6 +2218,417 @@ public sealed class FranchiseSession
         }
 
         return candidates;
+    }
+
+    private bool EnsureScoutDepartmentInitialized(TeamFranchiseState teamState, string teamName)
+    {
+        var hasChanges = false;
+        teamState.AssistantScouts ??= new List<AssistantScoutState>();
+        teamState.ScoutedPlayers ??= new List<ScoutedPlayerState>();
+
+        for (var slotIndex = 0; slotIndex < 3; slotIndex++)
+        {
+            var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+            if (scout == null)
+            {
+                scout = new AssistantScoutState
+                {
+                    SlotIndex = slotIndex,
+                    Country = ScoutingCountryOptions[Math.Min(slotIndex, ScoutingCountryOptions.Length - 1)],
+                    PositionFocus = slotIndex switch
+                    {
+                        1 => "OF",
+                        2 => "SP",
+                        _ => "Any"
+                    },
+                    TraitFocus = slotIndex switch
+                    {
+                        1 => "Power Hitter",
+                        2 => "Location Pitcher",
+                        _ => "Best Athlete"
+                    },
+                    AssignmentMode = "Unassigned"
+                };
+                teamState.AssistantScouts.Add(scout);
+                hasChanges = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(scout.Country))
+            {
+                scout.Country = ScoutingCountryOptions[Math.Min(slotIndex, ScoutingCountryOptions.Length - 1)];
+                hasChanges = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(scout.PositionFocus))
+            {
+                scout.PositionFocus = "Any";
+                hasChanges = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(scout.TraitFocus))
+            {
+                scout.TraitFocus = "Best Athlete";
+                hasChanges = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(scout.AssignmentMode) || !ScoutAssignmentModeOptions.Any(option => string.Equals(option, scout.AssignmentMode, StringComparison.OrdinalIgnoreCase)))
+            {
+                scout.AssignmentMode = "Unassigned";
+                hasChanges = true;
+            }
+
+            scout.AssignmentTarget ??= string.Empty;
+            scout.DaysUntilNextDiscovery = Math.Max(0, scout.DaysUntilNextDiscovery);
+        }
+
+        teamState.AssistantScouts = teamState.AssistantScouts
+            .OrderBy(scout => scout.SlotIndex)
+            .Take(3)
+            .ToList();
+
+        return hasChanges;
+    }
+
+    private List<AssistantScoutState> BuildScoutCandidatePool(string teamName, int slotIndex)
+    {
+        return BuildCoachCandidatePool(teamName, $"Regional Scout {slotIndex + 1}")
+            .Select(candidate => new AssistantScoutState
+            {
+                SlotIndex = slotIndex,
+                Name = candidate.Name,
+                Specialty = candidate.Specialty,
+                Voice = candidate.Voice
+            })
+            .ToList();
+    }
+
+    private string CycleAssistantScoutSetting(int slotIndex, int direction, string[] options, Func<AssistantScoutState, string> getter, Action<AssistantScoutState, string> setter, string label)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before changing your scouts.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null)
+        {
+            return "That scout slot is not available right now.";
+        }
+
+        var currentValue = getter(scout);
+        var currentIndex = Array.FindIndex(options, option => string.Equals(option, currentValue, StringComparison.OrdinalIgnoreCase));
+        if (currentIndex < 0)
+        {
+            currentIndex = 0;
+        }
+
+        var step = direction >= 0 ? 1 : -1;
+        var nextValue = options[(currentIndex + step + options.Length) % options.Length];
+        setter(scout, nextValue);
+        if (string.Equals(scout.AssignmentMode, "Region Search", StringComparison.OrdinalIgnoreCase))
+        {
+            scout.AssignmentTarget = $"{scout.Country}|{scout.PositionFocus}|{scout.TraitFocus}";
+            scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(SelectedTeam.Name, scout);
+        }
+        Save();
+
+        var scoutLabel = string.IsNullOrWhiteSpace(scout.Name) ? $"Scout {slotIndex + 1}" : scout.Name;
+        return $"{scoutLabel} {label} set to {nextValue}.";
+    }
+
+    private string SetAssistantScoutSetting(int slotIndex, string selectedValue, string[] options, Func<AssistantScoutState, string> getter, Action<AssistantScoutState, string> setter, string label)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before changing your scouts.";
+        }
+
+        if (!options.Any(option => string.Equals(option, selectedValue, StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"That {label} option is not available right now.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null)
+        {
+            return "That scout slot is not available right now.";
+        }
+
+        var normalizedValue = options.First(option => string.Equals(option, selectedValue, StringComparison.OrdinalIgnoreCase));
+        if (string.Equals(getter(scout), normalizedValue, StringComparison.OrdinalIgnoreCase))
+        {
+            var scoutName = string.IsNullOrWhiteSpace(scout.Name) ? $"Scout {slotIndex + 1}" : scout.Name;
+            return $"{scoutName} is already set to {normalizedValue}.";
+        }
+
+        setter(scout, normalizedValue);
+        if (string.Equals(scout.AssignmentMode, "Region Search", StringComparison.OrdinalIgnoreCase))
+        {
+            scout.AssignmentTarget = $"{scout.Country}|{scout.PositionFocus}|{scout.TraitFocus}";
+            scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(SelectedTeam.Name, scout);
+        }
+        Save();
+
+        var scoutLabel = string.IsNullOrWhiteSpace(scout.Name) ? $"Scout {slotIndex + 1}" : scout.Name;
+        return $"{scoutLabel} {label} set to {normalizedValue}.";
+    }
+
+    private string SetScoutedPlayerTargetStatus(string prospectKey, bool isOnTargetList)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before managing your target list.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var player = teamState.ScoutedPlayers.FirstOrDefault(entry => string.Equals(entry.ProspectKey, prospectKey, StringComparison.OrdinalIgnoreCase));
+        if (player == null)
+        {
+            return "That player is not on your scouted board yet.";
+        }
+
+        if (player.IsOnTargetList == isOnTargetList)
+        {
+            return isOnTargetList
+                ? $"{player.PlayerName} is already on your target list."
+                : $"{player.PlayerName} is already back on the general scouting board.";
+        }
+
+        player.IsOnTargetList = isOnTargetList;
+        Save();
+        return isOnTargetList
+            ? $"{player.PlayerName} was added to your target list."
+            : $"{player.PlayerName} was moved back to the general scouted players list.";
+    }
+
+    private AmateurProspectView BuildAmateurProspectView(ScoutedPlayerState player)
+    {
+        return new AmateurProspectView(
+            player.ProspectKey,
+            player.PlayerName,
+            player.Country,
+            player.Source,
+            player.PrimaryPosition,
+            player.Age,
+            player.TraitFocus,
+            player.FoundByScoutName,
+            player.Projection,
+            player.Summary,
+            player.EstimatedBonus,
+            player.ScoutingProgress,
+            player.IsOnTargetList,
+            string.IsNullOrWhiteSpace(player.AssignedScoutName) ? "Unassigned" : player.AssignedScoutName);
+    }
+
+    private string GetScoutAssignmentTargetLabel(TeamFranchiseState teamState, AssistantScoutState scout)
+    {
+        return scout.AssignmentMode switch
+        {
+            "Region Search" => $"{scout.Country} / {scout.PositionFocus} / {scout.TraitFocus}",
+            "Player Follow" => teamState.ScoutedPlayers.FirstOrDefault(player => string.Equals(player.ProspectKey, scout.AssignmentTarget, StringComparison.OrdinalIgnoreCase))?.PlayerName ?? "Selected player",
+            _ => "Not assigned"
+        };
+    }
+
+    private void ClearScoutPlayerAssignment(TeamFranchiseState teamState, int slotIndex)
+    {
+        teamState.ScoutedPlayers ??= new List<ScoutedPlayerState>();
+        foreach (var player in teamState.ScoutedPlayers.Where(entry => entry.AssignedScoutSlotIndex == slotIndex))
+        {
+            player.AssignedScoutSlotIndex = null;
+            player.AssignedScoutName = string.Empty;
+        }
+    }
+
+    private int GetScoutDiscoveryDays(string teamName, AssistantScoutState scout)
+    {
+        var random = CreateStableRandom(teamName, scout.SlotIndex.ToString(), scout.Country, scout.PositionFocus, scout.TraitFocus, "discovery-days");
+        return string.Equals(scout.Country, "U.S. High School", StringComparison.OrdinalIgnoreCase)
+            ? 4 + random.Next(0, 4)
+            : 5 + random.Next(0, 5);
+    }
+
+    private void ProcessScoutingBetweenDates(DateTime currentDate, DateTime targetDate)
+    {
+        for (var date = currentDate.Date; date < targetDate.Date; date = date.AddDays(1))
+        {
+            foreach (var team in _leagueData.Teams)
+            {
+                AdvanceScoutDepartmentForDate(team.Name, date);
+            }
+        }
+    }
+
+    private void AdvanceScoutDepartmentForDate(string teamName, DateTime scoutingDate)
+    {
+        var teamState = GetOrCreateTeamState(teamName);
+        EnsureScoutDepartmentInitialized(teamState, teamName);
+
+        foreach (var scout in teamState.AssistantScouts.Where(entry => !string.IsNullOrWhiteSpace(entry.Name)))
+        {
+            switch (scout.AssignmentMode)
+            {
+                case "Region Search":
+                    if (scout.DaysUntilNextDiscovery <= 0)
+                    {
+                        scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(teamName, scout);
+                    }
+
+                    scout.DaysUntilNextDiscovery--;
+                    if (scout.DaysUntilNextDiscovery <= 0)
+                    {
+                        var discoveryIndex = teamState.ScoutedPlayers.Count(player => player.FoundByScoutSlotIndex == scout.SlotIndex);
+                        teamState.ScoutedPlayers.Add(BuildScoutedPlayerDiscovery(teamName, scout, scoutingDate, discoveryIndex));
+                        scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(teamName, scout);
+                    }
+                    break;
+
+                case "Player Follow":
+                    var followedPlayer = teamState.ScoutedPlayers.FirstOrDefault(player => string.Equals(player.ProspectKey, scout.AssignmentTarget, StringComparison.OrdinalIgnoreCase));
+                    if (followedPlayer == null)
+                    {
+                        scout.AssignmentMode = "Unassigned";
+                        scout.AssignmentTarget = string.Empty;
+                        scout.DaysUntilNextDiscovery = 0;
+                        break;
+                    }
+
+                    followedPlayer.AssignedScoutSlotIndex = scout.SlotIndex;
+                    followedPlayer.AssignedScoutName = scout.Name;
+                    if (followedPlayer.ScoutingProgress < 100)
+                    {
+                        var random = CreateStableRandom(teamName, scout.Name, followedPlayer.ProspectKey, scoutingDate.ToString("yyyyMMdd"), "player-follow");
+                        var gain = 8 + random.Next(0, 9);
+                        followedPlayer.ScoutingProgress = Math.Min(100, followedPlayer.ScoutingProgress + gain);
+                    }
+                    break;
+            }
+        }
+    }
+
+    private ScoutedPlayerState BuildScoutedPlayerDiscovery(string teamName, AssistantScoutState scout, DateTime scoutingDate, int discoveryIndex)
+    {
+        var random = CreateStableRandom(teamName, scout.SlotIndex.ToString(), scout.Name, scout.Country, scout.PositionFocus, scout.TraitFocus, scoutingDate.ToString("yyyyMMdd"), discoveryIndex.ToString());
+        var source = string.Equals(scout.Country, "U.S. High School", StringComparison.OrdinalIgnoreCase) ? "High School" : "International";
+        var primaryPosition = ResolveScoutedPosition(scout.PositionFocus, scout.TraitFocus, random);
+        var age = source == "High School" ? 16 + random.Next(0, 3) : 18 + random.Next(0, 5);
+        var playerName = $"{Pick(random, ProspectFirstNames)} {Pick(random, ProspectLastNames)}";
+
+        return new ScoutedPlayerState
+        {
+            ProspectKey = $"{scout.SlotIndex}:{scoutingDate:yyyyMMdd}:{discoveryIndex}:{GetStableHash(playerName + scout.Country)}",
+            PlayerName = playerName,
+            Country = scout.Country,
+            Source = source,
+            PrimaryPosition = primaryPosition,
+            Age = age,
+            TraitFocus = scout.TraitFocus,
+            FoundByScoutName = scout.Name,
+            FoundByScoutSlotIndex = scout.SlotIndex,
+            Projection = BuildProspectProjection(primaryPosition, scout.TraitFocus, random),
+            Summary = BuildProspectSummary(scout.Country, primaryPosition, scout.TraitFocus, source, random),
+            EstimatedBonus = BuildProspectBonusLabel(source, scout.TraitFocus, random),
+            FoundDate = scoutingDate.Date,
+            ScoutingProgress = 22 + random.Next(0, 19)
+        };
+    }
+
+    private static string ResolveScoutedPosition(string positionFocus, string traitFocus, Random random)
+    {
+        if (!string.Equals(positionFocus, "Any", StringComparison.OrdinalIgnoreCase))
+        {
+            return positionFocus switch
+            {
+                "OF" => Pick(random, ["LF", "CF", "RF"]),
+                _ => positionFocus
+            };
+        }
+
+        return traitFocus switch
+        {
+            "Power Pitcher" or "Location Pitcher" or "Workhorse Starter" => Pick(random, ["SP", "SP", "RP"]),
+            "Late-Inning Arm" => "RP",
+            "Power Hitter" => Pick(random, ["1B", "3B", "LF", "RF", "C"]),
+            "Contact Hitter" => Pick(random, ["2B", "SS", "CF", "C"]),
+            "Disciplined Hitter" => Pick(random, ["2B", "3B", "SS", "C"]),
+            "Speed / Defense" => Pick(random, ["CF", "SS", "2B"]),
+            _ => Pick(random, ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "SP", "RP"])
+        };
+    }
+
+    private static string BuildProspectProjection(string primaryPosition, string traitFocus, Random random)
+    {
+        var isPitcher = primaryPosition is "SP" or "RP";
+        if (isPitcher)
+        {
+            return traitFocus switch
+            {
+                "Power Pitcher" => Pick(random, ["Power-arm upside", "Late-inning velocity look", "Explosive mound ceiling"]),
+                "Location Pitcher" => Pick(random, ["Strike-throwing starter look", "Command-first profile", "Polished pitchability arm"]),
+                "Workhorse Starter" => Pick(random, ["Mid-rotation starter frame", "Innings-eating starter look", "Durable rotation projection"]),
+                _ => Pick(random, ["Pitching prospect to monitor", "Project arm with upside", "Interesting bullpen / starter split"])
+            };
+        }
+
+        return traitFocus switch
+        {
+            "Power Hitter" => Pick(random, ["Middle-of-order power upside", "Run-producing bat", "Impact corner bat projection"]),
+            "Contact Hitter" => Pick(random, ["Top-of-order bat-to-ball look", "Line-drive contact profile", "High-average offensive shape"]),
+            "Disciplined Hitter" => Pick(random, ["On-base leaning profile", "Patient offensive approach", "Controlled strike-zone bat"]),
+            "Speed / Defense" => Pick(random, ["Premium athlete profile", "Up-the-middle defender", "Table-setter speed look"]),
+            _ => Pick(random, ["Balanced everyday upside", "Project regular look", "Interesting all-around profile"])
+        };
+    }
+
+    private static string BuildProspectSummary(string country, string primaryPosition, string traitFocus, string source, Random random)
+    {
+        var originText = source == "High School"
+            ? "The body is still filling out, but the athleticism stands out already."
+            : $"The look out of {country} has a little more present polish than most young finds.";
+
+        var skillText = traitFocus switch
+        {
+            "Power Hitter" => Pick(random, ["The raw power jumps in batting practice and he already creates loud contact.", "There is real carry off the barrel and the frame hints at more thump coming."]),
+            "Contact Hitter" => Pick(random, ["He stays on the baseball and has a short, repeatable stroke.", "The barrel feel is advanced and he rarely looks rushed in the box."]),
+            "Disciplined Hitter" => Pick(random, ["He works counts well and does not expand the zone much for his age.", "The at-bat quality is mature and the swing decisions are ahead of schedule."]),
+            "Speed / Defense" => Pick(random, ["The first step and closing speed give him a chance to stay in a premium spot.", "The athleticism is easy to spot and the defensive range already plays."]),
+            "Power Pitcher" => Pick(random, ["The ball comes out with life and the fastball has real force behind it.", "There is clear arm strength here, with the kind of power stuff clubs bet on."]),
+            "Location Pitcher" => Pick(random, ["He repeats the delivery well and works to the edges with confidence.", "The command base is better than you usually see from a young arm."]),
+            "Workhorse Starter" => Pick(random, ["He looks built to hold a starter's workload if the development keeps trending up.", "The frame and tempo suggest he could stay on turn every fifth day."]),
+            "Late-Inning Arm" => Pick(random, ["The effort and finish fit a leverage bullpen look right away.", "There is enough bite and intent to picture him in short bursts late in games."]),
+            _ => Pick(random, ["The overall athlete is worth tracking because several tools could still jump.", "There is enough across-the-board ability here to keep him on the follow list."])
+        };
+
+        var roleText = primaryPosition is "SP" or "RP"
+            ? "The delivery still needs reps, but the mound traits are promising."
+            : "The swing / glove combination still needs reps, but the foundation is worth following.";
+
+        return $"{originText} {skillText} {roleText}";
+    }
+
+    private static string BuildProspectBonusLabel(string source, string traitFocus, Random random)
+    {
+        var baseBonus = source == "High School" ? 180_000 : 450_000;
+        var traitBonus = traitFocus switch
+        {
+            "Power Hitter" or "Power Pitcher" => 250_000,
+            "Workhorse Starter" or "Speed / Defense" => 175_000,
+            _ => 110_000
+        };
+
+        var total = baseBonus + traitBonus + (random.Next(0, 6) * 40_000);
+        return $"Est. bonus: ${total / 1000m:0}K";
+    }
+
+    private static string GetScoutFocusText(string positionFocus, string traitFocus)
+    {
+        var positionText = string.Equals(positionFocus, "Any", StringComparison.OrdinalIgnoreCase) ? "all positions" : positionFocus;
+        return $"{positionText} with a {traitFocus.ToLowerInvariant()} lean";
     }
 
     private void InitializeLineupSlots(TeamFranchiseState teamState, string teamName)
@@ -2572,6 +3364,7 @@ public sealed class FranchiseSession
         SimulateLeagueGamesBetweenDates(currentDate, nextDate);
         ApplyRecoveryBetweenDates(currentDate, nextDate);
         ProcessMonthlyFinanceBetweenDates(currentDate, nextDate);
+        ProcessScoutingBetweenDates(currentDate, nextDate);
         _saveState.CurrentFranchiseDate = nextDate;
         ClearTrainingReportsIfSeasonComplete();
     }

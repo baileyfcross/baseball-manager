@@ -15,6 +15,21 @@ public sealed class ScoutingScreen : GameScreen
     private readonly ButtonControl _backButton;
     private readonly ButtonControl _tradeButton;
     private readonly ButtonControl _filterButton;
+    private readonly ButtonControl _viewModeButton;
+    private readonly ButtonControl _hireScoutButton;
+    private readonly ButtonControl _releaseScoutButton;
+    private readonly ButtonControl _assignRegionButton;
+    private readonly ButtonControl _assignSelectedPlayerButton;
+    private readonly ButtonControl _clearAssignmentButton;
+    private readonly ButtonControl _scoutedPlayersTabButton;
+    private readonly ButtonControl _targetListTabButton;
+    private readonly ButtonControl _toggleTargetButton;
+    private readonly ButtonControl _openScoutReportButton;
+    private readonly ButtonControl _cancelScoutHireButton;
+    private readonly ButtonControl _closeScoutReportPopupButton;
+    private readonly ButtonControl _countryFocusButton;
+    private readonly ButtonControl _positionFocusButton;
+    private readonly ButtonControl _traitFocusButton;
     private readonly ButtonControl _marketPreviousButton;
     private readonly ButtonControl _marketNextButton;
     private readonly ButtonControl _offerPreviousButton;
@@ -26,11 +41,18 @@ public sealed class ScoutingScreen : GameScreen
     private int _marketPageIndex;
     private int _offerPageIndex;
     private bool _showFilterDropdown;
+    private bool _showScoutHirePopup;
+    private bool _showScoutReportPopup;
     private ScoutingFilterMode _filterMode = ScoutingFilterMode.All;
+    private ScoutingViewMode _viewMode = ScoutingViewMode.TradeMarket;
+    private ScoutDropdownType _openScoutDropdown = ScoutDropdownType.None;
     private string _selectedCoachRole = "Scouting Director";
     private Guid? _selectedPlayerId;
     private Guid? _selectedOfferPlayerId;
-    private string _statusMessage = "Pick a coach and a player to hear a scouting read.";
+    private int _selectedScoutSlotIndex;
+    private bool _showTargetList;
+    private string? _selectedProspectKey;
+    private string _statusMessage = "Use the scouting menu to switch between trade targets and high school / international coverage.";
 
     public ScoutingScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -50,6 +72,81 @@ public sealed class ScoutingScreen : GameScreen
         {
             Label = "Filter: All",
             OnClick = () => _showFilterDropdown = !_showFilterDropdown
+        };
+        _viewModeButton = new ButtonControl
+        {
+            Label = "View: Trade Market",
+            OnClick = ToggleViewMode
+        };
+        _hireScoutButton = new ButtonControl
+        {
+            Label = "Hire Scout",
+            OnClick = HireOrRotateSelectedScout
+        };
+        _releaseScoutButton = new ButtonControl
+        {
+            Label = "Release Scout",
+            OnClick = ReleaseSelectedScout
+        };
+        _assignRegionButton = new ButtonControl
+        {
+            Label = "Assign Region Search",
+            OnClick = AssignSelectedScoutToRegion
+        };
+        _assignSelectedPlayerButton = new ButtonControl
+        {
+            Label = "Assign To Player",
+            OnClick = AssignSelectedScoutToSelectedPlayer
+        };
+        _clearAssignmentButton = new ButtonControl
+        {
+            Label = "Clear Assignment",
+            OnClick = ClearSelectedScoutAssignment
+        };
+        _scoutedPlayersTabButton = new ButtonControl
+        {
+            Label = "Scouted Players",
+            OnClick = () => _showTargetList = false
+        };
+        _targetListTabButton = new ButtonControl
+        {
+            Label = "Target List",
+            OnClick = () => _showTargetList = true
+        };
+        _toggleTargetButton = new ButtonControl
+        {
+            Label = "Toggle Target",
+            OnClick = ToggleSelectedProspectTargetStatus
+        };
+        _openScoutReportButton = new ButtonControl
+        {
+            Label = "Open Full Report",
+            OnClick = () => _showScoutReportPopup = true
+        };
+        _cancelScoutHireButton = new ButtonControl
+        {
+            Label = "Cancel",
+            OnClick = () => _showScoutHirePopup = false
+        };
+        _closeScoutReportPopupButton = new ButtonControl
+        {
+            Label = "Close",
+            OnClick = () => _showScoutReportPopup = false
+        };
+        _countryFocusButton = new ButtonControl
+        {
+            Label = "Country",
+            OnClick = () => ToggleScoutDropdown(ScoutDropdownType.Country)
+        };
+        _positionFocusButton = new ButtonControl
+        {
+            Label = "Position Focus",
+            OnClick = () => ToggleScoutDropdown(ScoutDropdownType.Position)
+        };
+        _traitFocusButton = new ButtonControl
+        {
+            Label = "Trait Focus",
+            OnClick = () => ToggleScoutDropdown(ScoutDropdownType.Trait)
         };
         _marketPreviousButton = new ButtonControl
         {
@@ -77,7 +174,13 @@ public sealed class ScoutingScreen : GameScreen
     {
         _ignoreClicksUntilRelease = true;
         _showFilterDropdown = false;
-        RefreshSelections();
+        _showScoutHirePopup = false;
+        _showScoutReportPopup = false;
+        _openScoutDropdown = ScoutDropdownType.None;
+        _showTargetList = false;
+        _viewMode = ScoutingViewMode.AmateurInternational;
+        _statusMessage = "Set your scout assignments and review high school / international reports here.";
+        RefreshAmateurSelections();
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -99,53 +202,80 @@ public sealed class ScoutingScreen : GameScreen
         {
             var mousePosition = currentMouseState.Position;
 
+            if (_showScoutHirePopup)
+            {
+                HandleScoutHirePopupClick(mousePosition);
+                _previousMouseState = currentMouseState;
+                return;
+            }
+
+            if (_showScoutReportPopup)
+            {
+                HandleScoutReportPopupClick(mousePosition);
+                _previousMouseState = currentMouseState;
+                return;
+            }
+
             if (_backButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
-            else if (GetTradeButtonBounds().Contains(mousePosition))
+            else if (_openScoutDropdown != ScoutDropdownType.None)
             {
-                _tradeButton.Click();
+                TrySelectScoutDropdownOption(mousePosition);
             }
-            else if (GetFilterButtonBounds().Contains(mousePosition))
+            else if (GetHireScoutButtonBounds().Contains(mousePosition))
             {
-                _filterButton.Click();
+                _hireScoutButton.Click();
             }
-            else if (_showFilterDropdown)
+            else if (GetReleaseScoutButtonBounds().Contains(mousePosition))
             {
-                TrySelectFilterOption(mousePosition);
+                _releaseScoutButton.Click();
             }
-            else if (GetMarketPreviousBounds().Contains(mousePosition))
+            else if (GetCountryFocusButtonBounds().Contains(mousePosition))
             {
-                _marketPreviousButton.Click();
+                _countryFocusButton.Click();
             }
-            else if (GetMarketNextBounds().Contains(mousePosition))
+            else if (GetPositionFocusButtonBounds().Contains(mousePosition))
             {
-                var maxPage = GetMaxPage(ApplyFilter(_franchiseSession.GetScoutingBoardPlayers()).Count);
-                if (_marketPageIndex < maxPage)
-                {
-                    _marketNextButton.Click();
-                }
+                _positionFocusButton.Click();
             }
-            else if (GetOfferPreviousBounds().Contains(mousePosition))
+            else if (GetTraitFocusButtonBounds().Contains(mousePosition))
             {
-                _offerPreviousButton.Click();
+                _traitFocusButton.Click();
             }
-            else if (GetOfferNextBounds().Contains(mousePosition))
+            else if (GetAssignRegionButtonBounds().Contains(mousePosition))
             {
-                var maxPage = GetMaxPage(_franchiseSession.GetTradeChipPlayers().Count);
-                if (_offerPageIndex < maxPage)
-                {
-                    _offerNextButton.Click();
-                }
+                _assignRegionButton.Click();
             }
-            else if (TrySelectCoach(mousePosition))
+            else if (GetAssignSelectedPlayerButtonBounds().Contains(mousePosition))
+            {
+                _assignSelectedPlayerButton.Click();
+            }
+            else if (GetClearAssignmentButtonBounds().Contains(mousePosition))
+            {
+                _clearAssignmentButton.Click();
+            }
+            else if (GetScoutedPlayersTabBounds().Contains(mousePosition))
+            {
+                _scoutedPlayersTabButton.Click();
+            }
+            else if (GetTargetListTabBounds().Contains(mousePosition))
+            {
+                _targetListTabButton.Click();
+            }
+            else if (GetToggleTargetButtonBounds().Contains(mousePosition))
+            {
+                _toggleTargetButton.Click();
+            }
+            else if (GetOpenScoutReportButtonBounds().Contains(mousePosition))
+            {
+                _openScoutReportButton.Click();
+            }
+            else if (TrySelectAssistantScout(mousePosition))
             {
             }
-            else if (TrySelectMarketPlayer(mousePosition))
-            {
-            }
-            else if (TrySelectOfferPlayer(mousePosition))
+            else if (TrySelectProspect(mousePosition))
             {
             }
         }
@@ -157,40 +287,27 @@ public sealed class ScoutingScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        var coaches = _franchiseSession.GetCoachingStaff();
-        var marketPlayers = ApplyFilter(_franchiseSession.GetScoutingBoardPlayers());
-        var offerPlayers = _franchiseSession.GetTradeChipPlayers();
-        ClampPages(marketPlayers.Count, offerPlayers.Count);
-        RefreshSelections(marketPlayers, offerPlayers, coaches);
-        _filterButton.Label = _showFilterDropdown
-            ? $"Filter: {GetFilterLabel(_filterMode)} ^"
-            : $"Filter: {GetFilterLabel(_filterMode)} v";
-
-        uiRenderer.DrawText("Scouting / Transfers", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText("Scouting", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
-        var filterBounds = GetFilterButtonBounds();
-        uiRenderer.DrawButton(_filterButton.Label, filterBounds, filterBounds.Contains(Mouse.GetState().Position) || _showFilterDropdown ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
-
         uiRenderer.DrawWrappedTextInBounds(
-            "Talk to coaches for plain-English reports, then swap players if you want to make a move.",
-            new Rectangle(168, 112, 560, 40),
+            "Your head scout can oversee up to three area scouts for U.S. high school and international coverage. Click a scout slot, then set the country, position, and trait focus you want them chasing.",
+            new Rectangle(168, 112, Math.Max(720, _viewport.X - 236), 48),
             Color.White,
             uiRenderer.UiSmallFont,
-            2);
+            3);
 
-        DrawCoaches(uiRenderer, coaches);
-        DrawMarketPlayers(uiRenderer, marketPlayers);
-        DrawOfferPlayers(uiRenderer, offerPlayers);
-        DrawReportArea(uiRenderer, coaches, marketPlayers);
+        DrawAmateurScouting(uiRenderer);
 
         var mousePosition = Mouse.GetState().Position;
-        var tradeButtonBounds = GetTradeButtonBounds();
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !_showFilterDropdown && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_tradeButton.Label, tradeButtonBounds, !_showFilterDropdown && tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
 
-        if (_showFilterDropdown)
+        if (_showScoutHirePopup)
         {
-            DrawFilterDropdown(uiRenderer);
+            DrawScoutHirePopup(uiRenderer, mousePosition);
+        }
+        else if (_showScoutReportPopup)
+        {
+            DrawScoutReportPopup(uiRenderer, mousePosition);
         }
     }
 
@@ -372,6 +489,401 @@ public sealed class ScoutingScreen : GameScreen
         RefreshSelections();
     }
 
+    private void ToggleViewMode()
+    {
+        _viewMode = _viewMode == ScoutingViewMode.TradeMarket
+            ? ScoutingViewMode.AmateurInternational
+            : ScoutingViewMode.TradeMarket;
+        _showFilterDropdown = false;
+        _statusMessage = _viewMode == ScoutingViewMode.TradeMarket
+            ? "Back on the league market board. Talk to your coaches and line up trades."
+            : "Amateur and international scouting is active. Set each scout's country, position, and trait focus.";
+        RefreshAmateurSelections();
+    }
+
+    private void HireOrRotateSelectedScout()
+    {
+        _openScoutDropdown = ScoutDropdownType.None;
+        var selectedScout = _franchiseSession.GetScoutDepartment()
+            .FirstOrDefault(entry => !entry.IsHeadScout && entry.SlotIndex == _selectedScoutSlotIndex);
+
+        if (selectedScout == null || selectedScout.IsVacant)
+        {
+            _showScoutHirePopup = true;
+            _statusMessage = "Choose one of the available scouts to fill this open slot.";
+            return;
+        }
+
+        _showScoutHirePopup = false;
+        _statusMessage = string.Equals(selectedScout.AssignmentMode, "Unassigned", StringComparison.OrdinalIgnoreCase)
+            ? "Use the buttons below to assign this scout to a region or a player."
+            : "Use the buttons below to reassign this scout to a new region or player.";
+    }
+
+    private void HandleScoutHirePopupClick(Point mousePosition)
+    {
+        var candidates = _franchiseSession.GetAvailableAssistantScoutCandidates(_selectedScoutSlotIndex);
+        for (var i = 0; i < candidates.Count; i++)
+        {
+            if (!GetScoutHireOptionBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            _showScoutHirePopup = false;
+            _franchiseSession.HireAssistantScout(_selectedScoutSlotIndex, i, out _statusMessage);
+            RefreshAmateurSelections();
+            return;
+        }
+
+        if (GetScoutHireCancelBounds().Contains(mousePosition) || !GetScoutHirePopupBounds().Contains(mousePosition))
+        {
+            _showScoutHirePopup = false;
+        }
+    }
+
+    private void HandleScoutReportPopupClick(Point mousePosition)
+    {
+        if (GetScoutReportPopupCloseBounds().Contains(mousePosition) || !GetScoutReportPopupBounds().Contains(mousePosition))
+        {
+            _showScoutReportPopup = false;
+        }
+    }
+
+    private void AssignSelectedScoutToRegion()
+    {
+        _openScoutDropdown = ScoutDropdownType.None;
+        _statusMessage = _franchiseSession.AssignScoutToRegionSearch(_selectedScoutSlotIndex);
+        RefreshAmateurSelections();
+    }
+
+    private void AssignSelectedScoutToSelectedPlayer()
+    {
+        _openScoutDropdown = ScoutDropdownType.None;
+        if (string.IsNullOrWhiteSpace(_selectedProspectKey))
+        {
+            _statusMessage = "Select a scouted player first, then assign the scout to follow him.";
+            return;
+        }
+
+        _statusMessage = _franchiseSession.AssignScoutToScoutedPlayer(_selectedScoutSlotIndex, _selectedProspectKey);
+        RefreshAmateurSelections();
+    }
+
+    private void ClearSelectedScoutAssignment()
+    {
+        _openScoutDropdown = ScoutDropdownType.None;
+        _statusMessage = _franchiseSession.ClearScoutAssignment(_selectedScoutSlotIndex);
+        RefreshAmateurSelections();
+    }
+
+    private void ToggleSelectedProspectTargetStatus()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedProspectKey))
+        {
+            _statusMessage = "Select a scouted player first.";
+            return;
+        }
+
+        var selectedProspect = _franchiseSession
+            .GetScoutedPlayers()
+            .FirstOrDefault(prospect => string.Equals(prospect.ProspectKey, _selectedProspectKey, StringComparison.OrdinalIgnoreCase));
+
+        _statusMessage = selectedProspect?.IsOnTargetList == true
+            ? _franchiseSession.RemoveScoutedPlayerFromTargetList(_selectedProspectKey)
+            : _franchiseSession.AddScoutedPlayerToTargetList(_selectedProspectKey);
+        RefreshAmateurSelections();
+    }
+
+    private void ToggleScoutDropdown(ScoutDropdownType dropdownType)
+    {
+        _openScoutDropdown = _openScoutDropdown == dropdownType ? ScoutDropdownType.None : dropdownType;
+    }
+
+    private void ReleaseSelectedScout()
+    {
+        _openScoutDropdown = ScoutDropdownType.None;
+        _franchiseSession.ReleaseAssistantScout(_selectedScoutSlotIndex, out _statusMessage);
+        RefreshAmateurSelections();
+    }
+
+    private bool TrySelectScoutDropdownOption(Point mousePosition)
+    {
+        var options = GetOpenScoutDropdownOptions();
+        for (var i = 0; i < options.Count; i++)
+        {
+            if (!GetScoutDropdownOptionBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            _statusMessage = _openScoutDropdown switch
+            {
+                ScoutDropdownType.Country => _franchiseSession.SetAssistantScoutCountry(_selectedScoutSlotIndex, options[i]),
+                ScoutDropdownType.Position => _franchiseSession.SetAssistantScoutPositionFocus(_selectedScoutSlotIndex, options[i]),
+                ScoutDropdownType.Trait => _franchiseSession.SetAssistantScoutTraitFocus(_selectedScoutSlotIndex, options[i]),
+                _ => _statusMessage
+            };
+
+            _openScoutDropdown = ScoutDropdownType.None;
+            RefreshAmateurSelections();
+            return true;
+        }
+
+        _openScoutDropdown = ScoutDropdownType.None;
+        return false;
+    }
+
+    private void DrawScoutDropdown(UiRenderer uiRenderer)
+    {
+        var options = GetOpenScoutDropdownOptions();
+        var selectedValue = GetOpenScoutDropdownSelectedValue();
+        var panelBounds = GetScoutDropdownPanelBounds();
+        uiRenderer.DrawButton(string.Empty, panelBounds, new Color(28, 36, 44), Color.White);
+
+        for (var i = 0; i < options.Count; i++)
+        {
+            var bounds = GetScoutDropdownOptionBounds(i);
+            var isHovered = bounds.Contains(Mouse.GetState().Position);
+            var isSelected = string.Equals(options[i], selectedValue, StringComparison.OrdinalIgnoreCase);
+            var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
+            uiRenderer.DrawButton(options[i], bounds, color, Color.White, uiRenderer.UiSmallFont);
+        }
+    }
+
+    private void DrawScoutHirePopup(UiRenderer uiRenderer, Point mousePosition)
+    {
+        var panelBounds = GetScoutHirePopupBounds();
+        var candidates = _franchiseSession.GetAvailableAssistantScoutCandidates(_selectedScoutSlotIndex);
+
+        uiRenderer.DrawButton(string.Empty, panelBounds, new Color(28, 32, 40), Color.White);
+        uiRenderer.DrawTextInBounds("Hire Scout", new Rectangle(panelBounds.X + 12, panelBounds.Y + 10, panelBounds.Width - 24, 24), Color.Gold, uiRenderer.UiMediumFont, centerHorizontally: true);
+        uiRenderer.DrawWrappedTextInBounds("Pick from the available scout pool for this open slot.", new Rectangle(panelBounds.X + 18, panelBounds.Y + 42, panelBounds.Width - 36, 34), Color.White, uiRenderer.UiSmallFont, 2);
+
+        if (candidates.Count == 0)
+        {
+            uiRenderer.DrawWrappedTextInBounds("No scout candidates are available right now.", new Rectangle(panelBounds.X + 18, panelBounds.Y + 84, panelBounds.Width - 36, 28), Color.White, uiRenderer.UiSmallFont, 2);
+        }
+        else
+        {
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                var candidate = candidates[i];
+                var bounds = GetScoutHireOptionBounds(i);
+                var isHovered = bounds.Contains(mousePosition);
+                var label = $"{candidate.Name} | {candidate.Specialty} | {candidate.Voice}";
+                uiRenderer.DrawButton(Truncate(label, 56), bounds, isHovered ? Color.DarkOliveGreen : Color.SlateGray, Color.White, uiRenderer.UiSmallFont);
+            }
+        }
+
+        var cancelBounds = GetScoutHireCancelBounds();
+        uiRenderer.DrawButton(_cancelScoutHireButton.Label, cancelBounds, cancelBounds.Contains(mousePosition) ? Color.DarkSlateGray : Color.SlateGray, Color.White);
+    }
+
+    private void DrawScoutReportPopup(UiRenderer uiRenderer, Point mousePosition)
+    {
+        var panelBounds = GetScoutReportPopupBounds();
+        var closeBounds = GetScoutReportPopupCloseBounds();
+        var department = _franchiseSession.GetScoutDepartment().Where(entry => !entry.IsHeadScout).OrderBy(entry => entry.SlotIndex).ToList();
+        var selectedScout = department.FirstOrDefault(scout => scout.SlotIndex == _selectedScoutSlotIndex) ?? department.FirstOrDefault();
+        var selectedProspect = GetVisibleProspects().FirstOrDefault(prospect => string.Equals(prospect.ProspectKey, _selectedProspectKey, StringComparison.OrdinalIgnoreCase));
+
+        uiRenderer.DrawButton(string.Empty, panelBounds, new Color(28, 32, 40), Color.White);
+        uiRenderer.DrawTextInBounds("Full Scout Report", new Rectangle(panelBounds.X + 12, panelBounds.Y + 10, panelBounds.Width - 24, 24), Color.Gold, uiRenderer.UiMediumFont, centerHorizontally: true);
+        uiRenderer.DrawWrappedTextInBounds(BuildExpandedScoutReport(selectedScout, selectedProspect), new Rectangle(panelBounds.X + 18, panelBounds.Y + 42, panelBounds.Width - 36, panelBounds.Height - 94), Color.White, uiRenderer.UiSmallFont, 14);
+        uiRenderer.DrawButton(_closeScoutReportPopupButton.Label, closeBounds, closeBounds.Contains(mousePosition) ? Color.DarkSlateGray : Color.SlateGray, Color.White);
+    }
+
+    private IReadOnlyList<string> GetOpenScoutDropdownOptions()
+    {
+        return _openScoutDropdown switch
+        {
+            ScoutDropdownType.Country => _franchiseSession.GetScoutCountryOptions(),
+            ScoutDropdownType.Position => _franchiseSession.GetScoutPositionOptions(),
+            ScoutDropdownType.Trait => _franchiseSession.GetScoutTraitOptions(),
+            _ => []
+        };
+    }
+
+    private string GetOpenScoutDropdownSelectedValue()
+    {
+        var selectedScout = _franchiseSession.GetScoutDepartment()
+            .Where(entry => !entry.IsHeadScout)
+            .FirstOrDefault(scout => scout.SlotIndex == _selectedScoutSlotIndex);
+
+        if (selectedScout == null)
+        {
+            return string.Empty;
+        }
+
+        return _openScoutDropdown switch
+        {
+            ScoutDropdownType.Country => selectedScout.Country,
+            ScoutDropdownType.Position => selectedScout.PositionFocus,
+            ScoutDropdownType.Trait => selectedScout.TraitFocus,
+            _ => string.Empty
+        };
+    }
+
+    private string GetScoutDropdownLabel(string prefix, string value, ScoutDropdownType dropdownType)
+    {
+        var suffix = _openScoutDropdown == dropdownType ? " ^" : " v";
+        return $"{prefix}: {value}{suffix}";
+    }
+
+    private void DrawAmateurScouting(UiRenderer uiRenderer)
+    {
+        var department = _franchiseSession.GetScoutDepartment();
+        var headScout = department.FirstOrDefault(entry => entry.IsHeadScout);
+        var assistantScouts = department.Where(entry => !entry.IsHeadScout).OrderBy(entry => entry.SlotIndex).ToList();
+        var prospects = GetVisibleProspects().ToList();
+        RefreshAmateurSelections(assistantScouts, prospects);
+
+        var mousePosition = Mouse.GetState().Position;
+        var suppressHover = _openScoutDropdown != ScoutDropdownType.None || _showScoutHirePopup || _showScoutReportPopup;
+        var selectedScout = assistantScouts.FirstOrDefault(scout => scout.SlotIndex == _selectedScoutSlotIndex) ?? assistantScouts.FirstOrDefault();
+        var selectedProspect = prospects.FirstOrDefault(prospect => string.Equals(prospect.ProspectKey, _selectedProspectKey, StringComparison.OrdinalIgnoreCase))
+            ?? prospects.FirstOrDefault();
+        var shortReportText = BuildShortScoutReport(selectedScout, selectedProspect);
+
+        var departmentPanelBounds = GetScoutDepartmentPanelBounds();
+        var assignmentPanelBounds = GetScoutAssignmentPanelBounds();
+        var prospectListPanelBounds = GetProspectListPanelBounds();
+        var prospectReportPanelBounds = GetProspectReportPanelBounds();
+
+        uiRenderer.DrawButton(string.Empty, departmentPanelBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawTextInBounds("SCOUTING DEPARTMENT", new Rectangle(departmentPanelBounds.X + 10, departmentPanelBounds.Y + 8, departmentPanelBounds.Width - 20, 18), Color.Gold, uiRenderer.UiSmallFont);
+        if (headScout != null)
+        {
+            uiRenderer.DrawTextInBounds($"Head Scout: {headScout.Name}", new Rectangle(departmentPanelBounds.X + 12, departmentPanelBounds.Y + 32, departmentPanelBounds.Width - 24, 18), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"{headScout.Specialty} | {headScout.Voice}", new Rectangle(departmentPanelBounds.X + 12, departmentPanelBounds.Y + 52, departmentPanelBounds.Width - 24, 18), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawWrappedTextInBounds("Hire up to three scouts under him. They must be assigned before any players can be found.", new Rectangle(departmentPanelBounds.X + 12, departmentPanelBounds.Y + 74, departmentPanelBounds.Width - 24, 34), Color.White, uiRenderer.UiSmallFont, 2);
+        }
+
+        for (var i = 0; i < assistantScouts.Count; i++)
+        {
+            var scout = assistantScouts[i];
+            var bounds = GetAssistantScoutRowBounds(i);
+            var isHovered = !suppressHover && bounds.Contains(mousePosition);
+            var isSelected = scout.SlotIndex == _selectedScoutSlotIndex;
+            var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
+            var label = scout.IsVacant
+                ? $"{scout.Role}: Open Slot"
+                : $"{scout.Role}: {Truncate(scout.Name, 14)} | {Truncate(scout.AssignmentMode, 14)}";
+            uiRenderer.DrawButton(label, bounds, color, Color.White);
+        }
+
+        uiRenderer.DrawButton(string.Empty, assignmentPanelBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawTextInBounds("SELECTED SCOUT", new Rectangle(assignmentPanelBounds.X + 10, assignmentPanelBounds.Y + 8, assignmentPanelBounds.Width - 20, 18), Color.Gold, uiRenderer.UiSmallFont);
+        if (selectedScout != null)
+        {
+            uiRenderer.DrawTextInBounds($"{selectedScout.Role}: {selectedScout.Name}", new Rectangle(assignmentPanelBounds.X + 12, assignmentPanelBounds.Y + 30, assignmentPanelBounds.Width - 24, 18), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"Specialty: {selectedScout.Specialty} | Voice: {selectedScout.Voice}", new Rectangle(assignmentPanelBounds.X + 12, assignmentPanelBounds.Y + 48, assignmentPanelBounds.Width - 24, 18), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"Status: {selectedScout.AssignmentMode}", new Rectangle(assignmentPanelBounds.X + 12, assignmentPanelBounds.Y + 66, assignmentPanelBounds.Width - 24, 16), Color.Goldenrod, uiRenderer.UiSmallFont);
+            uiRenderer.DrawWrappedTextInBounds($"Target: {selectedScout.AssignmentTarget}", new Rectangle(assignmentPanelBounds.X + 12, assignmentPanelBounds.Y + 82, assignmentPanelBounds.Width - 24, 30), Color.White, uiRenderer.UiSmallFont, 2);
+
+            _hireScoutButton.Label = GetScoutPrimaryActionLabel(selectedScout);
+            uiRenderer.DrawButton(_hireScoutButton.Label, GetHireScoutButtonBounds(), !suppressHover && GetHireScoutButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+            uiRenderer.DrawButton(_releaseScoutButton.Label, GetReleaseScoutButtonBounds(), !suppressHover && GetReleaseScoutButtonBounds().Contains(mousePosition) ? Color.DarkRed : Color.Firebrick, Color.White);
+            uiRenderer.DrawButton(GetScoutDropdownLabel("Country", selectedScout.Country, ScoutDropdownType.Country), GetCountryFocusButtonBounds(), !suppressHover && GetCountryFocusButtonBounds().Contains(mousePosition) || _openScoutDropdown == ScoutDropdownType.Country ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+            uiRenderer.DrawButton(GetScoutDropdownLabel("Position", selectedScout.PositionFocus, ScoutDropdownType.Position), GetPositionFocusButtonBounds(), !suppressHover && GetPositionFocusButtonBounds().Contains(mousePosition) || _openScoutDropdown == ScoutDropdownType.Position ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+            uiRenderer.DrawButton(GetScoutDropdownLabel("Trait", selectedScout.TraitFocus, ScoutDropdownType.Trait), GetTraitFocusButtonBounds(), !suppressHover && GetTraitFocusButtonBounds().Contains(mousePosition) || _openScoutDropdown == ScoutDropdownType.Trait ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+            uiRenderer.DrawButton(_assignRegionButton.Label, GetAssignRegionButtonBounds(), !suppressHover && GetAssignRegionButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+            uiRenderer.DrawButton(_assignSelectedPlayerButton.Label, GetAssignSelectedPlayerButtonBounds(), !suppressHover && GetAssignSelectedPlayerButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+            uiRenderer.DrawButton(_clearAssignmentButton.Label, GetClearAssignmentButtonBounds(), !suppressHover && GetClearAssignmentButtonBounds().Contains(mousePosition) ? Color.DarkRed : Color.Firebrick, Color.White);
+
+        }
+
+        uiRenderer.DrawButton(string.Empty, prospectListPanelBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawButton(string.Empty, prospectReportPanelBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawButton(_scoutedPlayersTabButton.Label, GetScoutedPlayersTabBounds(), !_showTargetList ? Color.DarkOliveGreen : Color.SlateGray, Color.White);
+        uiRenderer.DrawButton(_targetListTabButton.Label, GetTargetListTabBounds(), _showTargetList ? Color.DarkOliveGreen : Color.SlateGray, Color.White);
+        uiRenderer.DrawTextInBounds(_showTargetList ? "TARGET LIST" : "SCOUTED PLAYERS", new Rectangle(prospectListPanelBounds.X + 10, prospectListPanelBounds.Y + 44, prospectListPanelBounds.Width - 20, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds("SCOUT REPORT", new Rectangle(prospectReportPanelBounds.X + 10, prospectReportPanelBounds.Y + 8, prospectReportPanelBounds.Width - 20, 18), Color.Gold, uiRenderer.UiSmallFont);
+
+        if (prospects.Count == 0)
+        {
+            var emptyText = _showTargetList
+                ? "No players are on the target list yet. Move scouted players there when they catch your eye."
+                : "No players have been discovered yet. Hire a scout and assign him to a region so reports can start coming in over the next few days.";
+            uiRenderer.DrawWrappedTextInBounds(emptyText, new Rectangle(prospectListPanelBounds.X + 12, prospectListPanelBounds.Y + 72, prospectListPanelBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
+            uiRenderer.DrawButton(_openScoutReportButton.Label, GetOpenScoutReportButtonBounds(), !suppressHover && GetOpenScoutReportButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawWrappedTextInBounds(shortReportText, new Rectangle(prospectReportPanelBounds.X + 12, prospectReportPanelBounds.Y + 66, prospectReportPanelBounds.Width - 24, prospectReportPanelBounds.Height - 78), Color.White, uiRenderer.UiSmallFont, 5);
+            if (_openScoutDropdown != ScoutDropdownType.None)
+            {
+                DrawScoutDropdown(uiRenderer);
+            }
+            return;
+        }
+
+        for (var i = 0; i < prospects.Count; i++)
+        {
+            var prospect = prospects[i];
+            var bounds = GetProspectRowBounds(i);
+            var isHovered = !suppressHover && bounds.Contains(mousePosition);
+            var isSelected = string.Equals(prospect.ProspectKey, _selectedProspectKey, StringComparison.OrdinalIgnoreCase);
+            var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
+            var label = $"{Truncate(prospect.PlayerName, 14)} | {prospect.PrimaryPosition} | {Truncate(prospect.Country, 12)} | {prospect.ScoutingProgress}%";
+            uiRenderer.DrawButton(label, bounds, color, Color.White, uiRenderer.UiSmallFont);
+        }
+
+        if (selectedProspect != null)
+        {
+            _toggleTargetButton.Label = selectedProspect.IsOnTargetList ? "Remove Target" : "Add Target";
+            uiRenderer.DrawButton(_toggleTargetButton.Label, GetToggleTargetButtonBounds(), !suppressHover && GetToggleTargetButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawButton(_openScoutReportButton.Label, GetOpenScoutReportButtonBounds(), !suppressHover && GetOpenScoutReportButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"{selectedProspect.PlayerName} - {selectedProspect.PrimaryPosition}", new Rectangle(prospectReportPanelBounds.X + 12, prospectReportPanelBounds.Y + 62, prospectReportPanelBounds.Width - 24, 18), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"{selectedProspect.Source} | {selectedProspect.Country} | Age {selectedProspect.Age}", new Rectangle(prospectReportPanelBounds.X + 12, prospectReportPanelBounds.Y + 82, prospectReportPanelBounds.Width - 24, 18), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"Found by: {selectedProspect.ScoutName} | Progress: {selectedProspect.ScoutingProgress}%", new Rectangle(prospectReportPanelBounds.X + 12, prospectReportPanelBounds.Y + 102, prospectReportPanelBounds.Width - 24, 18), Color.Goldenrod, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"Assigned scout: {selectedProspect.AssignedScoutName}", new Rectangle(prospectReportPanelBounds.X + 12, prospectReportPanelBounds.Y + 122, prospectReportPanelBounds.Width - 24, 18), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawWrappedTextInBounds(shortReportText, new Rectangle(prospectReportPanelBounds.X + 12, prospectReportPanelBounds.Y + 148, prospectReportPanelBounds.Width - 24, prospectReportPanelBounds.Height - 160), Color.White, uiRenderer.UiSmallFont, 5);
+        }
+
+        if (_openScoutDropdown != ScoutDropdownType.None)
+        {
+            DrawScoutDropdown(uiRenderer);
+        }
+    }
+
+    private bool TrySelectAssistantScout(Point mousePosition)
+    {
+        var assistantScouts = _franchiseSession.GetScoutDepartment().Where(entry => !entry.IsHeadScout).OrderBy(entry => entry.SlotIndex).ToList();
+        for (var i = 0; i < assistantScouts.Count; i++)
+        {
+            if (!GetAssistantScoutRowBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            _openScoutDropdown = ScoutDropdownType.None;
+            _selectedScoutSlotIndex = assistantScouts[i].SlotIndex;
+            _statusMessage = assistantScouts[i].IsVacant
+                ? $"Scout {assistantScouts[i].SlotIndex + 1} is open. Hire a scout, then assign him to a region or player before reports start coming in."
+                : $"{assistantScouts[i].Name}: {assistantScouts[i].AssignmentMode} - {assistantScouts[i].AssignmentTarget}.";
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TrySelectProspect(Point mousePosition)
+    {
+        var prospects = GetVisibleProspects().ToList();
+        for (var i = 0; i < prospects.Count; i++)
+        {
+            if (!GetProspectRowBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            _selectedProspectKey = prospects[i].ProspectKey;
+            _statusMessage = $"{prospects[i].PlayerName} is now highlighted on the amateur scouting board.";
+            return true;
+        }
+
+        return false;
+    }
+
     private void RefreshSelections(IReadOnlyList<ScoutingPlayerCard>? marketPlayers = null, IReadOnlyList<ScoutingPlayerCard>? offerPlayers = null, IReadOnlyList<CoachProfileView>? coaches = null)
     {
         coaches ??= _franchiseSession.GetCoachingStaff();
@@ -396,6 +908,66 @@ public sealed class ScoutingScreen : GameScreen
         ClampPages(marketPlayers.Count, offerPlayers.Count);
     }
 
+    private string BuildShortScoutReport(ScoutAssignmentView? selectedScout, AmateurProspectView? selectedProspect)
+    {
+        if (selectedProspect != null)
+        {
+            return $"{selectedProspect.PlayerName} is {selectedProspect.ScoutingProgress}% scouted. {selectedProspect.Projection}. {selectedProspect.Summary}";
+        }
+
+        if (selectedScout == null || selectedScout.IsVacant)
+        {
+            return "Hire a scout, then assign him to a region or a player to start filling out this report.";
+        }
+
+        return string.Equals(selectedScout.AssignmentMode, "Unassigned", StringComparison.OrdinalIgnoreCase)
+            ? $"{selectedScout.Name} is hired but still waiting for an assignment."
+            : $"{selectedScout.Name} is currently working on {selectedScout.AssignmentTarget}.";
+    }
+
+    private string BuildExpandedScoutReport(ScoutAssignmentView? selectedScout, AmateurProspectView? selectedProspect)
+    {
+        if (selectedProspect != null)
+        {
+            var assignedScout = string.IsNullOrWhiteSpace(selectedProspect.AssignedScoutName) ? "No scout currently assigned" : selectedProspect.AssignedScoutName;
+            return $"Prospect: {selectedProspect.PlayerName} ({selectedProspect.PrimaryPosition}, Age {selectedProspect.Age})\n\nSource: {selectedProspect.Source} in {selectedProspect.Country}.\nProgress: {selectedProspect.ScoutingProgress}% complete.\nFound by: {selectedProspect.ScoutName}.\nActive follow-up: {assignedScout}.\n\nProjection: {selectedProspect.Projection}.\n\nSummary: {selectedProspect.Summary}\n\nBonus note: {selectedProspect.EstimatedBonus}.";
+        }
+
+        if (selectedScout == null || selectedScout.IsVacant)
+        {
+            return "This slot is open. Hire a scout from the candidate popup, then assign him to a region search or to a specific player. New leads take time to appear, and any discovered players remain on your board even if that scout is later released.";
+        }
+
+        var timingNote = string.Equals(selectedScout.AssignmentMode, "Region Search", StringComparison.OrdinalIgnoreCase)
+            ? $"Next lead is expected in about {selectedScout.DaysUntilNextDiscovery} day(s)."
+            : string.Equals(selectedScout.AssignmentMode, "Player Follow", StringComparison.OrdinalIgnoreCase)
+                ? "This scout is deepening an existing player file a little more each day."
+                : "This scout is currently idle and waiting for a new assignment.";
+
+        return $"Scout: {selectedScout.Name}\nSpecialty: {selectedScout.Specialty}\nVoice: {selectedScout.Voice}\nStatus: {selectedScout.AssignmentMode}\nTarget: {selectedScout.AssignmentTarget}\n\n{timingNote}\n\nAssign a region to discover new prospects over time, or assign a scout directly to a player to keep pushing that file toward 100%.";
+    }
+
+    private IReadOnlyList<AmateurProspectView> GetVisibleProspects()
+    {
+        return _franchiseSession.GetScoutedPlayers(_showTargetList);
+    }
+
+    private void RefreshAmateurSelections(IReadOnlyList<ScoutAssignmentView>? assistantScouts = null, IReadOnlyList<AmateurProspectView>? prospects = null)
+    {
+        assistantScouts ??= _franchiseSession.GetScoutDepartment().Where(entry => !entry.IsHeadScout).OrderBy(entry => entry.SlotIndex).ToList();
+        prospects ??= GetVisibleProspects();
+
+        if (assistantScouts.Count > 0 && assistantScouts.All(scout => scout.SlotIndex != _selectedScoutSlotIndex))
+        {
+            _selectedScoutSlotIndex = assistantScouts[0].SlotIndex;
+        }
+
+        if (string.IsNullOrWhiteSpace(_selectedProspectKey) || prospects.All(prospect => !string.Equals(prospect.ProspectKey, _selectedProspectKey, StringComparison.OrdinalIgnoreCase)))
+        {
+            _selectedProspectKey = prospects.FirstOrDefault()?.ProspectKey;
+        }
+    }
+
     private void ClampPages(int marketCount, int offerCount)
     {
         _marketPageIndex = Math.Clamp(_marketPageIndex, 0, GetMaxPage(marketCount));
@@ -407,9 +979,188 @@ public sealed class ScoutingScreen : GameScreen
         return Math.Max(0, (int)Math.Ceiling(totalCount / (double)PageSize) - 1);
     }
 
+    private Rectangle GetViewModeButtonBounds() => new(_viewport.X - 300, 38, 240, 44);
+
     private Rectangle GetFilterButtonBounds() => new(_viewport.X - 520, 40, 200, 44);
 
-    private Rectangle GetTradeButtonBounds() => new(_viewport.X - 300, 38, 240, 44);
+    private string GetScoutPrimaryActionLabel(ScoutAssignmentView? selectedScout)
+    {
+        if (selectedScout == null || selectedScout.IsVacant)
+        {
+            return "Hire Scout";
+        }
+
+        return string.Equals(selectedScout.AssignmentMode, "Unassigned", StringComparison.OrdinalIgnoreCase)
+            ? "Assign Scout"
+            : "Reassign Scout";
+    }
+
+    private Rectangle GetTradeButtonBounds() => new(_viewport.X - 300, 90, 240, 44);
+
+    private Rectangle GetScoutDepartmentPanelBounds() => new(40, 186, Math.Clamp(_viewport.X / 3, 320, 420), 220);
+
+    private Rectangle GetScoutAssignmentPanelBounds()
+    {
+        var departmentPanel = GetScoutDepartmentPanelBounds();
+        var x = departmentPanel.Right + 24;
+        return new Rectangle(x, 186, Math.Max(420, _viewport.X - x - 40), 324);
+    }
+
+    private Rectangle GetAssistantScoutRowBounds(int index)
+    {
+        var panel = GetScoutDepartmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 116 + (index * 34), panel.Width - 24, 28);
+    }
+
+    private Rectangle GetHireScoutButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 108, Math.Max(180, (panel.Width / 2) - 18), 28);
+    }
+
+    private Rectangle GetReleaseScoutButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + panel.Width - Math.Max(180, (panel.Width / 2) - 18) - 12, panel.Y + 108, Math.Max(180, (panel.Width / 2) - 18), 28);
+    }
+
+    private Rectangle GetCountryFocusButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 142, panel.Width - 24, 26);
+    }
+
+    private Rectangle GetPositionFocusButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 174, panel.Width - 24, 26);
+    }
+
+    private Rectangle GetTraitFocusButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 206, panel.Width - 24, 26);
+    }
+
+    private Rectangle GetAssignRegionButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 238, panel.Width - 24, 28);
+    }
+
+    private Rectangle GetAssignSelectedPlayerButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 272, panel.Width - 24, 28);
+    }
+
+    private Rectangle GetClearAssignmentButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 306, panel.Width - 24, 28);
+    }
+
+    private Rectangle GetProspectListPanelBounds()
+    {
+        var top = Math.Max(GetScoutDepartmentPanelBounds().Bottom, GetScoutAssignmentPanelBounds().Bottom) + 20;
+        return new Rectangle(40, top, Math.Clamp(_viewport.X / 2, 420, 560), Math.Max(160, _viewport.Y - top - 40));
+    }
+
+    private Rectangle GetProspectReportPanelBounds()
+    {
+        var listPanel = GetProspectListPanelBounds();
+        var x = listPanel.Right + 24;
+        return new Rectangle(x, listPanel.Y, Math.Max(320, _viewport.X - x - 40), listPanel.Height);
+    }
+
+    private Rectangle GetScoutedPlayersTabBounds()
+    {
+        var panel = GetProspectListPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 8, Math.Max(150, (panel.Width / 2) - 18), 28);
+    }
+
+    private Rectangle GetTargetListTabBounds()
+    {
+        var panel = GetProspectListPanelBounds();
+        return new Rectangle(panel.X + panel.Width - Math.Max(150, (panel.Width / 2) - 18) - 12, panel.Y + 8, Math.Max(150, (panel.Width / 2) - 18), 28);
+    }
+
+    private Rectangle GetProspectRowBounds(int index)
+    {
+        var panel = GetProspectListPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 68 + (index * 30), panel.Width - 24, 26);
+    }
+
+    private Rectangle GetToggleTargetButtonBounds()
+    {
+        var panel = GetProspectReportPanelBounds();
+        var buttonWidth = Math.Max(120, (panel.Width - 36) / 2);
+        return new Rectangle(panel.X + 12, panel.Y + 28, buttonWidth, 28);
+    }
+
+    private Rectangle GetOpenScoutReportButtonBounds()
+    {
+        var panel = GetProspectReportPanelBounds();
+        var buttonWidth = Math.Max(120, (panel.Width - 36) / 2);
+        return new Rectangle(panel.Right - buttonWidth - 12, panel.Y + 28, buttonWidth, 28);
+    }
+
+    private Rectangle GetScoutHirePopupBounds()
+    {
+        var candidates = _franchiseSession.GetAvailableAssistantScoutCandidates(_selectedScoutSlotIndex);
+        var width = Math.Clamp(_viewport.X / 3, 420, 560);
+        var height = Math.Clamp(120 + (candidates.Count * 40), 180, _viewport.Y - 120);
+        return new Rectangle((_viewport.X - width) / 2, Math.Max(96, (_viewport.Y - height) / 2), width, height);
+    }
+
+    private Rectangle GetScoutHireOptionBounds(int index)
+    {
+        var panel = GetScoutHirePopupBounds();
+        return new Rectangle(panel.X + 16, panel.Y + 78 + (index * 36), panel.Width - 32, 30);
+    }
+
+    private Rectangle GetScoutHireCancelBounds()
+    {
+        var panel = GetScoutHirePopupBounds();
+        return new Rectangle(panel.X + 16, panel.Bottom - 40, panel.Width - 32, 24);
+    }
+
+    private Rectangle GetScoutReportPopupBounds()
+    {
+        var width = Math.Clamp((int)(_viewport.X * 0.56f), 460, 760);
+        var height = Math.Clamp((int)(_viewport.Y * 0.48f), 260, 420);
+        return new Rectangle((_viewport.X - width) / 2, (_viewport.Y - height) / 2, width, height);
+    }
+
+    private Rectangle GetScoutReportPopupCloseBounds()
+    {
+        var panel = GetScoutReportPopupBounds();
+        return new Rectangle(panel.X + 16, panel.Bottom - 38, panel.Width - 32, 24);
+    }
+
+    private Rectangle GetScoutDropdownAnchorBounds()
+    {
+        return _openScoutDropdown switch
+        {
+            ScoutDropdownType.Country => GetCountryFocusButtonBounds(),
+            ScoutDropdownType.Position => GetPositionFocusButtonBounds(),
+            ScoutDropdownType.Trait => GetTraitFocusButtonBounds(),
+            _ => Rectangle.Empty
+        };
+    }
+
+    private Rectangle GetScoutDropdownOptionBounds(int index)
+    {
+        var anchor = GetScoutDropdownAnchorBounds();
+        return new Rectangle(anchor.X + 2, anchor.Bottom + 6 + (index * 28), Math.Max(1, anchor.Width - 4), 24);
+    }
+
+    private Rectangle GetScoutDropdownPanelBounds()
+    {
+        var anchor = GetScoutDropdownAnchorBounds();
+        var optionCount = GetOpenScoutDropdownOptions().Count;
+        return new Rectangle(anchor.X, anchor.Bottom + 4, anchor.Width, Math.Max(28, optionCount * 28 + 4));
+    }
 
     private void DrawFilterDropdown(UiRenderer uiRenderer)
     {
@@ -643,5 +1394,19 @@ public sealed class ScoutingScreen : GameScreen
         Pitching,
         LastOps,
         LastEra
+    }
+
+    private enum ScoutDropdownType
+    {
+        None,
+        Country,
+        Position,
+        Trait
+    }
+
+    private enum ScoutingViewMode
+    {
+        TradeMarket,
+        AmateurInternational
     }
 }

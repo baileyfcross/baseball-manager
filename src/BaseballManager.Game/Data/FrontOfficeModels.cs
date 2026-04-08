@@ -25,6 +25,37 @@ public sealed record CoachScoutingReport(
     string Concern,
     string TransferRecommendation);
 
+public sealed record ScoutAssignmentView(
+    int SlotIndex,
+    string Role,
+    string Name,
+    string Specialty,
+    string Voice,
+    string Country,
+    string PositionFocus,
+    string TraitFocus,
+    string AssignmentMode,
+    string AssignmentTarget,
+    int DaysUntilNextDiscovery,
+    bool IsHeadScout,
+    bool IsVacant);
+
+public sealed record AmateurProspectView(
+    string ProspectKey,
+    string PlayerName,
+    string Country,
+    string Source,
+    string PrimaryPosition,
+    int Age,
+    string TraitFocus,
+    string ScoutName,
+    string Projection,
+    string Summary,
+    string EstimatedBonus,
+    int ScoutingProgress,
+    bool IsOnTargetList,
+    string AssignedScoutName);
+
 public sealed record MedicalPlayerStatus(
     Guid PlayerId,
     string PlayerName,

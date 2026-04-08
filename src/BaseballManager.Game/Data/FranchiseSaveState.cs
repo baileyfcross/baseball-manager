@@ -46,6 +46,10 @@ public sealed class TeamFranchiseState
 
     public List<CoachAssignmentState> CoachingStaff { get; set; } = new();
 
+    public List<AssistantScoutState> AssistantScouts { get; set; } = new();
+
+    public List<ScoutedPlayerState> ScoutedPlayers { get; set; } = new();
+
     public List<TransferRecordState> TransferHistory { get; set; } = new();
 
     public List<TrainingReportState> TrainingReports { get; set; } = new();
@@ -64,6 +68,66 @@ public sealed class CoachAssignmentState
     public string Specialty { get; set; } = string.Empty;
 
     public string Voice { get; set; } = string.Empty;
+}
+
+public sealed class AssistantScoutState
+{
+    public int SlotIndex { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public string Specialty { get; set; } = string.Empty;
+
+    public string Voice { get; set; } = string.Empty;
+
+    public string Country { get; set; } = "U.S. High School";
+
+    public string PositionFocus { get; set; } = "Any";
+
+    public string TraitFocus { get; set; } = "Best Athlete";
+
+    public string AssignmentMode { get; set; } = "Unassigned";
+
+    public string AssignmentTarget { get; set; } = string.Empty;
+
+    public int DaysUntilNextDiscovery { get; set; }
+}
+
+public sealed class ScoutedPlayerState
+{
+    public string ProspectKey { get; set; } = string.Empty;
+
+    public string PlayerName { get; set; } = string.Empty;
+
+    public string Country { get; set; } = string.Empty;
+
+    public string Source { get; set; } = string.Empty;
+
+    public string PrimaryPosition { get; set; } = string.Empty;
+
+    public int Age { get; set; }
+
+    public string TraitFocus { get; set; } = string.Empty;
+
+    public string FoundByScoutName { get; set; } = string.Empty;
+
+    public int FoundByScoutSlotIndex { get; set; } = -1;
+
+    public string Projection { get; set; } = string.Empty;
+
+    public string Summary { get; set; } = string.Empty;
+
+    public string EstimatedBonus { get; set; } = string.Empty;
+
+    public DateTime FoundDate { get; set; } = DateTime.UtcNow;
+
+    public int ScoutingProgress { get; set; } = 20;
+
+    public bool IsOnTargetList { get; set; }
+
+    public int? AssignedScoutSlotIndex { get; set; }
+
+    public string AssignedScoutName { get; set; } = string.Empty;
 }
 
 public sealed class TransferRecordState
