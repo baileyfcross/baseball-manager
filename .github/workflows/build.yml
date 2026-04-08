@@ -127,3 +127,14 @@ jobs:
             export DYLD_LIBRARY_PATH="$HOME/.local/lib:$(brew --prefix freetype)/lib:${DYLD_LIBRARY_PATH:-}"
           fi
           dotnet build BaseballManager.sln --configuration Release --no-restore
+
+      - name: Run unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            export LD_LIBRARY_PATH="$HOME/.local/lib:${LD_LIBRARY_PATH:-}"
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            export DYLD_LIBRARY_PATH="$HOME/.local/lib:$(brew --prefix freetype)/lib:${DYLD_LIBRARY_PATH:-}"
+          fi
+          dotnet test BaseballManager.sln --configuration Release --no-build --verbosity normal

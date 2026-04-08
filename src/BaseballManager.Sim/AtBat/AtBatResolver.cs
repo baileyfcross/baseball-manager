@@ -198,12 +198,15 @@ public sealed class AtBatResolver
             description = $"{description} {transitionText}";
         }
 
+        var isBallInPlay = !outcome.IsWalk
+            && !string.Equals(outcome.Code, "Strikeout", StringComparison.OrdinalIgnoreCase);
+
         return new ResultEvent
         {
             Code = outcome.Code,
             Description = description.Trim(),
             EndsPlateAppearance = true,
-            IsBallInPlay = true,
+            IsBallInPlay = isBallInPlay,
             CountsAsAtBat = !outcome.IsWalk,
             CountsAsHit = outcome.CountsAsHit,
             IsWalk = outcome.IsWalk,
