@@ -117,12 +117,19 @@ public sealed class FranchiseSession
 
     public TeamPracticeFocus GetPracticeFocus(DateTime? date = null)
     {
-        if (SelectedTeam == null)
+        return SelectedTeam == null
+            ? TeamPracticeFocus.Balanced
+            : GetPracticeFocus(SelectedTeam.Name, date);
+    }
+
+    private TeamPracticeFocus GetPracticeFocus(string teamName, DateTime? date = null)
+    {
+        if (string.IsNullOrWhiteSpace(teamName))
         {
             return TeamPracticeFocus.Balanced;
         }
 
-        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        var teamState = GetOrCreateTeamState(teamName);
         if (date.HasValue && teamState.PracticeFocusOverrides.TryGetValue(BuildPracticeDateKey(date.Value), out var dateSpecificFocus))
         {
             return dateSpecificFocus;
@@ -133,12 +140,13 @@ public sealed class FranchiseSession
 
     public bool HasCustomPracticeFocus(DateTime date)
     {
-        if (SelectedTeam == null)
-        {
-            return false;
-        }
+        return SelectedTeam != null && HasCustomPracticeFocus(SelectedTeam.Name, date);
+    }
 
-        return GetOrCreateTeamState(SelectedTeam.Name).PracticeFocusOverrides.ContainsKey(BuildPracticeDateKey(date));
+    private bool HasCustomPracticeFocus(string teamName, DateTime date)
+    {
+        return !string.IsNullOrWhiteSpace(teamName) &&
+               GetOrCreateTeamState(teamName).PracticeFocusOverrides.ContainsKey(BuildPracticeDateKey(date));
     }
 
     public string CyclePracticeFocus(int direction, DateTime? targetDate = null)
@@ -728,6 +736,29 @@ public sealed class FranchiseSession
             .ToList();
     }
 
+    public IReadOnlyList<TeamStandingView> GetStandings()
+    {
+        return _leagueData.Teams
+            .Select(team =>
+            {
+                var summary = GetTeamRecordSummary(team.Name);
+                return new TeamStandingView(
+                    team.Name,
+                    team.Abbreviation,
+                    team.League,
+                    team.Division,
+                    summary.Wins,
+                    summary.Losses,
+                    summary.Streak);
+            })
+            .OrderBy(team => team.League)
+            .ThenBy(team => team.Division)
+            .ThenByDescending(team => team.Wins)
+            .ThenBy(team => team.Losses)
+            .ThenBy(team => team.TeamName)
+            .ToList();
+    }
+
     public string AdjustBudgetAllocation(string budgetKey, int direction)
     {
         if (SelectedTeam == null)
@@ -799,18 +830,12 @@ public sealed class FranchiseSession
 
     private List<ScheduleImportDto> GetRemainingScheduledGamesForDate(DateTime date)
     {
-        if (SelectedTeam == null)
-        {
-            return [];
-        }
-
         return _leagueData.Schedule
             .Where(game =>
                 !IsScheduledGameCompleted(game) &&
-                game.Date.Date == date.Date &&
-                (string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase)))
+                game.Date.Date == date.Date)
             .OrderBy(game => game.GameNumber ?? 1)
+            .ThenBy(game => game.HomeTeamName)
             .ToList();
     }
 
@@ -824,40 +849,51 @@ public sealed class FranchiseSession
 
         var currentDate = GetCurrentFranchiseDate().Date;
         var todaysGames = GetRemainingScheduledGamesForDate(currentDate);
-        if (todaysGames.Count > 0)
-        {
-            var gameSummaries = new List<string>();
-            foreach (var game in todaysGames)
-            {
-                if (!TrySimulateScheduledGame(game, advanceDateAfterGame: false, out var gameSummary))
-                {
-                    statusMessage = gameSummary;
-                    return false;
-                }
+        var gameSummaries = new List<string>();
 
-                gameSummaries.Add(gameSummary);
+        foreach (var game in todaysGames)
+        {
+            if (!TrySimulateScheduledGame(game, advanceDateAfterGame: false, out var gameSummary))
+            {
+                statusMessage = gameSummary;
+                return false;
             }
 
-            AdvanceFranchiseDateTo(currentDate.AddDays(1));
-            ClearLiveMatchState(LiveMatchMode.Franchise);
-            Save();
-            statusMessage = $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)}";
-            return true;
+            if (string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                gameSummaries.Add(gameSummary);
+            }
         }
 
-        if (TryGetPracticeSessionInfo(currentDate, out var practiceSession))
-        {
-            var developmentResults = ApplyPracticeDevelopmentForDate(currentDate, practiceSession.Focus);
-            StoreTrainingReport(currentDate, practiceSession, developmentResults);
-            AdvanceFranchiseDateTo(currentDate.AddDays(1));
-            Save();
-            statusMessage = BuildPracticeDevelopmentReport(currentDate, practiceSession, developmentResults);
-            return true;
-        }
+        var hasPractice = TryGetPracticeSessionInfo(currentDate, out var practiceSession);
+        var developmentResults = ApplyPracticeDevelopmentAcrossLeague(currentDate, SelectedTeam.Name);
 
         AdvanceFranchiseDateTo(currentDate.AddDays(1));
+        ClearLiveMatchState(LiveMatchMode.Franchise);
         Save();
-        statusMessage = $"Advanced through {currentDate:ddd, MMM d}. No game or full-team workout was on the calendar.";
+
+        if (gameSummaries.Count > 0)
+        {
+            var otherGameCount = Math.Max(0, todaysGames.Count - gameSummaries.Count);
+            statusMessage = otherGameCount > 0
+                ? $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)} Around the league, {otherGameCount} other game(s) were played."
+                : $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)}";
+            return true;
+        }
+
+        if (hasPractice)
+        {
+            var practiceSummary = BuildPracticeDevelopmentReport(currentDate, practiceSession, developmentResults);
+            statusMessage = todaysGames.Count > 0
+                ? $"{practiceSummary} Around the league, {todaysGames.Count} game(s) were played."
+                : practiceSummary;
+            return true;
+        }
+
+        statusMessage = todaysGames.Count > 0
+            ? $"Advanced through {currentDate:ddd, MMM d}. {todaysGames.Count} league game(s) were played."
+            : $"Advanced through {currentDate:ddd, MMM d}. No game or full-team workout was on the calendar.";
         return true;
     }
 
@@ -2403,6 +2439,7 @@ public sealed class FranchiseSession
             return;
         }
 
+        SimulateLeagueGamesBetweenDates(currentDate, nextDate);
         ApplyRecoveryBetweenDates(currentDate, nextDate);
         ProcessMonthlyFinanceBetweenDates(currentDate, nextDate);
         _saveState.CurrentFranchiseDate = nextDate;
@@ -2432,6 +2469,22 @@ public sealed class FranchiseSession
         }
     }
 
+    private void SimulateLeagueGamesBetweenDates(DateTime currentDate, DateTime targetDate)
+    {
+        for (var date = currentDate.Date.AddDays(1); date < targetDate.Date; date = date.AddDays(1))
+        {
+            SimulateRemainingLeagueGamesForDate(date);
+        }
+    }
+
+    private void SimulateRemainingLeagueGamesForDate(DateTime date)
+    {
+        foreach (var game in GetRemainingScheduledGamesForDate(date))
+        {
+            TrySimulateScheduledGame(game, advanceDateAfterGame: false, out _);
+        }
+    }
+
     private void ProcessEconomyForCompletedGame(MatchState finalState, ScheduleImportDto scheduledGame)
     {
         var homeWon = finalState.HomeTeam.Runs > finalState.AwayTeam.Runs;
@@ -2455,8 +2508,14 @@ public sealed class FranchiseSession
 
     private double GetTeamWinningPercentage(string teamName)
     {
-        var wins = 0;
-        var losses = 0;
+        var summary = GetTeamRecordSummary(teamName);
+        var totalGames = summary.Wins + summary.Losses;
+        return totalGames == 0 ? 0.5d : summary.Wins / (double)totalGames;
+    }
+
+    private TeamRecordSummary GetTeamRecordSummary(string teamName)
+    {
+        var results = new List<TeamGameResult>();
 
         foreach (var entry in _saveState.CompletedScheduleGameResults)
         {
@@ -2468,33 +2527,62 @@ public sealed class FranchiseSession
 
             var homeTeamName = parts[1];
             var awayTeamName = parts[2];
+            var isHomeTeam = string.Equals(homeTeamName, teamName, StringComparison.OrdinalIgnoreCase);
+            var isAwayTeam = string.Equals(awayTeamName, teamName, StringComparison.OrdinalIgnoreCase);
+            if (!isHomeTeam && !isAwayTeam)
+            {
+                continue;
+            }
+
             var result = entry.Value;
-            if (string.Equals(homeTeamName, teamName, StringComparison.OrdinalIgnoreCase))
-            {
-                if (result.HomeRuns >= result.AwayRuns)
-                {
-                    wins++;
-                }
-                else
-                {
-                    losses++;
-                }
-            }
-            else if (string.Equals(awayTeamName, teamName, StringComparison.OrdinalIgnoreCase))
-            {
-                if (result.AwayRuns >= result.HomeRuns)
-                {
-                    wins++;
-                }
-                else
-                {
-                    losses++;
-                }
-            }
+            var wonGame = isHomeTeam
+                ? result.HomeRuns >= result.AwayRuns
+                : result.AwayRuns >= result.HomeRuns;
+
+            var gameNumber = int.TryParse(parts[3], out var parsedGameNumber) ? parsedGameNumber : 1;
+            var gameDate = DateTime.TryParseExact(
+                parts[0],
+                "yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out var parsedDate)
+                ? parsedDate
+                : DateTime.MinValue;
+
+            results.Add(new TeamGameResult(gameDate, gameNumber, wonGame));
         }
 
-        var totalGames = wins + losses;
-        return totalGames == 0 ? 0.5d : wins / (double)totalGames;
+        var wins = results.Count(result => result.WonGame);
+        var losses = results.Count - wins;
+        var streak = GetStreakLabel(results);
+        return new TeamRecordSummary(wins, losses, streak);
+    }
+
+    private static string GetStreakLabel(IReadOnlyList<TeamGameResult> results)
+    {
+        if (results.Count == 0)
+        {
+            return "-";
+        }
+
+        var ordered = results
+            .OrderByDescending(result => result.Date)
+            .ThenByDescending(result => result.GameNumber)
+            .ToList();
+
+        var latestWonGame = ordered[0].WonGame;
+        var streakCount = 0;
+        foreach (var result in ordered)
+        {
+            if (result.WonGame != latestWonGame)
+            {
+                break;
+            }
+
+            streakCount++;
+        }
+
+        return $"{(latestWonGame ? "W" : "L")}{streakCount}";
     }
 
     private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)
@@ -2693,6 +2781,7 @@ public sealed class FranchiseSession
 
         if (advanceDateAfterGame)
         {
+            SimulateRemainingLeagueGamesForDate(gameToMark.Date.Date);
             AdvanceFranchiseDateToNextUnplayedGame();
         }
     }
@@ -2905,31 +2994,48 @@ public sealed class FranchiseSession
 
     private void ApplyPracticeDevelopmentBetweenDates(DateTime currentDate, DateTime targetDate)
     {
-        if (SelectedTeam == null)
+        var reportTeamName = SelectedTeam?.Name;
+        foreach (var practiceDate in Enumerable.Range(1, Math.Max(0, (targetDate.Date - currentDate.Date).Days - 1))
+                     .Select(offset => currentDate.Date.AddDays(offset)))
         {
-            return;
+            ApplyPracticeDevelopmentAcrossLeague(practiceDate, reportTeamName);
         }
+    }
 
-        for (var practiceDate = currentDate.Date.AddDays(1); practiceDate < targetDate.Date; practiceDate = practiceDate.AddDays(1))
+    private IReadOnlyList<string> GetLeagueTeamNames()
+    {
+        return _leagueData.Teams
+            .Select(team => team.Name)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private IReadOnlyList<PracticeDevelopmentResult> ApplyPracticeDevelopmentAcrossLeague(DateTime practiceDate, string? reportTeamName = null)
+    {
+        List<PracticeDevelopmentResult> reportResults = [];
+
+        foreach (var teamName in GetLeagueTeamNames())
         {
-            if (!TryGetPracticeSessionInfo(practiceDate, out var practiceSession))
+            if (!TryGetPracticeSessionInfo(teamName, practiceDate, out var practiceSession))
             {
                 continue;
             }
 
-            var developmentResults = ApplyPracticeDevelopmentForDate(practiceDate, practiceSession.Focus);
-            StoreTrainingReport(practiceDate, practiceSession, developmentResults);
+            var developmentResults = ApplyPracticeDevelopmentForDate(teamName, practiceDate, practiceSession.Focus);
+            if (!string.IsNullOrWhiteSpace(reportTeamName) && string.Equals(teamName, reportTeamName, StringComparison.OrdinalIgnoreCase))
+            {
+                reportResults = developmentResults.ToList();
+                StoreTrainingReport(practiceDate, practiceSession, reportResults);
+            }
         }
+
+        return reportResults;
     }
 
-    private IReadOnlyList<PracticeDevelopmentResult> ApplyPracticeDevelopmentForDate(DateTime practiceDate, TeamPracticeFocus focus)
+    private IReadOnlyList<PracticeDevelopmentResult> ApplyPracticeDevelopmentForDate(string teamName, DateTime practiceDate, TeamPracticeFocus focus)
     {
-        if (SelectedTeam == null)
-        {
-            return [];
-        }
-
-        var roster = GetSelectedTeamRoster();
+        var roster = GetTeamRoster(teamName);
         if (roster.Count == 0)
         {
             return [];
@@ -2938,7 +3044,7 @@ public sealed class FranchiseSession
         var results = new List<PracticeDevelopmentResult>();
         foreach (var player in roster)
         {
-            var result = ApplyPracticeDevelopment(player, focus, practiceDate);
+            var result = ApplyPracticeDevelopment(player, teamName, focus, practiceDate);
             if (result.HasValue)
             {
                 results.Add(result.Value);
@@ -2948,7 +3054,7 @@ public sealed class FranchiseSession
         return results;
     }
 
-    private PracticeDevelopmentResult? ApplyPracticeDevelopment(FranchiseRosterEntry player, TeamPracticeFocus focus, DateTime practiceDate)
+    private PracticeDevelopmentResult? ApplyPracticeDevelopment(FranchiseRosterEntry player, string teamName, TeamPracticeFocus focus, DateTime practiceDate)
     {
         if (!IsPlayerEligibleForPracticeDevelopment(player.PrimaryPosition, focus))
         {
@@ -2957,12 +3063,9 @@ public sealed class FranchiseSession
 
         var random = CreateStableRandom(player.PlayerId.ToString(), "practice-growth", practiceDate.ToString("yyyyMMdd"), focus.ToString(), player.PrimaryPosition);
         var ratingGain = RollPracticeDevelopmentGain(random);
-        if (SelectedTeam != null)
-        {
-            var economy = GetOrCreateTeamState(SelectedTeam.Name).Economy;
-            var developmentMultiplier = FranchiseEconomyEffects.GetDevelopmentMultiplier(economy.BudgetAllocation.PlayerDevelopmentBudget, economy.FacilitiesLevel);
-            ratingGain = RoundToHalfPoint(Math.Clamp(ratingGain * developmentMultiplier, 0d, 3d));
-        }
+        var economy = GetOrCreateTeamState(teamName).Economy;
+        var developmentMultiplier = FranchiseEconomyEffects.GetDevelopmentMultiplier(economy.BudgetAllocation.PlayerDevelopmentBudget, economy.FacilitiesLevel);
+        ratingGain = RoundToHalfPoint(Math.Clamp(ratingGain * developmentMultiplier, 0d, 1.5d));
 
         if (ratingGain <= 0d)
         {
@@ -2978,15 +3081,21 @@ public sealed class FranchiseSession
     private bool TryGetPracticeSessionInfo(DateTime practiceDate, out PracticeSessionInfo practiceSession)
     {
         practiceSession = default;
-        if (SelectedTeam == null)
+        return SelectedTeam != null && TryGetPracticeSessionInfo(SelectedTeam.Name, practiceDate, out practiceSession);
+    }
+
+    private bool TryGetPracticeSessionInfo(string teamName, DateTime practiceDate, out PracticeSessionInfo practiceSession)
+    {
+        practiceSession = default;
+        if (string.IsNullOrWhiteSpace(teamName))
         {
             return false;
         }
 
         var teamGames = _leagueData.Schedule
             .Where(game =>
-                string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+                string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase))
             .OrderBy(game => game.Date)
             .ThenBy(game => game.GameNumber)
             .ToList();
@@ -3004,14 +3113,14 @@ public sealed class FranchiseSession
             return false;
         }
 
-        var focus = GetPracticeFocus(practiceDate);
+        var focus = GetPracticeFocus(teamName, practiceDate);
         if (practiceDate.Date < firstGameDate)
         {
             practiceSession = new PracticeSessionInfo(focus, false, true);
             return true;
         }
 
-        var hasCustomPracticeFocus = HasCustomPracticeFocus(practiceDate);
+        var hasCustomPracticeFocus = HasCustomPracticeFocus(teamName, practiceDate);
         var previousGame = teamGames.Where(game => game.Date.Date < practiceDate.Date).OrderByDescending(game => game.Date).FirstOrDefault();
         var nextGame = teamGames.Where(game => game.Date.Date > practiceDate.Date).OrderBy(game => game.Date).FirstOrDefault();
         var daysSinceLastGame = previousGame == null ? 99 : (practiceDate.Date - previousGame.Date.Date).Days;
@@ -3171,17 +3280,17 @@ public sealed class FranchiseSession
     private static double RollPracticeDevelopmentGain(Random random)
     {
         var roll = random.NextDouble();
-        if (roll < 0.125d)
-        {
-            return 2d;
-        }
-
-        if (roll < 0.375d)
+        if (roll < 0.0625d)
         {
             return 1d;
         }
 
-        return roll < 0.875d ? 0.5d : 0d;
+        if (roll < 0.1875d)
+        {
+            return 0.5d;
+        }
+
+        return roll < 0.4375d ? 0.5d : 0d;
     }
 
     private static PracticeDevelopmentAttribute PickPracticeDevelopmentAttribute(Random random, TeamPracticeFocus focus, string primaryPosition)
@@ -3656,6 +3765,10 @@ public sealed class FranchiseSession
     private readonly record struct PracticeSessionInfo(TeamPracticeFocus Focus, bool IsLightWorkout, bool IsSpringTraining);
 
     private readonly record struct PracticeDevelopmentResult(string CoachRole, string PlayerName, string PrimaryPosition, PracticeDevelopmentAttribute Attribute, double Amount);
+
+    private readonly record struct TeamGameResult(DateTime Date, int GameNumber, bool WonGame);
+
+    private readonly record struct TeamRecordSummary(int Wins, int Losses, string Streak);
 
     private sealed record AttributeInsight(string Key, int Rating);
 }

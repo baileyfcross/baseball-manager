@@ -85,3 +85,27 @@ public sealed record RecentPlayerStatsView(
         return value is >= 0 and < 1 ? formatted[1..] : formatted;
     }
 };
+
+public sealed record TeamStandingView(
+    string TeamName,
+    string TeamAbbreviation,
+    string League,
+    string Division,
+    int Wins,
+    int Losses,
+    string Streak)
+{
+    public int GamesPlayed => Wins + Losses;
+
+    public string Record => $"{Wins}-{Losses}";
+
+    public string WinningPercentage
+    {
+        get
+        {
+            var value = GamesPlayed == 0 ? 0d : Wins / (double)GamesPlayed;
+            var formatted = value.ToString("0.000");
+            return value is >= 0 and < 1 ? formatted[1..] : formatted;
+        }
+    }
+};

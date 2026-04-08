@@ -18,14 +18,14 @@ public static class FranchiseEconomyEffects
     {
         var budgetFactor = developmentBudget switch
         {
-            >= 1_000_000m => 1.30d,
-            >= 700_000m => 1.18d,
-            >= 450_000m => 1.08d,
+            >= 1_000_000m => 1.18d,
+            >= 700_000m => 1.10d,
+            >= 450_000m => 1.04d,
             >= 250_000m => 1.00d,
-            _ => 0.90d
+            _ => 0.94d
         };
 
-        var facilitiesFactor = 1d + ((Math.Clamp(facilitiesLevel, 1, 5) - 2) * 0.04d);
+        var facilitiesFactor = 1d + ((Math.Clamp(facilitiesLevel, 1, 5) - 2) * 0.02d);
         return budgetFactor * facilitiesFactor;
     }
 
