@@ -1057,73 +1057,115 @@ public sealed class FranchiseSession
         switch (result.Code)
         {
             case "Walk":
-                AdjustPlayerRatings(batter.Id, ratings =>
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Discipline, 0.12d);
+                if (result.RunsScored > 0)
                 {
-                    ratings.DisciplineRating += 1;
-                    if (result.RunsScored > 0)
-                    {
-                        ratings.ContactRating += 1;
-                    }
-                });
+                    ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Contact, 0.08d);
+                }
                 break;
 
             case "Single":
-                AdjustPlayerRatings(batter.Id, ratings =>
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Contact, 0.10d);
+                if (result.RunsScored > 0)
                 {
-                    ratings.ContactRating += 1;
-                    if (result.RunsScored > 0)
-                    {
-                        ratings.SpeedRating += 1;
-                    }
-                });
+                    ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Speed, 0.08d);
+                }
                 break;
 
             case "Double":
-                AdjustPlayerRatings(batter.Id, ratings =>
-                {
-                    ratings.ContactRating += 1;
-                    ratings.PowerRating += 1;
-                });
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Contact, 0.10d);
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Power, 0.10d);
                 break;
 
             case "Triple":
-                AdjustPlayerRatings(batter.Id, ratings =>
-                {
-                    ratings.ContactRating += 1;
-                    ratings.SpeedRating += 2;
-                });
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Contact, 0.10d);
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Speed, 0.14d);
                 break;
 
             case "HomeRun":
-                AdjustPlayerRatings(batter.Id, ratings =>
-                {
-                    ratings.PowerRating += 2;
-                    ratings.ContactRating += 1;
-                });
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Power, 0.16d);
+                ApplyAgeAdjustedPerformanceGain(batter, PracticeDevelopmentAttribute.Contact, 0.08d);
                 break;
         }
 
         if (result.OutsRecorded > 0)
         {
-            AdjustPlayerRatings(pitcher.Id, ratings =>
-            {
-                ratings.PitchingRating += result.Code == "Strikeout" ? 2 : 1;
-                ratings.DurabilityRating += 1;
-            });
+            ApplyAgeAdjustedPerformanceGain(pitcher, PracticeDevelopmentAttribute.Pitching, result.Code == "Strikeout" ? 0.12d : 0.08d);
+            ApplyAgeAdjustedPerformanceGain(pitcher, PracticeDevelopmentAttribute.Durability, 0.04d);
 
             var fielder = defensiveTeam.FindFielder(result.Fielder);
             if (fielder != null && fielder.Id != pitcher.Id)
             {
-                AdjustPlayerRatings(fielder.Id, ratings =>
+                ApplyAgeAdjustedPerformanceGain(fielder, PracticeDevelopmentAttribute.Fielding, 0.05d);
+                if (result.Code is "Groundout" or "Flyout")
                 {
-                    ratings.FieldingRating += 1;
-                    if (result.Code is "Groundout" or "Flyout")
-                    {
-                        ratings.ArmRating += 1;
-                    }
-                });
+                    ApplyAgeAdjustedPerformanceGain(fielder, PracticeDevelopmentAttribute.Arm, 0.05d);
+                }
             }
         }
+    }
+
+    private void ApplyAgeAdjustedPerformanceGain(MatchPlayerSnapshot player, PracticeDevelopmentAttribute attribute, double baseAmount)
+    {
+        if (baseAmount <= 0d)
+        {
+            return;
+        }
+
+        var multiplier = GetPerformanceDevelopmentMultiplier(player.Age, player.PrimaryPosition is "SP" or "RP");
+        var adjustedAmount = baseAmount * multiplier;
+        if (Math.Abs(adjustedAmount) < 0.01d)
+        {
+            return;
+        }
+
+        AdjustPlayerRatings(player.Id, ratings => ApplyPracticeDevelopmentGain(ratings, attribute, adjustedAmount));
+    }
+
+    private static double GetPerformanceDevelopmentMultiplier(int age, bool isPitcher)
+    {
+        var peakAge = isPitcher ? 30 : 29;
+        if (age <= peakAge - 4)
+        {
+            return 1.10d;
+        }
+
+        if (age <= peakAge)
+        {
+            return 1.00d;
+        }
+
+        if (age <= peakAge + 3)
+        {
+            return 0.70d;
+        }
+
+        if (age <= peakAge + 6)
+        {
+            return 0.35d;
+        }
+
+        if (age <= peakAge + 8)
+        {
+            return 0.15d;
+        }
+
+        if (age <= peakAge + 10)
+        {
+            return 0.00d;
+        }
+
+        if (age <= peakAge + 12)
+        {
+            return -0.25d;
+        }
+
+        if (age <= 39)
+        {
+            return -0.60d;
+        }
+
+        return -0.90d;
     }
 
     public void RecordCompletedGame(MatchState finalState)
@@ -3212,21 +3254,38 @@ public sealed class FranchiseSession
             return null;
         }
 
+        var isPitcher = player.PrimaryPosition is "SP" or "RP";
         var random = CreateStableRandom(player.PlayerId.ToString(), "practice-growth", practiceDate.ToString("yyyyMMdd"), focus.ToString(), player.PrimaryPosition);
         var ratingGain = RollPracticeDevelopmentGain(random);
         var economy = GetOrCreateTeamState(teamName).Economy;
         var developmentMultiplier = FranchiseEconomyEffects.GetDevelopmentMultiplier(economy.BudgetAllocation.PlayerDevelopmentBudget, economy.FacilitiesLevel);
-        ratingGain = RoundToHalfPoint(Math.Clamp(ratingGain * developmentMultiplier, 0d, 1.5d));
+        ratingGain = Math.Clamp(ratingGain * developmentMultiplier, 0d, 1.5d);
+        ratingGain *= GetPracticeGrowthMultiplier(player.Age, isPitcher);
+        ratingGain = RoundToHalfPoint(Math.Clamp(ratingGain, 0d, 1.5d));
 
-        if (ratingGain <= 0d)
+        var attribute = PickPracticeDevelopmentAttribute(random, focus, player.PrimaryPosition);
+        var coachRole = GetPracticeCoachRole(focus, player.PrimaryPosition, attribute);
+
+        if (ratingGain > 0d)
+        {
+            AdjustPlayerRatings(player.PlayerId, ratings => ApplyPracticeDevelopmentGain(ratings, attribute, ratingGain));
+            return new PracticeDevelopmentResult(coachRole, player.PlayerName, player.PrimaryPosition, attribute, ratingGain);
+        }
+
+        var declineChance = GetPracticeDeclineChance(player.Age, isPitcher);
+        if (declineChance <= 0d || random.NextDouble() > declineChance)
         {
             return null;
         }
 
-        var attribute = PickPracticeDevelopmentAttribute(random, focus, player.PrimaryPosition);
-        var coachRole = GetPracticeCoachRole(focus, player.PrimaryPosition, attribute);
-        AdjustPlayerRatings(player.PlayerId, ratings => ApplyPracticeDevelopmentGain(ratings, attribute, ratingGain));
-        return new PracticeDevelopmentResult(coachRole, player.PlayerName, player.PrimaryPosition, attribute, ratingGain);
+        var declineAmount = RollPracticeDeclineAmount(random, player.Age, isPitcher);
+        if (declineAmount <= 0d)
+        {
+            return null;
+        }
+
+        AdjustPlayerRatings(player.PlayerId, ratings => ApplyPracticeDevelopmentGain(ratings, attribute, -declineAmount));
+        return new PracticeDevelopmentResult(coachRole, player.PlayerName, player.PrimaryPosition, attribute, -declineAmount);
     }
 
     private bool TryGetPracticeSessionInfo(DateTime practiceDate, out PracticeSessionInfo practiceSession)
@@ -3359,6 +3418,40 @@ public sealed class FranchiseSession
     private static string DescribePracticeImprovement(PracticeDevelopmentResult result)
     {
         var playerName = GetPracticeReportName(result.PlayerName);
+        if (result.Amount < 0d)
+        {
+            return result.Attribute switch
+            {
+                PracticeDevelopmentAttribute.Contact => result.Amount <= -1d
+                    ? $"{playerName} looked late on most swings"
+                    : $"{playerName} lost a little timing at the plate",
+                PracticeDevelopmentAttribute.Power => result.Amount <= -1d
+                    ? $"{playerName} was not driving the ball like usual"
+                    : $"{playerName} showed less pop in the swing",
+                PracticeDevelopmentAttribute.Discipline => result.Amount <= -1d
+                    ? $"{playerName} chased far more than usual"
+                    : $"{playerName} looked less selective in counts",
+                PracticeDevelopmentAttribute.Speed => result.Amount <= -1d
+                    ? $"{playerName} clearly lost a step today"
+                    : $"{playerName} looked a touch slower out of the box",
+                PracticeDevelopmentAttribute.Fielding => result.Amount <= -1d
+                    ? $"{playerName} had a rough day with glove consistency"
+                    : $"{playerName}'s defensive footwork slipped a bit",
+                PracticeDevelopmentAttribute.Arm => result.Amount <= -1d
+                    ? $"{playerName}'s throws lacked their usual carry"
+                    : $"{playerName}'s arm strength dipped a little",
+                PracticeDevelopmentAttribute.Pitching => result.Amount <= -1d
+                    ? $"{playerName} did not have his normal life on pitches"
+                    : $"{playerName}'s command backed up slightly",
+                PracticeDevelopmentAttribute.Stamina => result.Amount <= -1d
+                    ? $"{playerName} tired out much earlier than expected"
+                    : $"{playerName}'s stamina dipped a bit",
+                _ => result.Amount <= -1d
+                    ? $"{playerName} looked worn down by the workload"
+                    : $"{playerName} looked a little slower to recover"
+            };
+        }
+
         return result.Attribute switch
         {
             PracticeDevelopmentAttribute.Contact => result.Amount >= 2d
@@ -3442,6 +3535,84 @@ public sealed class FranchiseSession
         }
 
         return roll < 0.4375d ? 0.5d : 0d;
+    }
+
+    private static double GetPracticeGrowthMultiplier(int age, bool isPitcher)
+    {
+        var peakAge = isPitcher ? 30 : 29;
+        if (age <= peakAge - 4)
+        {
+            return 1.15d;
+        }
+
+        if (age <= peakAge)
+        {
+            return 1.00d;
+        }
+
+        if (age <= peakAge + 3)
+        {
+            return 0.75d;
+        }
+
+        if (age <= peakAge + 6)
+        {
+            return 0.45d;
+        }
+
+        if (age <= peakAge + 9)
+        {
+            return 0.20d;
+        }
+
+        return 0.05d;
+    }
+
+    private static double GetPracticeDeclineChance(int age, bool isPitcher)
+    {
+        var peakAge = isPitcher ? 30 : 29;
+        if (age <= peakAge + 6)
+        {
+            return 0d;
+        }
+
+        if (age <= peakAge + 8)
+        {
+            return 0.10d;
+        }
+
+        if (age <= peakAge + 10)
+        {
+            return 0.20d;
+        }
+
+        if (age <= peakAge + 12)
+        {
+            return 0.32d;
+        }
+
+        if (age <= 39)
+        {
+            return 0.45d;
+        }
+
+        return 0.60d;
+    }
+
+    private static double RollPracticeDeclineAmount(Random random, int age, bool isPitcher)
+    {
+        var peakAge = isPitcher ? 30 : 29;
+        if (age >= 40)
+        {
+            return random.NextDouble() < 0.45d ? 1.5d : 1d;
+        }
+
+        if (age >= peakAge + 12)
+        {
+            return random.NextDouble() < 0.28d ? 1d : 0.5d;
+        }
+
+        return 0.5d;
     }
 
     private static PracticeDevelopmentAttribute PickPracticeDevelopmentAttribute(Random random, TeamPracticeFocus focus, string primaryPosition)

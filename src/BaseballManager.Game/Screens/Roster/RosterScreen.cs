@@ -272,9 +272,10 @@ public sealed class RosterScreen : GameScreen
                         var row = visibleRows[i];
                         var ratings = row.HiddenRatings;
                         var line = string.Format(
-                            "{0,-12} {1,-3} {2,3} {3,3} {4,4:0.#} {5,4:0.#} {6,4:0.#} {7,4:0.#} {8,4:0.#} {9,4:0.#} {10,4:0.#} {11,4:0.#} {12,4:0.#}",
+                            "{0,-12} {1,-3} {2,3} {3,3} {4,3} {5,4:0.#} {6,4:0.#} {7,4:0.#} {8,4:0.#} {9,4:0.#} {10,4:0.#} {11,4:0.#} {12,4:0.#} {13,4:0.#}",
                             Truncate(row.PlayerName, 12),
                             row.PrimaryPosition,
+                            row.Age,
                             ratings.OverallRating,
                             ratings.AttributeTotal,
                             ratings.ContactExactRating,
@@ -584,6 +585,8 @@ public sealed class RosterScreen : GameScreen
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.HiddenRatings);
+        AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "OVR", 3, RosterViewMode.HiddenRatings);
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "TOT", 3, RosterViewMode.HiddenRatings);
@@ -618,6 +621,8 @@ public sealed class RosterScreen : GameScreen
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.TrainingGrowth);
         AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.TrainingGrowth);
+        AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "TOT", 5, RosterViewMode.TrainingGrowth);
         AppendStatic(headerBuilder, " ");
         AppendColumn(headerBuilder, uiRenderer, "OVR", 4, RosterViewMode.TrainingGrowth);
@@ -633,9 +638,10 @@ public sealed class RosterScreen : GameScreen
         {
             var row = rows[i];
             var line = string.Format(
-                "{0,-18} {1,-3} {2,5} {3,4} {4}",
+                "{0,-18} {1,-3} {2,3} {3,5} {4,4} {5}",
                 Truncate(row.PlayerName, 18),
                 row.PrimaryPosition,
+                row.Age,
                 FormatSignedValue(row.TrainingGrowth.TotalGain),
                 FormatSignedValue(row.TrainingGrowth.OverallGain),
                 Truncate(row.TrainingGrowth.TopDetails, 42));
@@ -870,6 +876,7 @@ public sealed class RosterScreen : GameScreen
         {
             "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
             "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "AGE" => rows.OrderBy(r => r.Age).ToList(),
             "OVR" => rows.OrderBy(r => r.HiddenRatings.OverallRating).ToList(),
             "TOT" => rows.OrderBy(r => r.HiddenRatings.AttributeTotal).ToList(),
             "CON" => rows.OrderBy(r => r.HiddenRatings.ContactExactRating).ToList(),
@@ -891,6 +898,7 @@ public sealed class RosterScreen : GameScreen
         {
             "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
             "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "AGE" => rows.OrderBy(r => r.Age).ToList(),
             "TOT" => rows.OrderBy(r => r.TrainingGrowth.TotalGain).ToList(),
             "OVR" => rows.OrderBy(r => r.TrainingGrowth.OverallGain).ToList(),
             "DETAILS" => rows.OrderBy(r => r.TrainingGrowth.TopDetails).ToList(),

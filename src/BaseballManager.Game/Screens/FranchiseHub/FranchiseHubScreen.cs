@@ -24,6 +24,10 @@ public sealed class FranchiseHubScreen : GameScreen
     private string _statusMessage = "";
 
     private const int ButtonWidth = 240;
+    private const int ButtonColumnGap = 18;
+    private const int PanelHorizontalPadding = 18;
+    private const int PanelVerticalPadding = 18;
+    private const int MenuColumnCount = 2;
 
     public FranchiseHubScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -37,15 +41,16 @@ public sealed class FranchiseHubScreen : GameScreen
         _buttons.Add(new ButtonControl { Label = "Live Match", OnClick = () => StartLiveMatch() });
         _buttons.Add(new ButtonControl { Label = "Sim Day", OnClick = () => SimDay() });
         _buttons.Add(new ButtonControl { Label = "Sim Next Game", OnClick = () => SimNextGame() });
+        _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Training Reports", OnClick = () => _screenManager.TransitionTo(nameof(TrainingReportsScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Standings", OnClick = () => _screenManager.TransitionTo(nameof(StandingsScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Finances", OnClick = () => _screenManager.TransitionTo(nameof(FinancesScreen)) });
+
         _buttons.Add(new ButtonControl { Label = "Roster", OnClick = () => _screenManager.TransitionTo(nameof(RosterScreen)) });
         _buttons.Add(new ButtonControl { Label = "Lineup", OnClick = () => _screenManager.TransitionTo(nameof(LineupScreen)) });
         _buttons.Add(new ButtonControl { Label = "Rotation", OnClick = () => _screenManager.TransitionTo(nameof(RotationScreen)) });
-        _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
-        _buttons.Add(new ButtonControl { Label = "Training Reports", OnClick = () => _screenManager.TransitionTo(nameof(TrainingReportsScreen)) });
         _buttons.Add(new ButtonControl { Label = "Scouting / Transfers", OnClick = () => _screenManager.TransitionTo(nameof(ScoutingScreen)) });
         _buttons.Add(new ButtonControl { Label = "Coaching Staff", OnClick = () => _screenManager.TransitionTo(nameof(CoachingStaffScreen)) });
-        _buttons.Add(new ButtonControl { Label = "Standings", OnClick = () => _screenManager.TransitionTo(nameof(StandingsScreen)) });
-        _buttons.Add(new ButtonControl { Label = "Finances", OnClick = () => _screenManager.TransitionTo(nameof(FinancesScreen)) });
         _buttons.Add(new ButtonControl { Label = "Main Menu", OnClick = () => _screenManager.TransitionTo(nameof(MainMenuScreen)) });
     }
 
@@ -54,9 +59,14 @@ public sealed class FranchiseHubScreen : GameScreen
         var panelBounds = GetMenuPanelBounds(viewportWidth, viewportHeight);
         var buttonHeight = GetButtonHeight(viewportHeight);
         var buttonSpacing = GetButtonSpacing();
-        var width = Math.Min(panelBounds.Width - 24, GetColumnButtonWidth());
-        var x = panelBounds.X + ((panelBounds.Width - width) / 2);
-        var y = panelBounds.Y + 18 + index * (buttonHeight + buttonSpacing);
+        var buttonsPerColumn = GetButtonsPerColumn();
+        var column = buttonsPerColumn == 0 ? 0 : index / buttonsPerColumn;
+        var row = buttonsPerColumn == 0 ? 0 : index % buttonsPerColumn;
+        var width = GetColumnButtonWidth(viewportWidth);
+        var totalButtonsWidth = (width * MenuColumnCount) + ButtonColumnGap;
+        var startX = panelBounds.X + ((panelBounds.Width - totalButtonsWidth) / 2);
+        var x = startX + column * (width + ButtonColumnGap);
+        var y = panelBounds.Y + PanelVerticalPadding + row * (buttonHeight + buttonSpacing);
         return new Rectangle(x, y, width, buttonHeight);
     }
 
@@ -64,8 +74,11 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         var buttonHeight = GetButtonHeight(viewportHeight);
         var buttonSpacing = GetButtonSpacing();
-        var totalHeight = (_buttons.Count * buttonHeight) + (Math.Max(0, _buttons.Count - 1) * buttonSpacing) + 36;
-        var width = Math.Clamp(viewportWidth / 3, 320, 460);
+        var buttonsPerColumn = GetButtonsPerColumn();
+        var totalHeight = (buttonsPerColumn * buttonHeight) + (Math.Max(0, buttonsPerColumn - 1) * buttonSpacing) + (PanelVerticalPadding * 2);
+        var buttonWidth = GetColumnButtonWidth(viewportWidth);
+        var totalButtonsWidth = (buttonWidth * MenuColumnCount) + ButtonColumnGap;
+        var width = totalButtonsWidth + (PanelHorizontalPadding * 2);
         var x = (viewportWidth - width) / 2;
         var y = Math.Max(102, (viewportHeight - totalHeight - 132) / 2);
         return new Rectangle(x, y, width, totalHeight);
@@ -73,20 +86,28 @@ public sealed class FranchiseHubScreen : GameScreen
 
     private int GetButtonHeight(int viewportHeight)
     {
-        var divisor = _buttons.Count >= 10 ? 20 : 16;
+        var divisor = GetButtonsPerColumn() >= 6 ? 18 : 16;
         return Math.Clamp(viewportHeight / divisor, 34, 50);
     }
 
     private int GetButtonSpacing()
     {
-        return _buttons.Count >= 10 ? 6 : 10;
+        return GetButtonsPerColumn() >= 6 ? 8 : 10;
     }
 
-    private int GetColumnButtonWidth()
+    private int GetButtonsPerColumn()
     {
-        return _buttons.Count == 0
+        return _buttons.Count == 0 ? 0 : (int)Math.Ceiling(_buttons.Count / (double)MenuColumnCount);
+    }
+
+    private int GetColumnButtonWidth(int viewportWidth)
+    {
+        var suggestedWidth = _buttons.Count == 0
             ? ButtonWidth
             : _buttons.Max(button => ButtonControl.GetSuggestedWidth(button.Label, ButtonWidth));
+
+        var maxAvailableWidth = Math.Max(ButtonWidth, (viewportWidth - (PanelHorizontalPadding * 2) - ButtonColumnGap - 80) / MenuColumnCount);
+        return Math.Min(suggestedWidth, maxAvailableWidth);
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
