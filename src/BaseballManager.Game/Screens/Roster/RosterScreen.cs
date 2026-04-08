@@ -13,7 +13,8 @@ public sealed class RosterScreen : GameScreen
 {
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly ButtonControl _toggleViewButton;
+    private readonly ButtonControl _viewButton;
+    private readonly ButtonControl _hiddenMenuButton;
     private readonly ButtonControl _filterButton;
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
@@ -21,7 +22,9 @@ public sealed class RosterScreen : GameScreen
     private bool _ignoreClicksUntilRelease = true;
     private RosterViewMode _viewMode;
     private RosterFilterMode _filterMode;
+    private bool _showViewDropdown;
     private bool _showFilterDropdown;
+    private bool _showTrainingGrowthMenu;
     private int _pageIndex;
     private string? _sortColumnStandard;
     private string? _sortColumnSeasonStats;
@@ -29,6 +32,7 @@ public sealed class RosterScreen : GameScreen
     private string? _sortColumnScoutNotes;
     private string? _sortColumnMedicalReport;
     private string? _sortColumnHiddenRatings;
+    private string? _sortColumnTrainingGrowth;
     private bool _sortAscending = true;
     private readonly Dictionary<string, Rectangle> _headerHitBoxes = new();
     private Point _viewport = new(1280, 720);
@@ -44,27 +48,40 @@ public sealed class RosterScreen : GameScreen
             Label = "Back",
             OnClick = () => screenManager.TransitionTo(nameof(FranchiseHubScreen))
         };
-        _toggleViewButton = new ButtonControl
+        _viewButton = new ButtonControl
         {
-            Label = "Season Stats",
+            Label = "View: Roster",
             OnClick = () =>
             {
-                _viewMode = _viewMode switch
+                _showViewDropdown = !_showViewDropdown;
+                if (_showViewDropdown)
                 {
-                    RosterViewMode.Standard => RosterViewMode.SeasonStats,
-                    RosterViewMode.SeasonStats => RosterViewMode.LastSeasonStats,
-                    RosterViewMode.LastSeasonStats => RosterViewMode.ScoutNotes,
-                    RosterViewMode.ScoutNotes => RosterViewMode.MedicalReport,
-                    RosterViewMode.MedicalReport => RosterViewMode.HiddenRatings,
-                    _ => RosterViewMode.Standard
-                };
+                    _showFilterDropdown = false;
+                }
+            }
+        };
+        _hiddenMenuButton = new ButtonControl
+        {
+            Label = "Training Growth: Off",
+            OnClick = () =>
+            {
+                _showTrainingGrowthMenu = !_showTrainingGrowthMenu;
+                _showViewDropdown = false;
+                _showFilterDropdown = false;
                 _pageIndex = 0;
             }
         };
         _filterButton = new ButtonControl
         {
             Label = "Filter: All Players",
-            OnClick = () => _showFilterDropdown = !_showFilterDropdown
+            OnClick = () =>
+            {
+                _showFilterDropdown = !_showFilterDropdown;
+                if (_showFilterDropdown)
+                {
+                    _showViewDropdown = false;
+                }
+            }
         };
         _previousPageButton = new ButtonControl
         {
@@ -83,7 +100,9 @@ public sealed class RosterScreen : GameScreen
         _pageIndex = 0;
         _viewMode = RosterViewMode.Standard;
         _filterMode = RosterFilterMode.All;
+        _showViewDropdown = false;
         _showFilterDropdown = false;
+        _showTrainingGrowthMenu = false;
         _ignoreClicksUntilRelease = true;
         _sortAscending = true;
     }
@@ -110,13 +129,21 @@ public sealed class RosterScreen : GameScreen
             {
                 _backButton.Click();
             }
-            else if (GetToggleViewBounds().Contains(currentMouseState.Position))
+            else if (GetViewButtonBounds().Contains(currentMouseState.Position))
             {
-                _toggleViewButton.Click();
+                _viewButton.Click();
             }
             else if (GetFilterButtonBounds().Contains(currentMouseState.Position))
             {
                 _filterButton.Click();
+            }
+            else if (GetHiddenMenuButtonBounds().Contains(currentMouseState.Position))
+            {
+                _hiddenMenuButton.Click();
+            }
+            else if (_showViewDropdown)
+            {
+                TrySelectViewOption(currentMouseState.Position);
             }
             else if (_showFilterDropdown)
             {
@@ -128,7 +155,8 @@ public sealed class RosterScreen : GameScreen
             }
             else if (GetNextPageBounds().Contains(currentMouseState.Position))
             {
-                var teamPlayers = ApplySorting(ApplyRosterFilter(GetRosterRows()), _viewMode);
+                var displayMode = _showTrainingGrowthMenu ? RosterViewMode.TrainingGrowth : _viewMode;
+                var teamPlayers = ApplySorting(ApplyRosterFilter(GetRosterRows()), displayMode);
                 var maxPage = Math.Max(0, (int)Math.Ceiling(teamPlayers.Count / (double)PageSize) - 1);
                 if (_pageIndex < maxPage)
                 {
@@ -152,36 +180,39 @@ public sealed class RosterScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        _toggleViewButton.Label = _viewMode switch
-        {
-            RosterViewMode.Standard => "Season Stats",
-            RosterViewMode.SeasonStats => "Last Season",
-            RosterViewMode.LastSeasonStats => "Scout Notes",
-            RosterViewMode.ScoutNotes => "Medical Report",
-            RosterViewMode.MedicalReport => "Secret Attributes",
-            _ => "Show Roster"
-        };
+        var displayMode = _showTrainingGrowthMenu ? RosterViewMode.TrainingGrowth : _viewMode;
+
+        _viewButton.Label = _showViewDropdown
+            ? $"View: {GetViewLabel(_viewMode)} ^"
+            : $"View: {GetViewLabel(_viewMode)} v";
+        _hiddenMenuButton.Label = _showTrainingGrowthMenu ? "Training Growth: On" : "Training Growth: Off";
         _filterButton.Label = _showFilterDropdown
             ? $"Filter: {GetFilterLabel(_filterMode)} ^"
             : $"Filter: {GetFilterLabel(_filterMode)} v";
 
-        var title = _viewMode switch
+        var title = displayMode switch
         {
             RosterViewMode.SeasonStats => "Roster - Season Stats",
             RosterViewMode.LastSeasonStats => "Roster - Last Season",
             RosterViewMode.ScoutNotes => "Roster - Scout Notes",
             RosterViewMode.MedicalReport => "Roster - Medical Report",
             RosterViewMode.HiddenRatings => "Roster - Secret Attributes",
+            RosterViewMode.TrainingGrowth => "Roster - Training Growth",
             _ => "Roster"
         };
 
         uiRenderer.DrawText(title, new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawTextInBounds($"Active Filter: {GetFilterDescription(_filterMode)}", new Rectangle(168, 110, Math.Max(420, _viewport.X - 220), 20), Color.White, uiRenderer.ScoreboardFont);
+        if (displayMode == RosterViewMode.TrainingGrowth)
+        {
+            var trainingWindowText = $"Training window: {_franchiseSession.GetSpringTrainingStartDate():MMM d, yyyy} -> {_franchiseSession.GetCurrentFranchiseDate():MMM d, yyyy}";
+            uiRenderer.DrawTextInBounds(trainingWindowText, new Rectangle(168, 132, Math.Max(520, _viewport.X - 220), 20), Color.Gold, uiRenderer.UiSmallFont);
+        }
 
         var rosterRows = GetRosterRows();
         var filteredRows = ApplyRosterFilter(rosterRows);
-        var sortedRows = ApplySorting(filteredRows, _viewMode);
+        var sortedRows = ApplySorting(filteredRows, displayMode);
 
         if (sortedRows.Count == 0)
         {
@@ -192,7 +223,7 @@ public sealed class RosterScreen : GameScreen
             var startIndex = _pageIndex * PageSize;
             var visibleRows = sortedRows.Skip(startIndex).Take(PageSize).ToList();
 
-            switch (_viewMode)
+            switch (displayMode)
             {
                 case RosterViewMode.SeasonStats:
                     DrawSeasonStatsHeader(uiRenderer, RosterViewMode.SeasonStats);
@@ -259,6 +290,11 @@ public sealed class RosterScreen : GameScreen
                     }
                     break;
 
+                case RosterViewMode.TrainingGrowth:
+                    DrawTrainingGrowthHeader(uiRenderer);
+                    DrawTrainingGrowthRows(uiRenderer, visibleRows);
+                    break;
+
                 default:
                     DrawStandardHeader(uiRenderer);
                     for (var i = 0; i < visibleRows.Count; i++)
@@ -283,11 +319,18 @@ public sealed class RosterScreen : GameScreen
 
         var mousePosition = Mouse.GetState().Position;
         var backBounds = GetBackButtonBounds();
-        var toggleBounds = GetToggleViewBounds();
+        var viewBounds = GetViewButtonBounds();
         var filterBounds = GetFilterButtonBounds();
+        var hiddenMenuBounds = GetHiddenMenuButtonBounds();
         uiRenderer.DrawButton(_backButton.Label, backBounds, backBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_toggleViewButton.Label, toggleBounds, toggleBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+        uiRenderer.DrawButton(_viewButton.Label, viewBounds, viewBounds.Contains(mousePosition) || _showViewDropdown ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
         uiRenderer.DrawButton(_filterButton.Label, filterBounds, filterBounds.Contains(mousePosition) || _showFilterDropdown ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+        uiRenderer.DrawButton(_hiddenMenuButton.Label, hiddenMenuBounds, hiddenMenuBounds.Contains(mousePosition) || _showTrainingGrowthMenu ? Color.DarkGoldenrod : Color.SaddleBrown, Color.White);
+
+        if (_showViewDropdown)
+        {
+            DrawViewDropdown(uiRenderer);
+        }
 
         if (_showFilterDropdown)
         {
@@ -334,13 +377,50 @@ public sealed class RosterScreen : GameScreen
 
     private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
-    private Rectangle GetToggleViewBounds() => new(_viewport.X - 270, 40, 210, 44);
+    private Rectangle GetViewButtonBounds() => new(_viewport.X - 270, 40, 210, 44);
 
     private Rectangle GetFilterButtonBounds() => new(_viewport.X - 520, 40, 230, 44);
+
+    private Rectangle GetHiddenMenuButtonBounds() => new(Math.Max(40, _viewport.X - 750), 40, 210, 44);
 
     private Rectangle GetPreviousPageBounds() => new(GetHeaderX(), _viewport.Y - 76, 120, 40);
 
     private Rectangle GetNextPageBounds() => new(GetHeaderX() + 140, _viewport.Y - 76, 120, 40);
+
+    private void DrawViewDropdown(UiRenderer uiRenderer)
+    {
+        var options = GetViewOptions();
+        for (var i = 0; i < options.Count; i++)
+        {
+            var option = options[i];
+            var bounds = GetViewOptionBounds(i);
+            var isHovered = bounds.Contains(Mouse.GetState().Position);
+            var isSelected = option == _viewMode;
+            var color = isSelected ? Color.DarkSlateBlue : (isHovered ? Color.SteelBlue : Color.SlateGray);
+            uiRenderer.DrawButton(GetViewLabel(option), bounds, color, Color.White, uiRenderer.ScoreboardFont);
+        }
+    }
+
+    private bool TrySelectViewOption(Point mousePosition)
+    {
+        var options = GetViewOptions();
+        for (var i = 0; i < options.Count; i++)
+        {
+            if (!GetViewOptionBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            _viewMode = options[i];
+            _pageIndex = 0;
+            _showViewDropdown = false;
+            _showTrainingGrowthMenu = false;
+            return true;
+        }
+
+        _showViewDropdown = false;
+        return false;
+    }
 
     private void DrawFilterDropdown(UiRenderer uiRenderer)
     {
@@ -376,10 +456,29 @@ public sealed class RosterScreen : GameScreen
         return false;
     }
 
+    private Rectangle GetViewOptionBounds(int index)
+    {
+        var buttonBounds = GetViewButtonBounds();
+        return new Rectangle(buttonBounds.X, buttonBounds.Bottom + 4 + (index * 32), buttonBounds.Width, 28);
+    }
+
     private Rectangle GetFilterOptionBounds(int index)
     {
         var buttonBounds = GetFilterButtonBounds();
         return new Rectangle(buttonBounds.X, buttonBounds.Bottom + 4 + (index * 32), buttonBounds.Width, 28);
+    }
+
+    private static IReadOnlyList<RosterViewMode> GetViewOptions()
+    {
+        return
+        [
+            RosterViewMode.Standard,
+            RosterViewMode.SeasonStats,
+            RosterViewMode.LastSeasonStats,
+            RosterViewMode.ScoutNotes,
+            RosterViewMode.MedicalReport,
+            RosterViewMode.HiddenRatings
+        ];
     }
 
     private static IReadOnlyList<RosterFilterMode> GetFilterOptions()
@@ -510,6 +609,40 @@ public sealed class RosterScreen : GameScreen
         uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
     }
 
+    private void DrawTrainingGrowthHeader(UiRenderer uiRenderer)
+    {
+        _headerHitBoxes.Clear();
+        var headerBuilder = new System.Text.StringBuilder();
+
+        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.TrainingGrowth);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.TrainingGrowth);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "TOT", 5, RosterViewMode.TrainingGrowth);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "OVR", 4, RosterViewMode.TrainingGrowth);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "DETAILS", 42, RosterViewMode.TrainingGrowth);
+
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
+    }
+
+    private void DrawTrainingGrowthRows(UiRenderer uiRenderer, IReadOnlyList<RosterDisplayRow> rows)
+    {
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            var line = string.Format(
+                "{0,-18} {1,-3} {2,5} {3,4} {4}",
+                Truncate(row.PlayerName, 18),
+                row.PrimaryPosition,
+                FormatSignedValue(row.TrainingGrowth.TotalGain),
+                FormatSignedValue(row.TrainingGrowth.OverallGain),
+                Truncate(row.TrainingGrowth.TopDetails, 42));
+            uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
+        }
+    }
+
     private static void AppendStatic(System.Text.StringBuilder builder, string value)
     {
         builder.Append(value);
@@ -560,6 +693,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.ScoutNotes => _sortColumnScoutNotes,
             RosterViewMode.MedicalReport => _sortColumnMedicalReport,
             RosterViewMode.HiddenRatings => _sortColumnHiddenRatings,
+            RosterViewMode.TrainingGrowth => _sortColumnTrainingGrowth,
             _ => null
         };
     }
@@ -579,7 +713,8 @@ public sealed class RosterScreen : GameScreen
 
     private void HandleColumnSort(string columnName)
     {
-        var currentSort = GetCurrentSortColumn(_viewMode);
+        var activeMode = _showTrainingGrowthMenu ? RosterViewMode.TrainingGrowth : _viewMode;
+        var currentSort = GetCurrentSortColumn(activeMode);
 
         if (currentSort == columnName)
         {
@@ -587,7 +722,7 @@ public sealed class RosterScreen : GameScreen
         }
         else
         {
-            switch (_viewMode)
+            switch (activeMode)
             {
                 case RosterViewMode.Standard:
                     _sortColumnStandard = columnName;
@@ -607,6 +742,9 @@ public sealed class RosterScreen : GameScreen
                 case RosterViewMode.HiddenRatings:
                     _sortColumnHiddenRatings = columnName;
                     break;
+                case RosterViewMode.TrainingGrowth:
+                    _sortColumnTrainingGrowth = columnName;
+                    break;
             }
 
             _sortAscending = true;
@@ -620,13 +758,19 @@ public sealed class RosterScreen : GameScreen
         var currentSort = GetCurrentSortColumn(mode);
         if (string.IsNullOrEmpty(currentSort))
         {
-            return mode == RosterViewMode.MedicalReport
-                ? rows.OrderByDescending(row => row.Health.InjuryDaysRemaining)
+            return mode switch
+            {
+                RosterViewMode.MedicalReport => rows.OrderByDescending(row => row.Health.InjuryDaysRemaining)
                     .ThenByDescending(row => row.Health.DaysUntilAvailable)
                     .ThenByDescending(row => row.Health.Fatigue)
                     .ThenBy(row => row.PlayerName)
-                    .ToList()
-                : ApplyDefaultFilterSort(rows);
+                    .ToList(),
+                RosterViewMode.TrainingGrowth => rows.OrderByDescending(row => row.TrainingGrowth.TotalGain)
+                    .ThenByDescending(row => row.TrainingGrowth.OverallGain)
+                    .ThenBy(row => row.PlayerName)
+                    .ToList(),
+                _ => ApplyDefaultFilterSort(rows)
+            };
         }
 
         var sorted = mode switch
@@ -637,6 +781,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.ScoutNotes => SortScoutNoteRows(rows, currentSort),
             RosterViewMode.MedicalReport => SortMedicalRows(rows, currentSort),
             RosterViewMode.HiddenRatings => SortHiddenRatingsRows(rows, currentSort),
+            RosterViewMode.TrainingGrowth => SortTrainingGrowthRows(rows, currentSort),
             _ => rows
         };
 
@@ -740,6 +885,19 @@ public sealed class RosterScreen : GameScreen
         };
     }
 
+    private static List<RosterDisplayRow> SortTrainingGrowthRows(List<RosterDisplayRow> rows, string columnName)
+    {
+        return columnName switch
+        {
+            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
+            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "TOT" => rows.OrderBy(r => r.TrainingGrowth.TotalGain).ToList(),
+            "OVR" => rows.OrderBy(r => r.TrainingGrowth.OverallGain).ToList(),
+            "DETAILS" => rows.OrderBy(r => r.TrainingGrowth.TopDetails).ToList(),
+            _ => rows
+        };
+    }
+
     private List<RosterDisplayRow> ApplyRosterFilter(List<RosterDisplayRow> rows)
     {
         return _filterMode switch
@@ -773,20 +931,25 @@ public sealed class RosterScreen : GameScreen
     private List<RosterDisplayRow> GetRosterRows()
     {
         return _franchiseSession.GetSelectedTeamRoster()
-            .Select(row => new RosterDisplayRow(
-                row.PlayerId,
-                row.PlayerName,
-                row.PrimaryPosition,
-                row.SecondaryPosition,
-                row.Age,
-                row.LineupSlot,
-                row.RotationSlot,
-                _franchiseSession.GetPlayerRatings(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
-                _franchiseSession.GetPlayerSeasonStats(row.PlayerId),
-                _franchiseSession.GetLastSeasonStats(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
-                _franchiseSession.GetPlayerHealth(row.PlayerId),
-                _franchiseSession.GetPlayerMedicalStatus(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
-                _franchiseSession.GetPlayerMedicalReport(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age)))
+            .Select(row =>
+            {
+                var hiddenRatings = _franchiseSession.GetPlayerRatings(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age);
+                return new RosterDisplayRow(
+                    row.PlayerId,
+                    row.PlayerName,
+                    row.PrimaryPosition,
+                    row.SecondaryPosition,
+                    row.Age,
+                    row.LineupSlot,
+                    row.RotationSlot,
+                    hiddenRatings,
+                    _franchiseSession.GetPlayerSeasonStats(row.PlayerId),
+                    _franchiseSession.GetLastSeasonStats(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
+                    _franchiseSession.GetPlayerHealth(row.PlayerId),
+                    _franchiseSession.GetPlayerMedicalStatus(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
+                    _franchiseSession.GetPlayerMedicalReport(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
+                    BuildTrainingGrowthSummary(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age, hiddenRatings));
+            })
             .ToList();
     }
 
@@ -811,6 +974,21 @@ public sealed class RosterScreen : GameScreen
             RosterFilterMode.CurrentEra => RosterFilterMode.LastOps,
             RosterFilterMode.LastOps => RosterFilterMode.LastEra,
             _ => RosterFilterMode.All
+        };
+    }
+
+    private static string GetViewLabel(RosterViewMode viewMode)
+    {
+        return viewMode switch
+        {
+            RosterViewMode.Standard => "Roster",
+            RosterViewMode.SeasonStats => "Season Stats",
+            RosterViewMode.LastSeasonStats => "Last Season",
+            RosterViewMode.ScoutNotes => "Scout Notes",
+            RosterViewMode.MedicalReport => "Medical Report",
+            RosterViewMode.HiddenRatings => "Secret Attributes",
+            RosterViewMode.TrainingGrowth => "Training Growth",
+            _ => "Roster"
         };
     }
 
@@ -852,6 +1030,52 @@ public sealed class RosterScreen : GameScreen
         };
     }
 
+    private static TrainingGrowthSummary BuildTrainingGrowthSummary(Guid playerId, string playerName, string primaryPosition, string secondaryPosition, int age, PlayerHiddenRatingsState currentRatings)
+    {
+        var baseline = PlayerRatingsGenerator.Generate(playerId, playerName, primaryPosition, secondaryPosition, age);
+        var gains = new[]
+        {
+            new AttributeGain("CON", RoundToHalf(currentRatings.ContactExactRating - baseline.ContactExactRating)),
+            new AttributeGain("POW", RoundToHalf(currentRatings.PowerExactRating - baseline.PowerExactRating)),
+            new AttributeGain("DIS", RoundToHalf(currentRatings.DisciplineExactRating - baseline.DisciplineExactRating)),
+            new AttributeGain("SPD", RoundToHalf(currentRatings.SpeedExactRating - baseline.SpeedExactRating)),
+            new AttributeGain("FLD", RoundToHalf(currentRatings.FieldingExactRating - baseline.FieldingExactRating)),
+            new AttributeGain("ARM", RoundToHalf(currentRatings.ArmExactRating - baseline.ArmExactRating)),
+            new AttributeGain("PIT", RoundToHalf(currentRatings.PitchingExactRating - baseline.PitchingExactRating)),
+            new AttributeGain("STA", RoundToHalf(currentRatings.StaminaExactRating - baseline.StaminaExactRating)),
+            new AttributeGain("DUR", RoundToHalf(currentRatings.DurabilityExactRating - baseline.DurabilityExactRating))
+        };
+
+        var positiveGains = gains
+            .Where(gain => gain.Value > 0.01d)
+            .OrderByDescending(gain => gain.Value)
+            .ToList();
+
+        var totalGain = RoundToHalf(positiveGains.Sum(gain => gain.Value));
+        var overallGain = currentRatings.OverallRating - baseline.OverallRating;
+        var details = positiveGains.Count == 0
+            ? "No visible training gains yet"
+            : string.Join(", ", positiveGains.Take(3).Select(gain => $"{gain.Label} {FormatSignedValue(gain.Value)}"));
+
+        return new TrainingGrowthSummary(totalGain, overallGain, details);
+    }
+
+    private static double RoundToHalf(double value)
+    {
+        return Math.Round(value * 2d, MidpointRounding.AwayFromZero) / 2d;
+    }
+
+    private static string FormatSignedValue(double value)
+    {
+        var rounded = RoundToHalf(value);
+        if (Math.Abs(rounded) < 0.01d)
+        {
+            return "0.0";
+        }
+
+        return rounded > 0d ? $"+{rounded:0.#}" : $"{rounded:0.#}";
+    }
+
     private static string Truncate(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength];
@@ -870,7 +1094,12 @@ public sealed class RosterScreen : GameScreen
         PlayerSeasonStatsState LastSeasonStats,
         PlayerHealthState Health,
         string MedicalStatus,
-        string MedicalReport);
+        string MedicalReport,
+        TrainingGrowthSummary TrainingGrowth);
+
+    private sealed record TrainingGrowthSummary(double TotalGain, double OverallGain, string TopDetails);
+
+    private sealed record AttributeGain(string Label, double Value);
 
     private enum RosterViewMode
     {
@@ -879,7 +1108,8 @@ public sealed class RosterScreen : GameScreen
         LastSeasonStats,
         ScoutNotes,
         MedicalReport,
-        HiddenRatings
+        HiddenRatings,
+        TrainingGrowth
     }
 
     private enum RosterFilterMode

@@ -1,4 +1,7 @@
+using BaseballManager.Application.Transactions;
 using BaseballManager.Contracts.ImportDtos;
+using BaseballManager.Core.Economy;
+using BaseballManager.Sim.Economy;
 using BaseballManager.Sim.Engine;
 using BaseballManager.Sim.Results;
 
@@ -25,6 +28,12 @@ public sealed class FranchiseSession
     private readonly ImportedLeagueData _leagueData;
     private readonly FranchiseStateStore _stateStore;
     private readonly FranchiseSaveState _saveState;
+    private readonly ProcessGameRevenueUseCase _processGameRevenueUseCase = new();
+    private readonly ProcessMonthlyFinanceUseCase _processMonthlyFinanceUseCase = new();
+    private readonly SetBudgetAllocationUseCase _setBudgetAllocationUseCase = new();
+    private readonly SignPlayerContractUseCase _signPlayerContractUseCase = new();
+    private readonly ReleasePlayerUseCase _releasePlayerUseCase = new();
+    private readonly HireCoachUseCase _hireCoachUseCase = new();
     private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
 
     public FranchiseSession(ImportedLeagueData leagueData, FranchiseStateStore stateStore)
@@ -56,7 +65,7 @@ public sealed class FranchiseSession
 
         EnsureFranchiseDateInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated())
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated() || EnsureTeamEconomyGenerated())
         {
             Save();
         }
@@ -420,6 +429,7 @@ public sealed class FranchiseSession
         coach.Name = replacement.Name;
         coach.Specialty = replacement.Specialty;
         coach.Voice = replacement.Voice;
+        _hireCoachUseCase.Execute(teamState.Economy, Guid.NewGuid(), coach.Name, coach.Role, EstimateCoachSalary(coach.Role, SelectedTeam.Name), GetCurrentFranchiseDate());
         Save();
 
         statusMessage = $"{coach.Name} is now your {coach.Role.ToLowerInvariant()}.";
@@ -542,7 +552,7 @@ public sealed class FranchiseSession
 
         var assignedTeamName = GetAssignedTeamName(player.PlayerId, player.TeamName);
         var isPitcher = player.PrimaryPosition is "SP" or "RP";
-        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var ratings = GetScoutedRatings(player, coach.Role);
         var strengths = GetTopAttributesForCoach(ratings, coach.Role, isPitcher).Take(2).ToList();
         var concern = GetConcernAttribute(ratings, coach.Role, isPitcher);
 
@@ -629,6 +639,9 @@ public sealed class FranchiseSession
 
         AddTransferRecord(selectedTeamName, $"Acquired {targetPlayer.FullName} from {targetTeamName} for {offeredPlayer.FullName}.");
         AddTransferRecord(targetTeamName, $"Sent {targetPlayer.FullName} to {selectedTeamName} for {offeredPlayer.FullName}.");
+        MovePlayerContract(targetPlayerId, targetTeamState.Economy, selectedTeamState.Economy, targetPlayer.FullName);
+        MovePlayerContract(offeredPlayerId, selectedTeamState.Economy, targetTeamState.Economy, offeredPlayer.FullName);
+        ApplyTradeFanInterestShift(selectedTeamState.Economy, targetPlayer, offeredPlayer);
         Save();
 
         statusMessage = $"Deal complete: {targetPlayer.FullName} joins {selectedTeamName} and {offeredPlayer.FullName} heads to {targetTeamName}.";
@@ -693,6 +706,66 @@ public sealed class FranchiseSession
                 report.Summary,
                 report.CoachNotes))
             .ToList();
+    }
+
+    public TeamEconomy GetSelectedTeamEconomy()
+    {
+        return SelectedTeam == null
+            ? new TeamEconomy()
+            : GetOrCreateTeamState(SelectedTeam.Name).Economy;
+    }
+
+    public IReadOnlyList<FinancialSnapshot> GetRecentFinancialSnapshots(int maxCount = 8)
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        return GetOrCreateTeamState(SelectedTeam.Name).Economy.FinancialHistory
+            .OrderByDescending(snapshot => snapshot.EffectiveDate)
+            .Take(Math.Max(1, maxCount))
+            .ToList();
+    }
+
+    public string AdjustBudgetAllocation(string budgetKey, int direction)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before changing the budget.";
+        }
+
+        var economy = GetOrCreateTeamState(SelectedTeam.Name).Economy;
+        var updatedAllocation = new BudgetAllocation
+        {
+            ScoutingBudget = economy.BudgetAllocation.ScoutingBudget,
+            PlayerDevelopmentBudget = economy.BudgetAllocation.PlayerDevelopmentBudget,
+            MedicalBudget = economy.BudgetAllocation.MedicalBudget,
+            FacilitiesBudget = economy.BudgetAllocation.FacilitiesBudget
+        };
+
+        const decimal step = 50_000m;
+        switch (budgetKey.ToLowerInvariant())
+        {
+            case "scouting":
+                updatedAllocation.ScoutingBudget += direction * step;
+                break;
+            case "development":
+                updatedAllocation.PlayerDevelopmentBudget += direction * step;
+                break;
+            case "medical":
+                updatedAllocation.MedicalBudget += direction * step;
+                break;
+            case "facilities":
+                updatedAllocation.FacilitiesBudget += direction * step;
+                break;
+            default:
+                return "That budget line is not available right now.";
+        }
+
+        _setBudgetAllocationUseCase.Execute(economy, updatedAllocation);
+        Save();
+        return $"{budgetKey} budget adjusted to {GetBudgetDisplay(GetBudgetValue(economy.BudgetAllocation, budgetKey))} per month.";
     }
 
     public RecentPlayerStatsView GetRecentPlayerStats(Guid playerId, int maxGames = 10)
@@ -978,6 +1051,16 @@ public sealed class FranchiseSession
             .ToList();
     }
 
+    public FranchiseRosterEntry? GetScheduledStartingPitcher(string teamName)
+    {
+        if (string.IsNullOrWhiteSpace(teamName))
+        {
+            return null;
+        }
+
+        return SelectStartingPitcher(GetTeamRoster(teamName), teamName);
+    }
+
     public void AssignLineupSlot(Guid playerId, int slotNumber)
     {
         if (SelectedTeam == null || slotNumber < 1 || slotNumber > 9)
@@ -1205,6 +1288,8 @@ public sealed class FranchiseSession
 
         teamState.PracticeFocusOverrides ??= new Dictionary<string, TeamPracticeFocus>(StringComparer.OrdinalIgnoreCase);
         teamState.TrainingReports ??= new List<TrainingReportState>();
+        teamState.Economy ??= BuildDefaultTeamEconomy(teamName);
+        EnsureTeamEconomyInitialized(teamState, teamName);
         return teamState;
     }
 
@@ -1318,6 +1403,210 @@ public sealed class FranchiseSession
         }
 
         return hasChanges;
+    }
+
+    private bool EnsureTeamEconomyGenerated()
+    {
+        var hasChanges = false;
+        foreach (var team in _leagueData.Teams)
+        {
+            hasChanges |= EnsureTeamEconomyInitialized(GetOrCreateTeamState(team.Name), team.Name);
+        }
+
+        return hasChanges;
+    }
+
+    private bool EnsureTeamEconomyInitialized(TeamFranchiseState teamState, string teamName)
+    {
+        var hasChanges = false;
+        if (teamState.Economy == null)
+        {
+            teamState.Economy = BuildDefaultTeamEconomy(teamName);
+            hasChanges = true;
+        }
+
+        teamState.Economy.BudgetAllocation ??= BuildDefaultBudgetAllocation(teamState.Economy.MarketSize);
+        teamState.Economy.PlayerContracts ??= [];
+        teamState.Economy.CoachContracts ??= [];
+        teamState.Economy.FinancialHistory ??= [];
+
+        EnsureCoachingStaffInitialized(teamState, teamName);
+        hasChanges |= EnsurePlayerContractsInitialized(teamState.Economy, teamName);
+        hasChanges |= EnsureCoachContractsInitialized(teamState.Economy, teamState.CoachingStaff, teamName);
+
+        teamState.Economy.FanInterest = Math.Clamp(teamState.Economy.FanInterest, 10, 100);
+        teamState.Economy.MerchStrength = Math.Clamp(teamState.Economy.MerchStrength, 20, 100);
+        teamState.Economy.SponsorStrength = Math.Clamp(teamState.Economy.SponsorStrength, 20, 100);
+        teamState.Economy.FacilitiesLevel = Math.Clamp(teamState.Economy.FacilitiesLevel, 1, 5);
+        teamState.Economy.TicketPrice = Math.Clamp(teamState.Economy.TicketPrice, 12m, 80m);
+        teamState.Economy.StadiumCapacity = Math.Clamp(teamState.Economy.StadiumCapacity, 20_000, 55_000);
+        teamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(teamState.Economy);
+        return hasChanges;
+    }
+
+    private TeamEconomy BuildDefaultTeamEconomy(string teamName)
+    {
+        var team = FindTeamByName(teamName);
+        var marketSize = DetermineMarketSize(team);
+        var random = CreateStableRandom(teamName, "economy");
+        var economy = new TeamEconomy
+        {
+            CashOnHand = marketSize switch
+            {
+                MarketSize.Small => 16_000_000m + (random.Next(0, 7) * 350_000m),
+                MarketSize.Large => 32_000_000m + (random.Next(0, 10) * 500_000m),
+                _ => 23_000_000m + (random.Next(0, 8) * 400_000m)
+            },
+            MarketSize = marketSize,
+            FanInterest = Math.Clamp(46 + random.Next(-6, 9), 25, 80),
+            TicketPrice = marketSize switch
+            {
+                MarketSize.Small => 22m + random.Next(0, 5),
+                MarketSize.Large => 32m + random.Next(0, 7),
+                _ => 27m + random.Next(0, 6)
+            },
+            StadiumCapacity = marketSize switch
+            {
+                MarketSize.Small => 28_000 + random.Next(0, 4_000),
+                MarketSize.Large => 40_000 + random.Next(0, 6_000),
+                _ => 34_000 + random.Next(0, 5_000)
+            },
+            MerchStrength = Math.Clamp(44 + random.Next(-4, 16), 25, 90),
+            SponsorStrength = Math.Clamp(45 + random.Next(-4, 18), 25, 92),
+            FacilitiesLevel = Math.Clamp(2 + random.Next(0, 3), 1, 5),
+            BudgetAllocation = BuildDefaultBudgetAllocation(marketSize)
+        };
+
+        economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(economy);
+        return economy;
+    }
+
+    private static BudgetAllocation BuildDefaultBudgetAllocation(MarketSize marketSize)
+    {
+        return marketSize switch
+        {
+            MarketSize.Small => new BudgetAllocation
+            {
+                ScoutingBudget = 180_000m,
+                PlayerDevelopmentBudget = 220_000m,
+                MedicalBudget = 175_000m,
+                FacilitiesBudget = 125_000m
+            },
+            MarketSize.Large => new BudgetAllocation
+            {
+                ScoutingBudget = 325_000m,
+                PlayerDevelopmentBudget = 400_000m,
+                MedicalBudget = 280_000m,
+                FacilitiesBudget = 225_000m
+            },
+            _ => new BudgetAllocation
+            {
+                ScoutingBudget = 240_000m,
+                PlayerDevelopmentBudget = 300_000m,
+                MedicalBudget = 220_000m,
+                FacilitiesBudget = 165_000m
+            }
+        };
+    }
+
+    private bool EnsurePlayerContractsInitialized(TeamEconomy economy, string teamName)
+    {
+        var hasChanges = false;
+        var assignedPlayers = _leagueData.Players
+            .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var assignedPlayerIds = assignedPlayers.Select(player => player.PlayerId).ToHashSet();
+
+        var removedContracts = economy.PlayerContracts.RemoveAll(contract => !assignedPlayerIds.Contains(contract.SubjectId));
+        hasChanges |= removedContracts > 0;
+
+        foreach (var player in assignedPlayers)
+        {
+            if (economy.PlayerContracts.Any(contract => contract.SubjectId == player.PlayerId))
+            {
+                continue;
+            }
+
+            var salary = EstimatePlayerSalary(player);
+            var years = player.Age switch
+            {
+                <= 24 => 3,
+                <= 29 => 4,
+                <= 33 => 3,
+                _ => 2
+            };
+            _signPlayerContractUseCase.Execute(economy, player.PlayerId, player.FullName, salary, years, GetCurrentFranchiseDate());
+            hasChanges = true;
+        }
+
+        return hasChanges;
+    }
+
+    private bool EnsureCoachContractsInitialized(TeamEconomy economy, IReadOnlyList<CoachAssignmentState> coaches, string teamName)
+    {
+        var hasChanges = false;
+        var activeRoles = coaches.Select(coach => coach.Role).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removedContracts = economy.CoachContracts.RemoveAll(contract => !activeRoles.Contains(contract.Role));
+        hasChanges |= removedContracts > 0;
+
+        foreach (var coach in coaches)
+        {
+            if (economy.CoachContracts.Any(contract => string.Equals(contract.Role, coach.Role, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            _hireCoachUseCase.Execute(economy, Guid.NewGuid(), coach.Name, coach.Role, EstimateCoachSalary(coach.Role, teamName), GetCurrentFranchiseDate());
+            hasChanges = true;
+        }
+
+        return hasChanges;
+    }
+
+    private decimal EstimatePlayerSalary(PlayerImportDto player)
+    {
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var random = CreateStableRandom(player.PlayerId.ToString(), "salary");
+        var salary = 650_000m + (Math.Max(0, ratings.OverallRating - 45) * 170_000m);
+        salary *= player.Age switch
+        {
+            <= 24 => 0.78m,
+            >= 33 => 1.12m,
+            _ => 1.00m
+        };
+
+        salary *= 0.92m + (random.Next(0, 17) / 100m);
+        return decimal.Round(Math.Clamp(salary, 650_000m, 28_000_000m), 2);
+    }
+
+    private static decimal EstimateCoachSalary(string role, string teamName)
+    {
+        var baseSalary = role switch
+        {
+            "Manager" => 2_200_000m,
+            "Scouting Director" => 1_100_000m,
+            "Hitting Coach" or "Pitching Coach" => 850_000m,
+            "Team Doctor" => 950_000m,
+            _ => 650_000m
+        };
+
+        return decimal.Round(baseSalary + ((GetStableHash($"{teamName}|{role}|coach-salary") % 7) * 35_000m), 2);
+    }
+
+    private static MarketSize DetermineMarketSize(TeamImportDto? team)
+    {
+        var city = team?.City ?? string.Empty;
+        if (city is "New York" or "Boston" or "Seattle" or "Toronto" or "San Francisco" or "Washington")
+        {
+            return MarketSize.Large;
+        }
+
+        if (city is "Nashville" or "Portland" or "St. Louis" or "Cleveland" or "Pittsburgh" or "Tampa")
+        {
+            return MarketSize.Small;
+        }
+
+        return MarketSize.Medium;
     }
 
     private bool EnsureCoachingStaffInitialized(TeamFranchiseState teamState, string teamName)
@@ -1584,6 +1873,48 @@ public sealed class FranchiseSession
             >= 48 => Pick(random, ["Only do it if the price stays light.", "I would treat him as a secondary target, not the headliner.", "That feels more like a depth move than a splash."]),
             _ => Pick(random, ["I would not force that one unless you just need organizational depth.", "That is more of a wait-and-see target for me.", "I would save your bigger chips for someone else."])
         };
+    }
+
+    private PlayerHiddenRatingsState GetScoutedRatings(PlayerImportDto player, string coachRole)
+    {
+        var actualRatings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        if (SelectedTeam == null)
+        {
+            return actualRatings;
+        }
+
+        var economy = GetOrCreateTeamState(SelectedTeam.Name).Economy;
+        var variance = FranchiseEconomyEffects.GetScoutingVariance(economy.BudgetAllocation.ScoutingBudget);
+        if (string.Equals(coachRole, "Scouting Director", StringComparison.OrdinalIgnoreCase))
+        {
+            variance = Math.Max(1, variance - 1);
+        }
+
+        if (variance <= 1)
+        {
+            return actualRatings;
+        }
+
+        var random = CreateStableRandom(player.PlayerId.ToString(), coachRole, "scouting-budget", economy.BudgetAllocation.ScoutingBudget.ToString("0"));
+        var scoutedRatings = new PlayerHiddenRatingsState
+        {
+            ContactRating = ApplyScoutingVariance(actualRatings.EffectiveContactRating, variance, random),
+            PowerRating = ApplyScoutingVariance(actualRatings.EffectivePowerRating, variance, random),
+            DisciplineRating = ApplyScoutingVariance(actualRatings.EffectiveDisciplineRating, variance, random),
+            SpeedRating = ApplyScoutingVariance(actualRatings.EffectiveSpeedRating, variance, random),
+            FieldingRating = ApplyScoutingVariance(actualRatings.EffectiveFieldingRating, variance, random),
+            ArmRating = ApplyScoutingVariance(actualRatings.EffectiveArmRating, variance, random),
+            PitchingRating = ApplyScoutingVariance(actualRatings.EffectivePitchingRating, variance, random),
+            StaminaRating = ApplyScoutingVariance(actualRatings.EffectiveStaminaRating, variance, random),
+            DurabilityRating = ApplyScoutingVariance(actualRatings.EffectiveDurabilityRating, variance, random)
+        };
+        scoutedRatings.RecalculateDerivedRatings();
+        return scoutedRatings;
+    }
+
+    private static int ApplyScoutingVariance(int rating, int variance, Random random)
+    {
+        return Math.Clamp(rating + random.Next(-variance, variance + 1), 1, 99);
     }
 
     private static IReadOnlyList<AttributeInsight> GetAttributeInsights(PlayerHiddenRatingsState ratings)
@@ -2073,6 +2404,7 @@ public sealed class FranchiseSession
         }
 
         ApplyRecoveryBetweenDates(currentDate, nextDate);
+        ProcessMonthlyFinanceBetweenDates(currentDate, nextDate);
         _saveState.CurrentFranchiseDate = nextDate;
         ClearTrainingReportsIfSeasonComplete();
     }
@@ -2083,6 +2415,86 @@ public sealed class FranchiseSession
         var nextGame = GetNextScheduledGameForSelectedTeam();
         var targetDate = nextGame?.Date.Date ?? currentDate.AddDays(1);
         AdvanceFranchiseDateTo(targetDate);
+    }
+
+    private void ProcessMonthlyFinanceBetweenDates(DateTime currentDate, DateTime targetDate)
+    {
+        var nextMonth = new DateTime(currentDate.Year, currentDate.Month, 1).AddMonths(1);
+        while (nextMonth <= targetDate.Date)
+        {
+            foreach (var team in _leagueData.Teams)
+            {
+                var economy = GetOrCreateTeamState(team.Name).Economy;
+                _processMonthlyFinanceUseCase.Execute(economy, nextMonth, $"{nextMonth:MMMM yyyy} operating cycle");
+            }
+
+            nextMonth = nextMonth.AddMonths(1);
+        }
+    }
+
+    private void ProcessEconomyForCompletedGame(MatchState finalState, ScheduleImportDto scheduledGame)
+    {
+        var homeWon = finalState.HomeTeam.Runs > finalState.AwayTeam.Runs;
+        var awayWon = finalState.AwayTeam.Runs > finalState.HomeTeam.Runs;
+        var runDifferential = Math.Abs(finalState.HomeTeam.Runs - finalState.AwayTeam.Runs);
+
+        var homeEconomy = GetOrCreateTeamState(scheduledGame.HomeTeamName).Economy;
+        var homeWinningPercentage = GetTeamWinningPercentage(scheduledGame.HomeTeamName);
+        _processGameRevenueUseCase.Execute(homeEconomy, homeWinningPercentage, scheduledGame.Date.Date, $"Home gate vs {scheduledGame.AwayTeamName}");
+
+        ApplyFanInterestAfterGame(scheduledGame.HomeTeamName, homeWon, runDifferential);
+        ApplyFanInterestAfterGame(scheduledGame.AwayTeamName, awayWon, runDifferential);
+    }
+
+    private void ApplyFanInterestAfterGame(string teamName, bool wonGame, int runDifferential)
+    {
+        var economy = GetOrCreateTeamState(teamName).Economy;
+        economy.FanInterest = Math.Clamp(economy.FanInterest + FranchiseEconomyEffects.GetFanInterestDelta(wonGame, runDifferential), 10, 100);
+        economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(economy);
+    }
+
+    private double GetTeamWinningPercentage(string teamName)
+    {
+        var wins = 0;
+        var losses = 0;
+
+        foreach (var entry in _saveState.CompletedScheduleGameResults)
+        {
+            var parts = entry.Key.Split('|');
+            if (parts.Length < 4)
+            {
+                continue;
+            }
+
+            var homeTeamName = parts[1];
+            var awayTeamName = parts[2];
+            var result = entry.Value;
+            if (string.Equals(homeTeamName, teamName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (result.HomeRuns >= result.AwayRuns)
+                {
+                    wins++;
+                }
+                else
+                {
+                    losses++;
+                }
+            }
+            else if (string.Equals(awayTeamName, teamName, StringComparison.OrdinalIgnoreCase))
+            {
+                if (result.AwayRuns >= result.HomeRuns)
+                {
+                    wins++;
+                }
+                else
+                {
+                    losses++;
+                }
+            }
+        }
+
+        var totalGames = wins + losses;
+        return totalGames == 0 ? 0.5d : wins / (double)totalGames;
     }
 
     private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)
@@ -2137,20 +2549,12 @@ public sealed class FranchiseSession
 
     private MatchPlayerSnapshot? BuildSelectedTeamPitcher()
     {
-        var rotationCandidates = GetRotationPlayers()
-            .Concat(GetBullpenPlayers())
-            .Where(player => player.PrimaryPosition is "SP" or "RP")
-            .OrderBy(player => ShouldRestPlayer(player.PlayerId, player.PrimaryPosition) ? 1 : 0)
-            .ThenBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
-            .ThenBy(player => player.RotationSlot ?? 99)
-            .ToList();
+        if (SelectedTeam == null)
+        {
+            return null;
+        }
 
-        var pitcher = rotationCandidates.FirstOrDefault()
-                     ?? GetSelectedTeamRoster()
-                         .Where(player => player.PrimaryPosition is "SP" or "RP")
-                         .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
-                         .FirstOrDefault();
-
+        var pitcher = SelectStartingPitcher(GetSelectedTeamRoster(), SelectedTeam.Name);
         return pitcher == null
             ? null
             : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age);
@@ -2190,14 +2594,7 @@ public sealed class FranchiseSession
 
     private MatchPlayerSnapshot? BuildImportedPitcher(string teamName)
     {
-        var pitcher = GetTeamRoster(teamName)
-            .Where(player => player.PrimaryPosition is "SP" or "RP")
-            .OrderBy(player => ShouldRestPlayer(player.PlayerId, player.PrimaryPosition) ? 1 : 0)
-            .ThenBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
-            .ThenBy(player => player.RotationSlot ?? 99)
-            .ThenBy(player => player.PrimaryPosition is "SP" ? 0 : 1)
-            .FirstOrDefault();
-
+        var pitcher = SelectStartingPitcher(GetTeamRoster(teamName), teamName);
         return pitcher == null
             ? null
             : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age);
@@ -2291,6 +2688,8 @@ public sealed class FranchiseSession
             AwayRuns = finalState.AwayTeam.Runs,
             HomeRuns = finalState.HomeTeam.Runs
         };
+
+        ProcessEconomyForCompletedGame(finalState, gameToMark);
 
         if (advanceDateAfterGame)
         {
@@ -2558,6 +2957,13 @@ public sealed class FranchiseSession
 
         var random = CreateStableRandom(player.PlayerId.ToString(), "practice-growth", practiceDate.ToString("yyyyMMdd"), focus.ToString(), player.PrimaryPosition);
         var ratingGain = RollPracticeDevelopmentGain(random);
+        if (SelectedTeam != null)
+        {
+            var economy = GetOrCreateTeamState(SelectedTeam.Name).Economy;
+            var developmentMultiplier = FranchiseEconomyEffects.GetDevelopmentMultiplier(economy.BudgetAllocation.PlayerDevelopmentBudget, economy.FacilitiesLevel);
+            ratingGain = RoundToHalfPoint(Math.Clamp(ratingGain * developmentMultiplier, 0d, 3d));
+        }
+
         if (ratingGain <= 0d)
         {
             return null;
@@ -2880,7 +3286,12 @@ public sealed class FranchiseSession
         {
             var health = GetPlayerHealth(player.PlayerId);
             var isPitcher = player.PrimaryPosition is "SP" or "RP";
-            var recoveryPerDay = isPitcher ? 18 : 4;
+            var assignedTeamName = GetAssignedTeamName(player.PlayerId, player.TeamName);
+            var teamEconomy = string.IsNullOrWhiteSpace(assignedTeamName) ? null : GetOrCreateTeamState(assignedTeamName).Economy;
+            var recoveryMultiplier = teamEconomy == null
+                ? 1d
+                : FranchiseEconomyEffects.GetMedicalRecoveryMultiplier(teamEconomy.BudgetAllocation.MedicalBudget, teamEconomy.FacilitiesLevel);
+            var recoveryPerDay = Math.Max(1, (int)Math.Round((isPitcher ? 18 : 4) * recoveryMultiplier));
 
             health.Fatigue = Math.Max(0, health.Fatigue - (daysElapsed * recoveryPerDay));
             health.DaysUntilAvailable = Math.Max(0, health.DaysUntilAvailable - daysElapsed);
@@ -2895,6 +3306,60 @@ public sealed class FranchiseSession
                 health.PitchCountToday = 0;
             }
         }
+    }
+
+    private FranchiseRosterEntry? SelectStartingPitcher(IEnumerable<FranchiseRosterEntry> rosterEntries, string teamName)
+    {
+        var pitchers = rosterEntries
+            .Where(player => player.PrimaryPosition is "SP" or "RP")
+            .ToList();
+
+        if (pitchers.Count == 0)
+        {
+            return null;
+        }
+
+        var orderedRotation = pitchers
+            .Where(player => player.RotationSlot.HasValue)
+            .OrderBy(player => player.RotationSlot)
+            .ToList();
+
+        if (orderedRotation.Count > 0)
+        {
+            var scheduledIndex = GetScheduledRotationIndex(teamName, orderedRotation.Count);
+            for (var offset = 0; offset < orderedRotation.Count; offset++)
+            {
+                var candidate = orderedRotation[(scheduledIndex + offset) % orderedRotation.Count];
+                if (!ShouldRestPlayer(candidate.PlayerId, candidate.PrimaryPosition))
+                {
+                    return candidate;
+                }
+            }
+
+            return orderedRotation[scheduledIndex];
+        }
+
+        return pitchers
+            .OrderBy(player => ShouldRestPlayer(player.PlayerId, player.PrimaryPosition) ? 1 : 0)
+            .ThenBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+            .ThenBy(player => player.PrimaryPosition is "SP" ? 0 : 1)
+            .ThenBy(player => player.PlayerName)
+            .FirstOrDefault();
+    }
+
+    private int GetScheduledRotationIndex(string teamName, int starterCount)
+    {
+        if (starterCount <= 0)
+        {
+            return 0;
+        }
+
+        var completedGames = _leagueData.Schedule.Count(game =>
+            IsScheduledGameCompleted(game) &&
+            (string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase)));
+
+        return completedGames % starterCount;
     }
 
     private bool ShouldRestPlayer(Guid playerId, string primaryPosition)
@@ -2933,8 +3398,14 @@ public sealed class FranchiseSession
         }
 
         var isPitcher = player.PrimaryPosition is "SP" or "RP";
+        var playerImport = FindPlayerImport(player.Id);
+        var assignedTeamName = playerImport == null ? string.Empty : GetAssignedTeamName(player.Id, playerImport.TeamName);
+        var teamEconomy = string.IsNullOrWhiteSpace(assignedTeamName) ? null : GetOrCreateTeamState(assignedTeamName).Economy;
+        var medicalProtection = teamEconomy == null
+            ? 0d
+            : (FranchiseEconomyEffects.GetMedicalRecoveryMultiplier(teamEconomy.BudgetAllocation.MedicalBudget, teamEconomy.FacilitiesLevel) - 1d) * 20d;
         var riskScore = health.Fatigue + (health.DaysUntilAvailable * 8) - (player.DurabilityRating / 4);
-        var riskThreshold = isPitcher ? 92 : 97;
+        var riskThreshold = (isPitcher ? 92 : 97) + (int)Math.Round(medicalProtection);
         if (riskScore < riskThreshold)
         {
             return;
@@ -3100,6 +3571,70 @@ public sealed class FranchiseSession
         }
 
         return Math.Clamp(baseDays, 1, 7);
+    }
+
+    private void MovePlayerContract(Guid playerId, TeamEconomy fromEconomy, TeamEconomy toEconomy, string playerName)
+    {
+        var contract = fromEconomy.PlayerContracts.FirstOrDefault(existing => existing.SubjectId == playerId);
+        if (contract == null)
+        {
+            var player = FindPlayerImport(playerId);
+            if (player != null)
+            {
+                _signPlayerContractUseCase.Execute(toEconomy, playerId, playerName, EstimatePlayerSalary(player), player.Age <= 29 ? 3 : 2, GetCurrentFranchiseDate());
+            }
+        }
+        else
+        {
+            fromEconomy.PlayerContracts.Remove(contract);
+            toEconomy.PlayerContracts.RemoveAll(existing => existing.SubjectId == playerId);
+            toEconomy.PlayerContracts.Add(contract);
+        }
+
+        fromEconomy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(fromEconomy);
+        toEconomy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(toEconomy);
+    }
+
+    private void ApplyTradeFanInterestShift(TeamEconomy economy, PlayerImportDto incomingPlayer, PlayerImportDto outgoingPlayer)
+    {
+        var incomingOverall = GetPlayerRatings(incomingPlayer.PlayerId, incomingPlayer.FullName, incomingPlayer.PrimaryPosition, incomingPlayer.SecondaryPosition, incomingPlayer.Age).OverallRating;
+        var outgoingOverall = GetPlayerRatings(outgoingPlayer.PlayerId, outgoingPlayer.FullName, outgoingPlayer.PrimaryPosition, outgoingPlayer.SecondaryPosition, outgoingPlayer.Age).OverallRating;
+        var difference = incomingOverall - outgoingOverall;
+        var fanInterestDelta = difference switch
+        {
+            >= 8 => 3,
+            >= 3 => 1,
+            <= -8 => -3,
+            <= -3 => -1,
+            _ => 0
+        };
+
+        economy.FanInterest = Math.Clamp(economy.FanInterest + fanInterestDelta, 10, 100);
+        economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(economy);
+    }
+
+    private static decimal GetBudgetValue(BudgetAllocation allocation, string budgetKey)
+    {
+        return budgetKey.ToLowerInvariant() switch
+        {
+            "scouting" => allocation.ScoutingBudget,
+            "development" => allocation.PlayerDevelopmentBudget,
+            "medical" => allocation.MedicalBudget,
+            "facilities" => allocation.FacilitiesBudget,
+            _ => 0m
+        };
+    }
+
+    private static string GetBudgetDisplay(decimal value)
+    {
+        return value >= 1_000_000m
+            ? $"${value / 1_000_000m:0.00}M"
+            : $"${value / 1_000m:0}K";
+    }
+
+    private static double RoundToHalfPoint(double value)
+    {
+        return Math.Round(value * 2d, MidpointRounding.AwayFromZero) / 2d;
     }
 
     private static double MapRating(double rating, double lowValue, double highValue)

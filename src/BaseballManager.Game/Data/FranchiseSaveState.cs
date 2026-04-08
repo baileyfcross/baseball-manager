@@ -1,3 +1,4 @@
+using BaseballManager.Core.Economy;
 using System.Text.Json.Serialization;
 
 namespace BaseballManager.Game.Data;
@@ -48,6 +49,8 @@ public sealed class TeamFranchiseState
     public List<TransferRecordState> TransferHistory { get; set; } = new();
 
     public List<TrainingReportState> TrainingReports { get; set; } = new();
+
+    public TeamEconomy Economy { get; set; } = new();
 
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }
 }

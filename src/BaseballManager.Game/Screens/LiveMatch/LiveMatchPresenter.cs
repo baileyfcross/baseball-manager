@@ -318,18 +318,7 @@ public sealed class LiveMatchPresenter
 
     private MatchPlayerSnapshot? BuildSelectedTeamPitcher()
     {
-        var pitcher = _franchiseSession.GetRotationPlayers()
-                          .Concat(_franchiseSession.GetBullpenPlayers())
-                          .Where(player => player.PrimaryPosition is "SP" or "RP")
-                          .OrderBy(player => ShouldRestPlayer(player.PlayerId, player.PrimaryPosition) ? 1 : 0)
-                          .ThenBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
-                          .ThenBy(player => player.RotationSlot ?? 99)
-                          .FirstOrDefault()
-                     ?? _franchiseSession.GetSelectedTeamRoster()
-                          .Where(player => player.PrimaryPosition is "SP" or "RP")
-                          .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
-                          .FirstOrDefault();
-
+        var pitcher = _franchiseSession.GetScheduledStartingPitcher(_franchiseSession.SelectedTeamName);
         return pitcher == null
             ? null
             : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age, pitcher.LineupSlot ?? 9, pitcher.RotationSlot ?? 1);
@@ -386,22 +375,13 @@ public sealed class LiveMatchPresenter
 
     private MatchPlayerSnapshot? BuildImportedPitcher(string teamName)
     {
-        var playersById = _leagueData.Players.ToDictionary(player => player.PlayerId, player => player);
-        var pitcherRow = _leagueData.Rosters
-            .Where(roster => string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) && roster.PrimaryPosition is "SP" or "RP")
-            .OrderBy(roster => ShouldRestPlayer(roster.PlayerId, roster.PrimaryPosition) ? 1 : 0)
-            .ThenBy(roster => GetAvailabilityPriority(roster.PlayerId, roster.PrimaryPosition))
-            .ThenBy(roster => roster.RotationSlot ?? 99)
-            .ThenBy(roster => roster.PrimaryPosition is "SP" ? 0 : 1)
-            .FirstOrDefault();
-
+        var pitcherRow = _franchiseSession.GetScheduledStartingPitcher(teamName);
         if (pitcherRow == null)
         {
             return null;
         }
 
-        playersById.TryGetValue(pitcherRow.PlayerId, out var playerData);
-        return CreatePlayerSnapshot(pitcherRow.PlayerId, pitcherRow.PlayerName, pitcherRow.PrimaryPosition, pitcherRow.SecondaryPosition, playerData?.Age ?? 27, pitcherRow.LineupSlot ?? 9, pitcherRow.RotationSlot ?? 1);
+        return CreatePlayerSnapshot(pitcherRow.PlayerId, pitcherRow.PlayerName, pitcherRow.PrimaryPosition, pitcherRow.SecondaryPosition, pitcherRow.Age, pitcherRow.LineupSlot ?? 9, pitcherRow.RotationSlot ?? 1);
     }
 
     private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age, int lineupSlot, int rotationSlot)
