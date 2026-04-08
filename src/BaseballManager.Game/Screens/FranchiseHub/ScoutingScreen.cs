@@ -849,9 +849,10 @@ public sealed class ScoutingScreen : GameScreen
             var isHovered = !suppressHover && bounds.Contains(mousePosition);
             var isSelected = scout.SlotIndex == _selectedScoutSlotIndex;
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
+            var assignmentLabel = GetDepartmentAssignmentLabel(scout);
             var label = scout.IsVacant
                 ? $"{scout.Role}: Open Slot"
-                : $"{scout.Role}: {Truncate(scout.Name, 14)} | {Truncate(scout.AssignmentMode, 14)}";
+                : $"{scout.Role}: {Truncate(scout.Name, 14)} | {Truncate(assignmentLabel, 18)}";
             uiRenderer.DrawButton(label, bounds, color, Color.White);
         }
 
@@ -885,7 +886,7 @@ public sealed class ScoutingScreen : GameScreen
         uiRenderer.DrawButton(_sortByPositionButton.Label, GetProspectSortPositionBounds(), ((!suppressHover && GetProspectSortPositionBounds().Contains(mousePosition)) || _openScoutDropdown == ScoutDropdownType.Sort || _prospectSortMode == ProspectSortMode.Position) ? Color.DarkSlateBlue : Color.SlateGray, Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawButton(_prospectPreviousButton.Label, GetProspectPreviousBounds(), !suppressHover && GetProspectPreviousBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawButton(_prospectNextButton.Label, GetProspectNextBounds(), !suppressHover && GetProspectNextBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"Page {_prospectPageIndex + 1}/{Math.Max(1, GetMaxPage(prospects.Count) + 1)}", GetProspectPageLabelBounds(), Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
+        uiRenderer.DrawTextInBounds($"Page {_prospectPageIndex + 1}/{Math.Max(1, GetProspectMaxPage(prospects.Count) + 1)}", GetProspectPageLabelBounds(), Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
         uiRenderer.DrawTextInBounds(_showTargetList ? "TARGET LIST" : "SCOUTED PLAYERS", new Rectangle(prospectListPanelBounds.X + 10, prospectListPanelBounds.Y + 76, prospectListPanelBounds.Width - 20, 18), Color.Gold, uiRenderer.UiSmallFont);
         uiRenderer.DrawTextInBounds("SCOUT REPORT", new Rectangle(prospectReportPanelBounds.X + 10, prospectReportPanelBounds.Y + 8, prospectReportPanelBounds.Width - 20, 18), Color.Gold, uiRenderer.UiSmallFont);
 
@@ -1038,7 +1039,7 @@ public sealed class ScoutingScreen : GameScreen
     private void ScrollProspectList(int direction)
     {
         var prospects = GetVisibleProspects();
-        _prospectPageIndex = Math.Clamp(_prospectPageIndex + direction, 0, GetMaxPage(prospects.Count));
+        _prospectPageIndex = Math.Clamp(_prospectPageIndex + direction, 0, GetProspectMaxPage(prospects.Count));
     }
 
     private void ScrollScoutDropdown(int direction)
@@ -1108,8 +1109,9 @@ public sealed class ScoutingScreen : GameScreen
     private IReadOnlyList<AmateurProspectView> GetPagedProspects(IReadOnlyList<AmateurProspectView>? prospects = null)
     {
         prospects ??= GetVisibleProspects();
-        _prospectPageIndex = Math.Clamp(_prospectPageIndex, 0, GetMaxPage(prospects.Count));
-        return prospects.Skip(_prospectPageIndex * PageSize).Take(PageSize).ToList();
+        var pageSize = GetProspectPageSize();
+        _prospectPageIndex = Math.Clamp(_prospectPageIndex, 0, GetProspectMaxPage(prospects.Count));
+        return prospects.Skip(_prospectPageIndex * pageSize).Take(pageSize).ToList();
     }
 
     private void RefreshAmateurSelections(IReadOnlyList<ScoutAssignmentView>? assistantScouts = null, IReadOnlyList<AmateurProspectView>? prospects = null)
@@ -1122,7 +1124,7 @@ public sealed class ScoutingScreen : GameScreen
             _selectedScoutSlotIndex = assistantScouts[0].SlotIndex;
         }
 
-        _prospectPageIndex = Math.Clamp(_prospectPageIndex, 0, GetMaxPage(prospects.Count));
+        _prospectPageIndex = Math.Clamp(_prospectPageIndex, 0, GetProspectMaxPage(prospects.Count));
 
         if (string.IsNullOrWhiteSpace(_selectedProspectKey) || prospects.All(prospect => !string.Equals(prospect.ProspectKey, _selectedProspectKey, StringComparison.OrdinalIgnoreCase)))
         {
@@ -1139,6 +1141,19 @@ public sealed class ScoutingScreen : GameScreen
     private static int GetMaxPage(int totalCount)
     {
         return Math.Max(0, (int)Math.Ceiling(totalCount / (double)PageSize) - 1);
+    }
+
+    private int GetProspectPageSize()
+    {
+        var panel = GetProspectListPanelBounds();
+        var availableHeight = Math.Max(26, panel.Height - 112);
+        return Math.Max(1, ((availableHeight - 26) / 30) + 1);
+    }
+
+    private int GetProspectMaxPage(int totalCount)
+    {
+        var pageSize = GetProspectPageSize();
+        return Math.Max(0, (int)Math.Ceiling(totalCount / (double)pageSize) - 1);
     }
 
     private Rectangle GetViewModeButtonBounds() => new(_viewport.X - 300, 38, 240, 44);
@@ -1172,15 +1187,44 @@ public sealed class ScoutingScreen : GameScreen
         return string.Equals(position, filter, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string GetDepartmentAssignmentLabel(ScoutAssignmentView scout)
+    {
+        if (scout.IsVacant || string.Equals(scout.AssignmentMode, "Unassigned", StringComparison.OrdinalIgnoreCase))
+        {
+            return "No assignment";
+        }
+
+        if (!string.IsNullOrWhiteSpace(scout.AssignmentTarget))
+        {
+            return scout.AssignmentTarget;
+        }
+
+        return string.Equals(scout.AssignmentMode, "Player Follow", StringComparison.OrdinalIgnoreCase)
+            ? "Scouting player"
+            : "Scouting region";
+    }
+
     private Rectangle GetTradeButtonBounds() => new(_viewport.X - 300, 90, 240, 44);
 
-    private Rectangle GetScoutDepartmentPanelBounds() => new(40, 186, Math.Clamp(_viewport.X / 3, 320, 420), 220);
+    private int GetProspectListPanelWidth() => Math.Clamp(_viewport.X / 2, 420, 560);
+
+    private int GetProspectRightColumnX() => 40 + GetProspectListPanelWidth() + 24;
+
+    private int GetProspectRightColumnWidth() => Math.Max(320, _viewport.X - GetProspectRightColumnX() - 40);
+
+    private Rectangle GetScoutDepartmentPanelBounds()
+    {
+        var totalWidth = GetProspectRightColumnWidth();
+        var width = Math.Max(180, (totalWidth - 24) / 2);
+        return new Rectangle(GetProspectRightColumnX(), 186, width, 220);
+    }
 
     private Rectangle GetScoutAssignmentPanelBounds()
     {
         var departmentPanel = GetScoutDepartmentPanelBounds();
         var x = departmentPanel.Right + 24;
-        return new Rectangle(x, 186, Math.Max(420, _viewport.X - x - 40), 324);
+        var width = Math.Max(180, GetProspectRightColumnWidth() - departmentPanel.Width - 24);
+        return new Rectangle(x, 186, width, 324);
     }
 
     private Rectangle GetAssistantScoutRowBounds(int index)
@@ -1192,13 +1236,15 @@ public sealed class ScoutingScreen : GameScreen
     private Rectangle GetHireScoutButtonBounds()
     {
         var panel = GetScoutAssignmentPanelBounds();
-        return new Rectangle(panel.X + 12, panel.Y + 104, Math.Max(180, (panel.Width / 2) - 18), 26);
+        var buttonWidth = Math.Max(120, (panel.Width - 36) / 2);
+        return new Rectangle(panel.X + 12, panel.Y + 104, buttonWidth, 26);
     }
 
     private Rectangle GetReleaseScoutButtonBounds()
     {
         var panel = GetScoutAssignmentPanelBounds();
-        return new Rectangle(panel.X + panel.Width - Math.Max(180, (panel.Width / 2) - 18) - 12, panel.Y + 104, Math.Max(180, (panel.Width / 2) - 18), 26);
+        var buttonWidth = Math.Max(120, (panel.Width - 36) / 2);
+        return new Rectangle(panel.X + panel.Width - buttonWidth - 12, panel.Y + 104, buttonWidth, 26);
     }
 
     private Rectangle GetCountryFocusButtonBounds()
@@ -1239,15 +1285,14 @@ public sealed class ScoutingScreen : GameScreen
 
     private Rectangle GetProspectListPanelBounds()
     {
-        var top = Math.Max(GetScoutDepartmentPanelBounds().Bottom, GetScoutAssignmentPanelBounds().Bottom) + 20;
-        return new Rectangle(40, top, Math.Clamp(_viewport.X / 2, 420, 560), Math.Max(160, _viewport.Y - top - 40));
+        var top = 186;
+        return new Rectangle(40, top, GetProspectListPanelWidth(), Math.Max(200, _viewport.Y - top - 20));
     }
 
     private Rectangle GetProspectReportPanelBounds()
     {
-        var listPanel = GetProspectListPanelBounds();
-        var x = listPanel.Right + 24;
-        return new Rectangle(x, listPanel.Y, Math.Max(320, _viewport.X - x - 40), listPanel.Height);
+        var top = Math.Max(GetScoutDepartmentPanelBounds().Bottom, GetScoutAssignmentPanelBounds().Bottom) + 20;
+        return new Rectangle(GetProspectRightColumnX(), top, GetProspectRightColumnWidth(), Math.Max(200, _viewport.Y - top - 20));
     }
 
     private Rectangle GetScoutedPlayersTabBounds()
