@@ -841,59 +841,56 @@ public sealed class FranchiseSession
 
     public bool SimulateCurrentDay(out string statusMessage)
     {
+        return SimulateCurrentDayInternal(saveAfterAdvance: true, out statusMessage);
+    }
+
+    public bool SimulateToEndOfSeason(out string statusMessage)
+    {
         if (SelectedTeam == null)
         {
-            statusMessage = "Select a team before simulating the day.";
+            statusMessage = "Select a team before simulating the season.";
             return false;
         }
 
-        var currentDate = GetCurrentFranchiseDate().Date;
-        var todaysGames = GetRemainingScheduledGamesForDate(currentDate);
-        var gameSummaries = new List<string>();
-
-        foreach (var game in todaysGames)
+        var selectedTeamName = SelectedTeam.Name;
+        var startDate = GetCurrentFranchiseDate().Date;
+        var seasonEnd = GetSeasonCalendarEndDate().Date;
+        if (startDate > seasonEnd)
         {
-            if (!TrySimulateScheduledGame(game, advanceDateAfterGame: false, out var gameSummary))
+            statusMessage = "The regular season has already been completed.";
+            return false;
+        }
+
+        var daysSimulated = 0;
+        var selectedTeamGames = 0;
+        var totalLeagueGames = 0;
+        var practiceDays = 0;
+
+        while (GetCurrentFranchiseDate().Date <= seasonEnd)
+        {
+            var currentDate = GetCurrentFranchiseDate().Date;
+            var todaysGames = GetRemainingScheduledGamesForDate(currentDate);
+            totalLeagueGames += todaysGames.Count;
+            selectedTeamGames += todaysGames.Count(game =>
+                string.Equals(game.HomeTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(game.AwayTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase));
+
+            if (TryGetPracticeSessionInfo(currentDate, out _))
             {
-                statusMessage = gameSummary;
+                practiceDays++;
+            }
+
+            if (!SimulateCurrentDayInternal(saveAfterAdvance: false, out statusMessage))
+            {
                 return false;
             }
 
-            if (string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
-            {
-                gameSummaries.Add(gameSummary);
-            }
+            daysSimulated++;
         }
 
-        var hasPractice = TryGetPracticeSessionInfo(currentDate, out var practiceSession);
-        var developmentResults = ApplyPracticeDevelopmentAcrossLeague(currentDate, SelectedTeam.Name);
-
-        AdvanceFranchiseDateTo(currentDate.AddDays(1));
         ClearLiveMatchState(LiveMatchMode.Franchise);
         Save();
-
-        if (gameSummaries.Count > 0)
-        {
-            var otherGameCount = Math.Max(0, todaysGames.Count - gameSummaries.Count);
-            statusMessage = otherGameCount > 0
-                ? $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)} Around the league, {otherGameCount} other game(s) were played."
-                : $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)}";
-            return true;
-        }
-
-        if (hasPractice)
-        {
-            var practiceSummary = BuildPracticeDevelopmentReport(currentDate, practiceSession, developmentResults);
-            statusMessage = todaysGames.Count > 0
-                ? $"{practiceSummary} Around the league, {todaysGames.Count} game(s) were played."
-                : practiceSummary;
-            return true;
-        }
-
-        statusMessage = todaysGames.Count > 0
-            ? $"Advanced through {currentDate:ddd, MMM d}. {todaysGames.Count} league game(s) were played."
-            : $"Advanced through {currentDate:ddd, MMM d}. No game or full-team workout was on the calendar.";
+        statusMessage = $"Simmed from {startDate:MMM d} through season end: {daysSimulated} day(s), {selectedTeamGames} {selectedTeamName} game(s), {totalLeagueGames} league game(s), and {practiceDays} practice / recovery day(s).";
         return true;
     }
 
@@ -924,8 +921,89 @@ public sealed class FranchiseSession
         return true;
     }
 
+    private bool SimulateCurrentDayInternal(bool saveAfterAdvance, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before simulating the day.";
+            return false;
+        }
+
+        var currentDate = GetCurrentFranchiseDate().Date;
+        var todaysGames = GetRemainingScheduledGamesForDate(currentDate);
+        var selectedTeamGames = todaysGames
+            .Where(game =>
+                string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var otherGames = todaysGames
+            .Where(game => !selectedTeamGames.Contains(game))
+            .ToList();
+        var gameSummaries = new List<string>();
+
+        foreach (var game in selectedTeamGames)
+        {
+            if (!TrySimulateScheduledGame(game, advanceDateAfterGame: false, out var gameSummary))
+            {
+                statusMessage = gameSummary;
+                return false;
+            }
+
+            gameSummaries.Add(gameSummary);
+        }
+
+        SimulateGamesInParallel(otherGames);
+
+        var hasPractice = TryGetPracticeSessionInfo(currentDate, out var practiceSession);
+        var developmentResults = ApplyPracticeDevelopmentAcrossLeague(currentDate, SelectedTeam.Name);
+
+        AdvanceFranchiseDateTo(currentDate.AddDays(1));
+        ClearLiveMatchState(LiveMatchMode.Franchise);
+        if (saveAfterAdvance)
+        {
+            Save();
+        }
+
+        if (gameSummaries.Count > 0)
+        {
+            statusMessage = otherGames.Count > 0
+                ? $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)} Around the league, {otherGames.Count} other game(s) were played."
+                : $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)}";
+            return true;
+        }
+
+        if (hasPractice)
+        {
+            var practiceSummary = BuildPracticeDevelopmentReport(currentDate, practiceSession, developmentResults);
+            statusMessage = todaysGames.Count > 0
+                ? $"{practiceSummary} Around the league, {todaysGames.Count} game(s) were played."
+                : practiceSummary;
+            return true;
+        }
+
+        statusMessage = todaysGames.Count > 0
+            ? $"Advanced through {currentDate:ddd, MMM d}. {todaysGames.Count} league game(s) were played."
+            : $"Advanced through {currentDate:ddd, MMM d}. No game or full-team workout was on the calendar.";
+        return true;
+    }
+
     private bool TrySimulateScheduledGame(ScheduleImportDto scheduledGame, bool advanceDateAfterGame, out string summary)
     {
+        if (!TryPrepareGameSimulation(scheduledGame, out var preparedGame, out summary) ||
+            !TrySimulatePreparedGame(preparedGame, applyPerformanceDevelopmentDuringSim: true, out var finalState, out summary))
+        {
+            return false;
+        }
+
+        RecordCompletedGame(finalState);
+        FinalizeFranchiseScheduledGame(finalState, scheduledGame, advanceDateAfterGame);
+        return true;
+    }
+
+    private bool TryPrepareGameSimulation(ScheduleImportDto scheduledGame, out PreparedGameSimulation preparedGame, out string summary)
+    {
+        preparedGame = default;
+
         var awayTeam = FindTeamByName(scheduledGame.AwayTeamName);
         var homeTeam = FindTeamByName(scheduledGame.HomeTeamName);
         if (awayTeam == null || homeTeam == null)
@@ -938,7 +1016,15 @@ public sealed class FranchiseSession
         var useFranchiseSelectionsForHome = SelectedTeam != null && string.Equals(SelectedTeam.Name, homeTeam.Name, StringComparison.OrdinalIgnoreCase);
         var awaySnapshot = BuildTeamSnapshot(awayTeam, useFranchiseSelectionsForAway);
         var homeSnapshot = BuildTeamSnapshot(homeTeam, useFranchiseSelectionsForHome);
-        var engine = new MatchEngine(awaySnapshot, homeSnapshot);
+
+        preparedGame = new PreparedGameSimulation(scheduledGame, awaySnapshot, homeSnapshot, awayTeam.Abbreviation, homeTeam.Abbreviation);
+        summary = string.Empty;
+        return true;
+    }
+
+    private bool TrySimulatePreparedGame(PreparedGameSimulation preparedGame, bool applyPerformanceDevelopmentDuringSim, out MatchState finalState, out string summary)
+    {
+        var engine = new MatchEngine(preparedGame.AwaySnapshot, preparedGame.HomeSnapshot);
 
         while (!engine.CurrentState.IsGameOver)
         {
@@ -946,12 +1032,14 @@ public sealed class FranchiseSession
             var pitcher = engine.CurrentState.CurrentPitcher;
             var defensiveTeam = engine.CurrentState.DefensiveTeam;
             var result = engine.Tick();
-            ApplyPerformanceDevelopment(batter, pitcher, defensiveTeam, result);
+            if (applyPerformanceDevelopmentDuringSim)
+            {
+                ApplyPerformanceDevelopment(batter, pitcher, defensiveTeam, result);
+            }
         }
 
-        RecordCompletedGame(engine.CurrentState);
-        FinalizeFranchiseScheduledGame(engine.CurrentState, scheduledGame, advanceDateAfterGame);
-        summary = $"{awayTeam.Abbreviation} {engine.CurrentState.AwayTeam.Runs} - {engine.CurrentState.HomeTeam.Runs} {homeTeam.Abbreviation}.";
+        finalState = engine.CurrentState;
+        summary = $"{preparedGame.AwayAbbreviation} {finalState.AwayTeam.Runs} - {finalState.HomeTeam.Runs} {preparedGame.HomeAbbreviation}.";
         return true;
     }
 
@@ -2479,9 +2567,72 @@ public sealed class FranchiseSession
 
     private void SimulateRemainingLeagueGamesForDate(DateTime date)
     {
-        foreach (var game in GetRemainingScheduledGamesForDate(date))
+        SimulateGamesInParallel(GetRemainingScheduledGamesForDate(date));
+    }
+
+    private void SimulateGamesInParallel(IReadOnlyList<ScheduleImportDto> scheduledGames)
+    {
+        if (scheduledGames.Count == 0)
+        {
+            return;
+        }
+
+        if (scheduledGames.Count == 1)
+        {
+            TrySimulateScheduledGame(scheduledGames[0], advanceDateAfterGame: false, out _);
+            return;
+        }
+
+        var parallelizableGames = scheduledGames
+            .Where(game => SelectedTeam == null ||
+                           (!string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) &&
+                            !string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        var selectedTeamGames = scheduledGames
+            .Except(parallelizableGames)
+            .ToList();
+
+        foreach (var game in selectedTeamGames)
         {
             TrySimulateScheduledGame(game, advanceDateAfterGame: false, out _);
+        }
+
+        if (parallelizableGames.Count == 0)
+        {
+            return;
+        }
+
+        var preparedGames = new List<PreparedGameSimulation>();
+        foreach (var game in parallelizableGames)
+        {
+            if (TryPrepareGameSimulation(game, out var preparedGame, out _))
+            {
+                preparedGames.Add(preparedGame);
+            }
+        }
+
+        var outcomes = new System.Collections.Concurrent.ConcurrentBag<SimulatedGameOutcome>();
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount - 1)
+        };
+
+        Parallel.ForEach(preparedGames, options, preparedGame =>
+        {
+            if (TrySimulatePreparedGame(preparedGame, applyPerformanceDevelopmentDuringSim: false, out var finalState, out var summary))
+            {
+                outcomes.Add(new SimulatedGameOutcome(preparedGame.ScheduledGame, finalState, summary));
+            }
+        });
+
+        foreach (var outcome in outcomes
+                     .OrderBy(result => result.ScheduledGame.Date)
+                     .ThenBy(result => result.ScheduledGame.GameNumber ?? 1)
+                     .ThenBy(result => result.ScheduledGame.HomeTeamName))
+        {
+            RecordCompletedGame(outcome.FinalState);
+            FinalizeFranchiseScheduledGame(outcome.FinalState, outcome.ScheduledGame, advanceDateAfterGame: false);
         }
     }
 
@@ -3765,6 +3916,10 @@ public sealed class FranchiseSession
     private readonly record struct PracticeSessionInfo(TeamPracticeFocus Focus, bool IsLightWorkout, bool IsSpringTraining);
 
     private readonly record struct PracticeDevelopmentResult(string CoachRole, string PlayerName, string PrimaryPosition, PracticeDevelopmentAttribute Attribute, double Amount);
+
+    private readonly record struct PreparedGameSimulation(ScheduleImportDto ScheduledGame, MatchTeamState AwaySnapshot, MatchTeamState HomeSnapshot, string AwayAbbreviation, string HomeAbbreviation);
+
+    private readonly record struct SimulatedGameOutcome(ScheduleImportDto ScheduledGame, MatchState FinalState, string Summary);
 
     private readonly record struct TeamGameResult(DateTime Date, int GameNumber, bool WonGame);
 

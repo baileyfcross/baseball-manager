@@ -11,6 +11,7 @@ public sealed class FranchiseStateStore
     };
 
     private readonly string _filePath;
+    private readonly object _fileLock = new();
 
     public FranchiseStateStore()
     {
@@ -31,13 +32,16 @@ public sealed class FranchiseStateStore
 
     public void Save(FranchiseSaveState saveState)
     {
-        var directory = Path.GetDirectoryName(_filePath);
-        if (!string.IsNullOrWhiteSpace(directory))
+        lock (_fileLock)
         {
-            Directory.CreateDirectory(directory);
-        }
+            var directory = Path.GetDirectoryName(_filePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
 
-        var json = JsonSerializer.Serialize(saveState, JsonOptions);
-        File.WriteAllText(_filePath, json);
+            var json = JsonSerializer.Serialize(saveState, JsonOptions);
+            File.WriteAllText(_filePath, json);
+        }
     }
 }

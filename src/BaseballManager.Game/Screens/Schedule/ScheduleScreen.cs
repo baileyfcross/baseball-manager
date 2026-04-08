@@ -17,12 +17,16 @@ public sealed class ScheduleScreen : GameScreen
     private readonly ButtonControl _nextMonthButton;
     private readonly ButtonControl _practiceFocusPreviousButton;
     private readonly ButtonControl _practiceFocusNextButton;
+    private readonly ButtonControl _simSeasonButton;
+    private readonly ButtonControl _confirmSimSeasonButton;
+    private readonly ButtonControl _cancelSimSeasonButton;
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
+    private bool _showSeasonSimConfirmation;
     private Point _viewport = new(1280, 720);
     private DateTime _visibleMonth;
     private DateTime _selectedDate;
-    private string _statusMessage = "Off-days now include team practices and recovery sessions.";
+    private string _statusMessage = "Off-days now include team practices and recovery sessions. Use Sim Season to fast-forward to the regular-season finish.";
 
     private const int LayoutMargin = 48;
     private const int CalendarTop = 188;
@@ -57,24 +61,26 @@ public sealed class ScheduleScreen : GameScreen
             Label = ">",
             OnClick = () => ChangeSelectedDayPracticeFocus(1)
         };
+        _simSeasonButton = new ButtonControl
+        {
+            Label = "Sim Season",
+            OnClick = PromptSimToSeasonEnd
+        };
+        _confirmSimSeasonButton = new ButtonControl
+        {
+            Label = "Confirm",
+            OnClick = SimToSeasonEnd
+        };
+        _cancelSimSeasonButton = new ButtonControl
+        {
+            Label = "Cancel",
+            OnClick = CancelSeasonSim
+        };
     }
 
     public override void OnEnter()
     {
-        var franchiseDate = _franchiseSession.GetCurrentFranchiseDate().Date;
-        var seasonStart = GetCalendarStartDate();
-        var seasonEnd = GetCalendarEndDate();
-        if (franchiseDate < seasonStart)
-        {
-            franchiseDate = seasonStart;
-        }
-        else if (franchiseDate > seasonEnd)
-        {
-            franchiseDate = seasonEnd;
-        }
-
-        _visibleMonth = ClampVisibleMonth(new DateTime(franchiseDate.Year, franchiseDate.Month, 1));
-        _selectedDate = franchiseDate;
+        SyncCalendarToFranchiseDate();
         _ignoreClicksUntilRelease = true;
     }
 
@@ -97,6 +103,21 @@ public sealed class ScheduleScreen : GameScreen
             currentMouseState.LeftButton == ButtonState.Pressed)
         {
             var mousePosition = currentMouseState.Position;
+            if (_showSeasonSimConfirmation)
+            {
+                if (GetConfirmSimSeasonBounds().Contains(mousePosition))
+                {
+                    _confirmSimSeasonButton.Click();
+                }
+                else if (GetCancelSimSeasonBounds().Contains(mousePosition))
+                {
+                    _cancelSimSeasonButton.Click();
+                }
+
+                _previousMouseState = currentMouseState;
+                return;
+            }
+
             if (GetBackButtonBounds().Contains(mousePosition))
             {
                 _backButton.Click();
@@ -116,6 +137,10 @@ public sealed class ScheduleScreen : GameScreen
             else if (GetPracticeFocusRightBounds().Contains(mousePosition))
             {
                 _practiceFocusNextButton.Click();
+            }
+            else if (GetSimSeasonButtonBounds().Contains(mousePosition))
+            {
+                _simSeasonButton.Click();
             }
             else if (TrySelectCalendarDay(mousePosition))
             {
@@ -142,6 +167,7 @@ public sealed class ScheduleScreen : GameScreen
         var practiceFocusLeftBounds = GetPracticeFocusLeftBounds();
         var practiceFocusValueBounds = GetPracticeFocusValueBounds();
         var practiceFocusRightBounds = GetPracticeFocusRightBounds();
+        var simSeasonBounds = GetSimSeasonButtonBounds();
 
         uiRenderer.DrawText("Schedule / Training", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, 280, 22), Color.White, uiRenderer.UiSmallFont);
@@ -156,6 +182,7 @@ public sealed class ScheduleScreen : GameScreen
         uiRenderer.DrawButton(_practiceFocusPreviousButton.Label, practiceFocusLeftBounds, practiceFocusLeftBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
         uiRenderer.DrawButton(practiceFocusLabel, practiceFocusValueBounds, practiceFocusValueBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
         uiRenderer.DrawButton(_practiceFocusNextButton.Label, practiceFocusRightBounds, practiceFocusRightBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+        uiRenderer.DrawButton(_simSeasonButton.Label, simSeasonBounds, simSeasonBounds.Contains(mousePosition) ? Color.DarkRed : Color.Firebrick, Color.White);
 
         if (teamGames.Count == 0)
         {
@@ -168,6 +195,11 @@ public sealed class ScheduleScreen : GameScreen
         }
 
         uiRenderer.DrawButton(_backButton.Label, backBounds, backBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+
+        if (_showSeasonSimConfirmation)
+        {
+            DrawSeasonSimConfirmation(uiRenderer, mousePosition);
+        }
     }
 
     private void ChangeVisibleMonth(int monthOffset)
@@ -201,6 +233,44 @@ public sealed class ScheduleScreen : GameScreen
             : $"No team workout is scheduled for {_selectedDate:ddd, MMM d}, so {defaultMessage.ToLowerInvariant()}";
     }
 
+    private void PromptSimToSeasonEnd()
+    {
+        _showSeasonSimConfirmation = true;
+        _statusMessage = "Confirm the season sim to fast-forward through the rest of the regular season.";
+    }
+
+    private void SimToSeasonEnd()
+    {
+        _showSeasonSimConfirmation = false;
+        _franchiseSession.SimulateToEndOfSeason(out var message);
+        _statusMessage = message;
+        SyncCalendarToFranchiseDate();
+    }
+
+    private void CancelSeasonSim()
+    {
+        _showSeasonSimConfirmation = false;
+        _statusMessage = "Season sim canceled.";
+    }
+
+    private void SyncCalendarToFranchiseDate()
+    {
+        var franchiseDate = _franchiseSession.GetCurrentFranchiseDate().Date;
+        var seasonStart = GetCalendarStartDate();
+        var seasonEnd = GetCalendarEndDate();
+        if (franchiseDate < seasonStart)
+        {
+            franchiseDate = seasonStart;
+        }
+        else if (franchiseDate > seasonEnd)
+        {
+            franchiseDate = seasonEnd;
+        }
+
+        _visibleMonth = ClampVisibleMonth(new DateTime(franchiseDate.Year, franchiseDate.Month, 1));
+        _selectedDate = franchiseDate;
+    }
+
     private bool TrySelectCalendarDay(Point mousePosition)
     {
         var gridStartDate = GetGridStartDate();
@@ -231,6 +301,19 @@ public sealed class ScheduleScreen : GameScreen
         }
 
         return false;
+    }
+
+    private void DrawSeasonSimConfirmation(UiRenderer uiRenderer, Point mousePosition)
+    {
+        var panelBounds = GetSeasonSimPromptBounds();
+        var confirmBounds = GetConfirmSimSeasonBounds();
+        var cancelBounds = GetCancelSimSeasonBounds();
+
+        uiRenderer.DrawButton(string.Empty, panelBounds, new Color(28, 32, 40), Color.White);
+        uiRenderer.DrawTextInBounds("Sim entire season?", new Rectangle(panelBounds.X + 12, panelBounds.Y + 10, panelBounds.Width - 24, 24), Color.Gold, uiRenderer.UiMediumFont, centerHorizontally: true);
+        uiRenderer.DrawWrappedTextInBounds("This will fast-forward every remaining regular-season day, including scheduled games, practices, and recovery sessions.", new Rectangle(panelBounds.X + 18, panelBounds.Y + 42, panelBounds.Width - 36, 48), Color.White, uiRenderer.UiSmallFont, 3);
+        uiRenderer.DrawButton(_confirmSimSeasonButton.Label, confirmBounds, confirmBounds.Contains(mousePosition) ? Color.DarkRed : Color.Firebrick, Color.White);
+        uiRenderer.DrawButton(_cancelSimSeasonButton.Label, cancelBounds, cancelBounds.Contains(mousePosition) ? Color.DarkSlateGray : Color.SlateGray, Color.White);
     }
 
     private void DrawMonthCalendar(UiRenderer uiRenderer, IReadOnlyList<ScheduleDisplayRow> teamGames)
@@ -507,6 +590,30 @@ public sealed class ScheduleScreen : GameScreen
     {
         var valueBounds = GetPracticeFocusValueBounds();
         return new Rectangle(valueBounds.X - 80, 78, valueBounds.Width + 160, 18);
+    }
+
+    private Rectangle GetSimSeasonButtonBounds()
+    {
+        return new Rectangle(Math.Max(LayoutMargin + 840, _viewport.X - 220), 144, 160, 36);
+    }
+
+    private Rectangle GetSeasonSimPromptBounds()
+    {
+        var width = Math.Min(560, Math.Max(420, _viewport.X - 220));
+        var height = 138;
+        return new Rectangle((_viewport.X - width) / 2, Math.Max(170, (_viewport.Y - height) / 2), width, height);
+    }
+
+    private Rectangle GetConfirmSimSeasonBounds()
+    {
+        var panelBounds = GetSeasonSimPromptBounds();
+        return new Rectangle(panelBounds.X + 56, panelBounds.Bottom - 44, 180, 30);
+    }
+
+    private Rectangle GetCancelSimSeasonBounds()
+    {
+        var panelBounds = GetSeasonSimPromptBounds();
+        return new Rectangle(panelBounds.Right - 236, panelBounds.Bottom - 44, 180, 30);
     }
 
     private int GetCellWidth()
