@@ -1,0 +1,56 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v9.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v9.0": {
+      "BaseballManager.Application/1.0.0": {
+        "dependencies": {
+          "BaseballManager.Core": "1.0.0",
+          "BaseballManager.Sim": "1.0.0"
+        },
+        "runtime": {
+          "BaseballManager.Application.dll": {}
+        }
+      },
+      "BaseballManager.Core/1.0.0": {
+        "runtime": {
+          "BaseballManager.Core.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "BaseballManager.Sim/1.0.0": {
+        "dependencies": {
+          "BaseballManager.Core": "1.0.0"
+        },
+        "runtime": {
+          "BaseballManager.Sim.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "BaseballManager.Application/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "BaseballManager.Core/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "BaseballManager.Sim/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
