@@ -14,7 +14,8 @@ public sealed record ScoutingPlayerCard(
     string PrimaryPosition,
     string SecondaryPosition,
     int Age,
-    bool IsOnSelectedTeam);
+    bool IsOnSelectedTeam,
+    decimal TransferFee = 0m);
 
 public sealed record CoachScoutingReport(
     string CoachName,

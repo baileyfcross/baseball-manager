@@ -33,6 +33,7 @@ public sealed class RosterScreen : GameScreen
     private string? _sortColumnMedicalReport;
     private string? _sortColumnHiddenRatings;
     private string? _sortColumnTrainingGrowth;
+    private string? _sortColumnContracts;
     private bool _sortAscending = true;
     private readonly Dictionary<string, Rectangle> _headerHitBoxes = new();
     private Point _viewport = new(1280, 720);
@@ -198,6 +199,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.MedicalReport => "Roster - Medical Report",
             RosterViewMode.HiddenRatings => "Roster - Secret Attributes",
             RosterViewMode.TrainingGrowth => "Roster - Training Growth",
+            RosterViewMode.Contracts => "Roster - Contracts",
             _ => "Roster"
         };
 
@@ -294,6 +296,22 @@ public sealed class RosterScreen : GameScreen
                 case RosterViewMode.TrainingGrowth:
                     DrawTrainingGrowthHeader(uiRenderer);
                     DrawTrainingGrowthRows(uiRenderer, visibleRows);
+                    break;
+
+                case RosterViewMode.Contracts:
+                    DrawContractsHeader(uiRenderer);
+                    for (var i = 0; i < visibleRows.Count; i++)
+                    {
+                        var row = visibleRows[i];
+                        var line = string.Format(
+                            "{0,-18} {1,-3} {2,3}  {3,7}  {4,2}yr",
+                            Truncate(row.PlayerName, 18),
+                            row.PrimaryPosition,
+                            row.Age,
+                            FormatSalary(row.AnnualSalary),
+                            row.ContractYears);
+                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
+                    }
                     break;
 
                 default:
@@ -478,7 +496,8 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.LastSeasonStats,
             RosterViewMode.ScoutNotes,
             RosterViewMode.MedicalReport,
-            RosterViewMode.HiddenRatings
+            RosterViewMode.HiddenRatings,
+            RosterViewMode.Contracts
         ];
     }
 
@@ -649,6 +668,24 @@ public sealed class RosterScreen : GameScreen
         }
     }
 
+    private void DrawContractsHeader(UiRenderer uiRenderer)
+    {
+        _headerHitBoxes.Clear();
+        var headerBuilder = new System.Text.StringBuilder();
+
+        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.Contracts);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.Contracts);
+        AppendStatic(headerBuilder, " ");
+        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.Contracts);
+        AppendStatic(headerBuilder, "  ");
+        AppendColumn(headerBuilder, uiRenderer, "SALARY", 7, RosterViewMode.Contracts);
+        AppendStatic(headerBuilder, "  ");
+        AppendColumn(headerBuilder, uiRenderer, "YRS", 4, RosterViewMode.Contracts);
+
+        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
+    }
+
     private static void AppendStatic(System.Text.StringBuilder builder, string value)
     {
         builder.Append(value);
@@ -700,6 +737,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.MedicalReport => _sortColumnMedicalReport,
             RosterViewMode.HiddenRatings => _sortColumnHiddenRatings,
             RosterViewMode.TrainingGrowth => _sortColumnTrainingGrowth,
+            RosterViewMode.Contracts => _sortColumnContracts,
             _ => null
         };
     }
@@ -751,6 +789,9 @@ public sealed class RosterScreen : GameScreen
                 case RosterViewMode.TrainingGrowth:
                     _sortColumnTrainingGrowth = columnName;
                     break;
+                case RosterViewMode.Contracts:
+                    _sortColumnContracts = columnName;
+                    break;
             }
 
             _sortAscending = true;
@@ -788,6 +829,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.MedicalReport => SortMedicalRows(rows, currentSort),
             RosterViewMode.HiddenRatings => SortHiddenRatingsRows(rows, currentSort),
             RosterViewMode.TrainingGrowth => SortTrainingGrowthRows(rows, currentSort),
+            RosterViewMode.Contracts => SortContractsRows(rows, currentSort),
             _ => rows
         };
 
@@ -906,6 +948,19 @@ public sealed class RosterScreen : GameScreen
         };
     }
 
+    private static List<RosterDisplayRow> SortContractsRows(List<RosterDisplayRow> rows, string columnName)
+    {
+        return columnName switch
+        {
+            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
+            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
+            "AGE" => rows.OrderBy(r => r.Age).ToList(),
+            "SALARY" => rows.OrderBy(r => r.AnnualSalary).ToList(),
+            "YRS" => rows.OrderBy(r => r.ContractYears).ToList(),
+            _ => rows
+        };
+    }
+
     private List<RosterDisplayRow> ApplyRosterFilter(List<RosterDisplayRow> rows)
     {
         return _filterMode switch
@@ -938,10 +993,13 @@ public sealed class RosterScreen : GameScreen
 
     private List<RosterDisplayRow> GetRosterRows()
     {
+        var economy = _franchiseSession.GetSelectedTeamEconomy();
+        var contractsByPlayerId = economy.PlayerContracts.ToDictionary(c => c.SubjectId, c => c);
         return _franchiseSession.GetSelectedTeamRoster()
             .Select(row =>
             {
                 var hiddenRatings = _franchiseSession.GetPlayerRatings(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age);
+                contractsByPlayerId.TryGetValue(row.PlayerId, out var contract);
                 return new RosterDisplayRow(
                     row.PlayerId,
                     row.PlayerName,
@@ -956,7 +1014,9 @@ public sealed class RosterScreen : GameScreen
                     _franchiseSession.GetPlayerHealth(row.PlayerId),
                     _franchiseSession.GetPlayerMedicalStatus(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
                     _franchiseSession.GetPlayerMedicalReport(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
-                    BuildTrainingGrowthSummary(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age, hiddenRatings));
+                    BuildTrainingGrowthSummary(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age, hiddenRatings),
+                    contract?.AnnualSalary ?? 0m,
+                    contract?.YearsRemaining ?? 0);
             })
             .ToList();
     }
@@ -996,6 +1056,7 @@ public sealed class RosterScreen : GameScreen
             RosterViewMode.MedicalReport => "Medical Report",
             RosterViewMode.HiddenRatings => "Secret Attributes",
             RosterViewMode.TrainingGrowth => "Training Growth",
+            RosterViewMode.Contracts => "Contracts",
             _ => "Roster"
         };
     }
@@ -1073,6 +1134,11 @@ public sealed class RosterScreen : GameScreen
         return Math.Round(value * 2d, MidpointRounding.AwayFromZero) / 2d;
     }
 
+    private static string FormatSalary(decimal salary)
+    {
+        return salary >= 1_000_000m ? $"${salary / 1_000_000m:0.0}M" : $"${salary / 1_000m:0}K";
+    }
+
     private static string FormatSignedValue(double value)
     {
         var rounded = RoundToHalf(value);
@@ -1103,7 +1169,9 @@ public sealed class RosterScreen : GameScreen
         PlayerHealthState Health,
         string MedicalStatus,
         string MedicalReport,
-        TrainingGrowthSummary TrainingGrowth);
+        TrainingGrowthSummary TrainingGrowth,
+        decimal AnnualSalary,
+        int ContractYears);
 
     private sealed record TrainingGrowthSummary(double TotalGain, double OverallGain, string TopDetails);
 
@@ -1117,7 +1185,8 @@ public sealed class RosterScreen : GameScreen
         ScoutNotes,
         MedicalReport,
         HiddenRatings,
-        TrainingGrowth
+        TrainingGrowth,
+        Contracts
     }
 
     private enum RosterFilterMode

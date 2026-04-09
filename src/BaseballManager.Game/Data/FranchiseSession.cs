@@ -9,6 +9,8 @@ namespace BaseballManager.Game.Data;
 
 public sealed class FranchiseSession
 {
+    private const int MaxRosterSize = 40;
+
     private enum PracticeDevelopmentAttribute
     {
         Contact,
@@ -497,12 +499,15 @@ public sealed class FranchiseSession
     {
         var selectedTeamName = SelectedTeam?.Name;
         var teamsByName = _leagueData.Teams.ToDictionary(team => team.Name, team => team, StringComparer.OrdinalIgnoreCase);
+        var contractsByPlayerId = GetContractsByPlayerId();
 
         return _leagueData.Players
             .Select(player =>
             {
                 var assignedTeamName = GetAssignedTeamName(player.PlayerId, player.TeamName);
                 teamsByName.TryGetValue(assignedTeamName, out var team);
+                var isOnSelectedTeam = selectedTeamName != null && string.Equals(assignedTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase);
+                var fee = isOnSelectedTeam ? 0m : CalculateAcquisitionCost(player, assignedTeamName, contractsByPlayerId);
 
                 return new ScoutingPlayerCard(
                     player.PlayerId,
@@ -512,7 +517,8 @@ public sealed class FranchiseSession
                     player.PrimaryPosition,
                     player.SecondaryPosition,
                     player.Age,
-                    selectedTeamName != null && string.Equals(assignedTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase));
+                    isOnSelectedTeam,
+                    fee);
             })
             .OrderBy(card => card.IsOnSelectedTeam)
             .ThenBy(card => card.TeamName)
@@ -528,6 +534,8 @@ public sealed class FranchiseSession
             return [];
         }
 
+        var contractsByPlayerId = GetContractsByPlayerId();
+
         return GetSelectedTeamRoster()
             .OrderBy(player => player.RotationSlot ?? 99)
             .ThenBy(player => player.LineupSlot ?? 99)
@@ -540,7 +548,11 @@ public sealed class FranchiseSession
                 player.PrimaryPosition,
                 player.SecondaryPosition,
                 player.Age,
-                true))
+                true,
+                CalculateAcquisitionCost(
+                    FindPlayerImport(player.PlayerId)!,
+                    SelectedTeam.Name,
+                    contractsByPlayerId)))
             .ToList();
     }
 
@@ -1026,6 +1038,277 @@ public sealed class FranchiseSession
         return true;
     }
 
+    public bool TryBuyPlayer(Guid targetPlayerId, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a franchise team before making a move.";
+            return false;
+        }
+
+        var targetPlayer = FindPlayerImport(targetPlayerId);
+        if (targetPlayer == null)
+        {
+            statusMessage = "Player not found in the league database.";
+            return false;
+        }
+
+        var selectedTeamName = SelectedTeam.Name;
+        var targetTeamName = GetAssignedTeamName(targetPlayerId, targetPlayer.TeamName);
+
+        if (string.Equals(targetTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = $"{targetPlayer.FullName} is already on your roster.";
+            return false;
+        }
+
+        var selectedTeamState = GetOrCreateTeamState(selectedTeamName);
+        var targetTeamState = GetOrCreateTeamState(targetTeamName);
+        var contractsByPlayerId = GetContractsByPlayerId();
+        var transferFee = CalculateAcquisitionCost(targetPlayer, targetTeamName, contractsByPlayerId);
+        var transferBudget = GetTransferBudget();
+
+        if (!HasRosterRoom(selectedTeamName, incomingPlayers: 1, outgoingPlayers: 0))
+        {
+            statusMessage = $"Roster limit reached. You already have {GetTeamRosterCount(selectedTeamName)} players and cannot exceed {MaxRosterSize}.";
+            return false;
+        }
+
+        if (transferFee > transferBudget)
+        {
+            statusMessage = $"Not enough budget. {targetPlayer.FullName} costs {GetBudgetDisplay(transferFee)} but you only have {GetBudgetDisplay(transferBudget)} available after payroll reserve.";
+            return false;
+        }
+
+        selectedTeamState.Economy.CashOnHand = decimal.Round(selectedTeamState.Economy.CashOnHand - transferFee, 2);
+        targetTeamState.Economy.CashOnHand = decimal.Round(targetTeamState.Economy.CashOnHand + (transferFee * 0.5m), 2);
+        selectedTeamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(selectedTeamState.Economy);
+        targetTeamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(targetTeamState.Economy);
+
+        _saveState.PlayerAssignments[targetPlayerId] = selectedTeamName;
+        InitializeLineupSlots(selectedTeamState, selectedTeamName);
+        InitializeRotationSlots(selectedTeamState, selectedTeamName);
+        InitializeLineupSlots(targetTeamState, targetTeamName);
+        InitializeRotationSlots(targetTeamState, targetTeamName);
+        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
+
+        MovePlayerContract(targetPlayerId, targetTeamState.Economy, selectedTeamState.Economy, targetPlayer.FullName);
+
+        var ratings = GetPlayerRatings(targetPlayer.PlayerId, targetPlayer.FullName, targetPlayer.PrimaryPosition, targetPlayer.SecondaryPosition, targetPlayer.Age);
+        var interestGain = ratings.OverallRating switch { >= 80 => 3, >= 70 => 1, _ => 0 };
+        selectedTeamState.Economy.FanInterest = Math.Clamp(selectedTeamState.Economy.FanInterest + interestGain, 10, 100);
+        selectedTeamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(selectedTeamState.Economy);
+
+        FinanceMath.AddSnapshot(selectedTeamState.Economy, new FinancialSnapshot
+        {
+            EffectiveDate = GetCurrentFranchiseDate(),
+            Category = "Transfer Fee",
+            Revenue = 0m,
+            Expenses = transferFee,
+            Attendance = 0,
+            FanInterest = selectedTeamState.Economy.FanInterest,
+            CashAfter = selectedTeamState.Economy.CashOnHand,
+            Notes = $"Bought {targetPlayer.FullName} ({targetPlayer.PrimaryPosition}) from {targetTeamName} for {GetBudgetDisplay(transferFee)}."
+        });
+
+        AddTransferRecord(selectedTeamName, $"Signed {targetPlayer.FullName} from {targetTeamName} for {GetBudgetDisplay(transferFee)}.");
+        AddTransferRecord(targetTeamName, $"Sold {targetPlayer.FullName} to {selectedTeamName} for {GetBudgetDisplay(transferFee)}.");
+        Save();
+
+        statusMessage = $"{targetPlayer.FullName} joins {selectedTeamName} for {GetBudgetDisplay(transferFee)}.";
+        return true;
+    }
+
+    public bool TryTradeForPlayerPackage(Guid targetPlayerId, IReadOnlyList<Guid> offeredPlayerIds, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before trying to make a move.";
+            return false;
+        }
+
+        if (offeredPlayerIds.Count == 0)
+        {
+            statusMessage = "Choose at least one outgoing player for a trade package, or use the Buy option.";
+            return false;
+        }
+
+        var selectedTeamName = SelectedTeam.Name;
+        var targetPlayer = FindPlayerImport(targetPlayerId);
+        if (targetPlayer == null)
+        {
+            statusMessage = "Player not found in the league database.";
+            return false;
+        }
+
+        var targetTeamName = GetAssignedTeamName(targetPlayerId, targetPlayer.TeamName);
+        if (string.Equals(targetTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = $"{targetPlayer.FullName} is already on your roster.";
+            return false;
+        }
+
+        var uniqueOfferedIds = offeredPlayerIds
+            .Distinct()
+            .Where(playerId => playerId != targetPlayerId)
+            .ToList();
+        if (uniqueOfferedIds.Count == 0)
+        {
+            statusMessage = "Select at least one valid outgoing player for the trade package.";
+            return false;
+        }
+
+        var offeredPlayers = new List<PlayerImportDto>();
+        foreach (var offeredPlayerId in uniqueOfferedIds)
+        {
+            var offeredPlayer = FindPlayerImport(offeredPlayerId);
+            if (offeredPlayer == null)
+            {
+                statusMessage = "One of the offered players could not be found.";
+                return false;
+            }
+
+            var offeredTeamName = GetAssignedTeamName(offeredPlayerId, offeredPlayer.TeamName);
+            if (!string.Equals(offeredTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+            {
+                statusMessage = $"{offeredPlayer.FullName} is not on your roster.";
+                return false;
+            }
+
+            offeredPlayers.Add(offeredPlayer);
+        }
+
+        if (!HasRosterRoom(selectedTeamName, incomingPlayers: 1, outgoingPlayers: uniqueOfferedIds.Count))
+        {
+            statusMessage = $"Trade would exceed the {MaxRosterSize}-player roster cap.";
+            return false;
+        }
+
+        var contractsByPlayerId = GetContractsByPlayerId();
+        var askingPrice = CalculateAcquisitionCost(targetPlayer, targetTeamName, contractsByPlayerId);
+        var packageValue = offeredPlayers.Sum(player => GetTradeChipValueForTeam(player.PlayerId, targetTeamName));
+        var requiredValue = decimal.Round(askingPrice * 0.93m, 0);
+        if (packageValue < requiredValue)
+        {
+            statusMessage = $"{targetTeamName} declines. Package value is {GetBudgetDisplay(packageValue)} but they want about {GetBudgetDisplay(requiredValue)} in return.";
+            return false;
+        }
+
+        var selectedTeamState = GetOrCreateTeamState(selectedTeamName);
+        var targetTeamState = GetOrCreateTeamState(targetTeamName);
+        InitializeLineupSlots(selectedTeamState, selectedTeamName);
+        InitializeRotationSlots(selectedTeamState, selectedTeamName);
+        InitializeLineupSlots(targetTeamState, targetTeamName);
+        InitializeRotationSlots(targetTeamState, targetTeamName);
+
+        var firstOfferedPlayerId = uniqueOfferedIds[0];
+        var incomingLineupIndex = FindPlayerSlotIndex(selectedTeamState.LineupSlots, firstOfferedPlayerId);
+        var incomingRotationIndex = FindPlayerSlotIndex(selectedTeamState.RotationSlots, firstOfferedPlayerId);
+        var targetLineupIndex = FindPlayerSlotIndex(targetTeamState.LineupSlots, targetPlayerId);
+        var targetRotationIndex = FindPlayerSlotIndex(targetTeamState.RotationSlots, targetPlayerId);
+
+        _saveState.PlayerAssignments[targetPlayerId] = selectedTeamName;
+        foreach (var offeredPlayerId in uniqueOfferedIds)
+        {
+            _saveState.PlayerAssignments[offeredPlayerId] = targetTeamName;
+        }
+
+        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
+        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
+
+        foreach (var offeredPlayerId in uniqueOfferedIds)
+        {
+            ClearPlayerFromSlots(selectedTeamState.LineupSlots, offeredPlayerId);
+            ClearPlayerFromSlots(selectedTeamState.RotationSlots, offeredPlayerId);
+            ClearPlayerFromSlots(targetTeamState.LineupSlots, offeredPlayerId);
+            ClearPlayerFromSlots(targetTeamState.RotationSlots, offeredPlayerId);
+        }
+
+        TryAssignPlayerToPreviousSlots(selectedTeamState, targetPlayerId, targetPlayer.PrimaryPosition, incomingLineupIndex, incomingRotationIndex);
+
+        for (var i = 0; i < offeredPlayers.Count; i++)
+        {
+            var offeredPlayer = offeredPlayers[i];
+            var lineupIndex = i == 0 ? targetLineupIndex : -1;
+            var rotationIndex = i == 0 ? targetRotationIndex : -1;
+            TryAssignPlayerToPreviousSlots(targetTeamState, offeredPlayer.PlayerId, offeredPlayer.PrimaryPosition, lineupIndex, rotationIndex);
+        }
+
+        MovePlayerContract(targetPlayerId, targetTeamState.Economy, selectedTeamState.Economy, targetPlayer.FullName);
+        foreach (var offeredPlayer in offeredPlayers)
+        {
+            MovePlayerContract(offeredPlayer.PlayerId, selectedTeamState.Economy, targetTeamState.Economy, offeredPlayer.FullName);
+        }
+
+        var outgoingLabel = string.Join(", ", offeredPlayers.Select(player => player.FullName));
+        AddTransferRecord(selectedTeamName, $"Acquired {targetPlayer.FullName} from {targetTeamName} for {outgoingLabel}.");
+        AddTransferRecord(targetTeamName, $"Sent {targetPlayer.FullName} to {selectedTeamName} for {outgoingLabel}.");
+        ApplyTradeFanInterestShift(selectedTeamState.Economy, targetPlayer, offeredPlayers[0]);
+        Save();
+
+        statusMessage = $"Deal complete: {targetPlayer.FullName} joins {selectedTeamName} for {outgoingLabel}.";
+        return true;
+    }
+
+    public int GetSelectedTeamRosterCount()
+    {
+        return SelectedTeam == null ? 0 : GetTeamRosterCount(SelectedTeam.Name);
+    }
+
+    public decimal GetPlayerAskingPrice(Guid playerId)
+    {
+        var player = FindPlayerImport(playerId);
+        if (player == null)
+        {
+            return 0m;
+        }
+
+        var owningTeamName = GetAssignedTeamName(playerId, player.TeamName);
+        var contractsByPlayerId = GetContractsByPlayerId();
+        return CalculateAcquisitionCost(player, owningTeamName, contractsByPlayerId);
+    }
+
+    public decimal GetTradeChipValueForTeam(Guid playerId, string receivingTeamName)
+    {
+        var player = FindPlayerImport(playerId);
+        if (player == null)
+        {
+            return 0m;
+        }
+
+        var contractsByPlayerId = GetContractsByPlayerId();
+        var currentTeamName = GetAssignedTeamName(playerId, player.TeamName);
+        var baseValue = CalculateAcquisitionCost(player, currentTeamName, contractsByPlayerId);
+        var multiplier = GetPositionNeedMultiplier(receivingTeamName, player.PrimaryPosition);
+        return decimal.Round(baseValue * multiplier, 0);
+    }
+
+    public string GetTeamPositionNeedLabel(string teamName, string position)
+    {
+        var multiplier = GetPositionNeedMultiplier(teamName, position);
+        if (multiplier >= 1.25m)
+        {
+            return "High Need";
+        }
+
+        if (multiplier >= 1.10m)
+        {
+            return "Need";
+        }
+
+        if (multiplier <= 0.85m)
+        {
+            return "Low Need";
+        }
+
+        return "Balanced";
+    }
+
     public IReadOnlyList<string> GetRecentTransferSummaries(int maxCount = 4)
     {
         if (SelectedTeam == null)
@@ -1091,6 +1374,18 @@ public sealed class FranchiseSession
         return SelectedTeam == null
             ? new TeamEconomy()
             : GetOrCreateTeamState(SelectedTeam.Name).Economy;
+    }
+
+    public decimal GetTransferBudget()
+    {
+        if (SelectedTeam == null)
+        {
+            return 0m;
+        }
+
+        var economy = GetOrCreateTeamState(SelectedTeam.Name).Economy;
+        var annualPayrollCommitment = economy.PlayerPayroll + economy.CoachPayroll;
+        return Math.Max(0m, decimal.Round(economy.CashOnHand - annualPayrollCommitment, 2));
     }
 
     public IReadOnlyList<FinancialSnapshot> GetRecentFinancialSnapshots(int maxCount = 8)
@@ -2138,6 +2433,118 @@ public sealed class FranchiseSession
         };
 
         return decimal.Round(baseSalary + ((GetStableHash($"{teamName}|{role}|coach-salary") % 7) * 35_000m), 2);
+    }
+
+    private decimal CalculateTransferFee(PlayerImportDto player, Dictionary<Guid, Contract> contractsByPlayerId)
+    {
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        contractsByPlayerId.TryGetValue(player.PlayerId, out var contract);
+        var salary = contract?.AnnualSalary ?? EstimatePlayerSalary(player);
+        var yearsRemaining = contract?.YearsRemaining ?? 2;
+        return ComputeTransferFee(ratings.OverallRating, player.Age, salary, yearsRemaining);
+    }
+
+    private decimal CalculateAcquisitionCost(PlayerImportDto player, string owningTeamName, Dictionary<Guid, Contract> contractsByPlayerId)
+    {
+        var baseFee = CalculateTransferFee(player, contractsByPlayerId);
+        var retentionMultiplier = GetPositionNeedMultiplier(owningTeamName, player.PrimaryPosition);
+        return decimal.Round(baseFee * retentionMultiplier, 0);
+    }
+
+    private Dictionary<Guid, Contract> GetContractsByPlayerId()
+    {
+        return _leagueData.Teams
+            .SelectMany(team => GetOrCreateTeamState(team.Name).Economy.PlayerContracts)
+            .GroupBy(contract => contract.SubjectId)
+            .ToDictionary(group => group.Key, group => group.First());
+    }
+
+    private bool HasRosterRoom(string teamName, int incomingPlayers, int outgoingPlayers)
+    {
+        var projectedCount = GetTeamRosterCount(teamName) + incomingPlayers - outgoingPlayers;
+        return projectedCount <= MaxRosterSize;
+    }
+
+    private int GetTeamRosterCount(string teamName)
+    {
+        return _leagueData.Players.Count(player =>
+            string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private decimal GetPositionNeedMultiplier(string teamName, string position)
+    {
+        var normalizedPosition = NormalizeRosterPosition(position);
+        var roster = GetTeamRoster(teamName);
+        var countAtPosition = roster.Count(entry => string.Equals(NormalizeRosterPosition(entry.PrimaryPosition), normalizedPosition, StringComparison.OrdinalIgnoreCase));
+        var targetDepth = GetTargetDepth(normalizedPosition);
+
+        if (countAtPosition <= targetDepth - 2)
+        {
+            return 1.35m;
+        }
+
+        if (countAtPosition <= targetDepth - 1)
+        {
+            return 1.18m;
+        }
+
+        if (countAtPosition == targetDepth)
+        {
+            return 1.05m;
+        }
+
+        if (countAtPosition == targetDepth + 1)
+        {
+            return 0.94m;
+        }
+
+        return 0.82m;
+    }
+
+    private static int GetTargetDepth(string normalizedPosition)
+    {
+        return normalizedPosition switch
+        {
+            "SP" => 5,
+            "RP" => 7,
+            "C" => 2,
+            "1B" => 2,
+            "2B" => 2,
+            "3B" => 2,
+            "SS" => 2,
+            "OF" => 5,
+            "DH" => 1,
+            _ => 2
+        };
+    }
+
+    private static string NormalizeRosterPosition(string position)
+    {
+        if (string.IsNullOrWhiteSpace(position))
+        {
+            return "OF";
+        }
+
+        return position.ToUpperInvariant() switch
+        {
+            "LF" or "CF" or "RF" => "OF",
+            var value => value
+        };
+    }
+
+    private static decimal ComputeTransferFee(int overallRating, int age, decimal annualSalary, int yearsRemaining)
+    {
+        var ovrFactor = 1.0m + (Math.Max(0, overallRating - 50) * 0.028m);
+        var ageFactor = age switch
+        {
+            <= 25 => 1.35m,
+            <= 28 => 1.15m,
+            <= 31 => 1.0m,
+            <= 34 => 0.85m,
+            _ => 0.70m
+        };
+        var yearsFactor = 1.0m + (Math.Clamp(yearsRemaining, 1, 5) * 0.10m);
+        return decimal.Round(annualSalary * ovrFactor * ageFactor * yearsFactor, 0);
     }
 
     private static MarketSize DetermineMarketSize(TeamImportDto? team)
@@ -3384,12 +3791,21 @@ public sealed class FranchiseSession
         {
             foreach (var team in _leagueData.Teams)
             {
-                var economy = GetOrCreateTeamState(team.Name).Economy;
-                _processMonthlyFinanceUseCase.Execute(economy, nextMonth, $"{nextMonth:MMMM yyyy} operating cycle");
+                var teamState = GetOrCreateTeamState(team.Name);
+                EnsureTeamEconomyInitialized(teamState, team.Name);
+                var economy = teamState.Economy;
+                _processMonthlyFinanceUseCase.Execute(economy, nextMonth, BuildMonthlyFinanceNotes(nextMonth, economy));
             }
 
             nextMonth = nextMonth.AddMonths(1);
         }
+    }
+
+    private static string BuildMonthlyFinanceNotes(DateTime processDate, TeamEconomy economy)
+    {
+        var playerPayrollExpense = decimal.Round(economy.PlayerPayroll / 12m, 2);
+        var coachPayrollExpense = decimal.Round(economy.CoachPayroll / 12m, 2);
+        return $"{processDate:MMMM yyyy} operating cycle (Player payroll: {GetBudgetDisplay(playerPayrollExpense)}, Staff payroll: {GetBudgetDisplay(coachPayrollExpense)}).";
     }
 
     private void SimulateLeagueGamesBetweenDates(DateTime currentDate, DateTime targetDate)

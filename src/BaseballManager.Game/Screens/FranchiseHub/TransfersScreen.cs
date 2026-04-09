@@ -10,6 +10,7 @@ namespace BaseballManager.Game.Screens.FranchiseHub;
 public sealed class TransfersScreen : GameScreen
 {
     private const int PageSize = 8;
+    private const int RosterCap = 40;
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
@@ -17,20 +18,29 @@ public sealed class TransfersScreen : GameScreen
     private readonly ButtonControl _filterButton;
     private readonly ButtonControl _marketPreviousButton;
     private readonly ButtonControl _marketNextButton;
-    private readonly ButtonControl _offerPreviousButton;
-    private readonly ButtonControl _offerNextButton;
     private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private MouseState _previousMouseState = default;
     private Point _viewport = new(1280, 720);
     private bool _ignoreClicksUntilRelease = true;
     private int _marketPageIndex;
-    private int _offerPageIndex;
     private bool _showFilterDropdown;
+    private bool _showTransactionMenu;
     private ScoutingFilterMode _filterMode = ScoutingFilterMode.All;
     private string _selectedCoachRole = "Scouting Director";
     private Guid? _selectedPlayerId;
-    private Guid? _selectedOfferPlayerId;
-    private string _statusMessage = "Review the market, talk to your coaches, and line up a swap.";
+    private Guid? _transactionTargetPlayerId;
+    private int _tradeChipPageIndex;
+    private readonly HashSet<Guid> _selectedTradeChipIds = new();
+    private bool _marketCacheDirty = true;
+    private bool _transactionCacheDirty = true;
+    private List<ScoutingPlayerCard> _scoutingBoardCache = new();
+    private List<ScoutingPlayerCard> _marketPlayersCache = new();
+    private List<ScoutingPlayerCard> _tradeChipCache = new();
+    private readonly Dictionary<Guid, decimal> _tradeChipAdjustedValueCache = new();
+    private readonly Dictionary<Guid, string> _tradeChipNeedLabelCache = new();
+    private decimal _transactionAskingPrice;
+    private string _transactionOwningTeamName = string.Empty;
+    private string _statusMessage = "Browse the transfer market, then open a transaction to buy or build a trade package.";
 
     public TransfersScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -43,8 +53,8 @@ public sealed class TransfersScreen : GameScreen
         };
         _tradeButton = new ButtonControl
         {
-            Label = "Swap Players",
-            OnClick = CompleteTrade
+            Label = "Open Transaction",
+            OnClick = OpenTransactionMenu
         };
         _filterButton = new ButtonControl
         {
@@ -61,22 +71,17 @@ public sealed class TransfersScreen : GameScreen
             Label = "Next",
             OnClick = () => _marketPageIndex++
         };
-        _offerPreviousButton = new ButtonControl
-        {
-            Label = "Prev",
-            OnClick = () => _offerPageIndex = Math.Max(0, _offerPageIndex - 1)
-        };
-        _offerNextButton = new ButtonControl
-        {
-            Label = "Next",
-            OnClick = () => _offerPageIndex++
-        };
     }
 
     public override void OnEnter()
     {
         _ignoreClicksUntilRelease = true;
         _showFilterDropdown = false;
+        _showTransactionMenu = false;
+        _transactionTargetPlayerId = null;
+        _selectedTradeChipIds.Clear();
+        _tradeChipPageIndex = 0;
+        MarkAllCachesDirty();
         RefreshSelections();
     }
 
@@ -98,6 +103,12 @@ public sealed class TransfersScreen : GameScreen
         if (_previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed)
         {
             var mousePosition = currentMouseState.Position;
+
+            if (_showTransactionMenu && TryHandleTransactionClick(mousePosition))
+            {
+                _previousMouseState = currentMouseState;
+                return;
+            }
 
             if (_backButtonBounds.Contains(mousePosition))
             {
@@ -121,31 +132,16 @@ public sealed class TransfersScreen : GameScreen
             }
             else if (GetMarketNextBounds().Contains(mousePosition))
             {
-                var maxPage = GetMaxPage(ApplyFilter(_franchiseSession.GetScoutingBoardPlayers()).Count);
+                var maxPage = GetMaxPage(GetMarketPlayers().Count);
                 if (_marketPageIndex < maxPage)
                 {
                     _marketNextButton.Click();
-                }
-            }
-            else if (GetOfferPreviousBounds().Contains(mousePosition))
-            {
-                _offerPreviousButton.Click();
-            }
-            else if (GetOfferNextBounds().Contains(mousePosition))
-            {
-                var maxPage = GetMaxPage(_franchiseSession.GetTradeChipPlayers().Count);
-                if (_offerPageIndex < maxPage)
-                {
-                    _offerNextButton.Click();
                 }
             }
             else if (TrySelectCoach(mousePosition))
             {
             }
             else if (TrySelectMarketPlayer(mousePosition))
-            {
-            }
-            else if (TrySelectOfferPlayer(mousePosition))
             {
             }
         }
@@ -158,21 +154,27 @@ public sealed class TransfersScreen : GameScreen
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
         var coaches = _franchiseSession.GetCoachingStaff();
-        var marketPlayers = ApplyFilter(_franchiseSession.GetScoutingBoardPlayers());
-        var offerPlayers = _franchiseSession.GetTradeChipPlayers();
-        ClampPages(marketPlayers.Count, offerPlayers.Count);
-        RefreshSelections(marketPlayers, offerPlayers, coaches);
+        var marketPlayers = GetMarketPlayers();
+        ClampPages(marketPlayers.Count);
+        RefreshSelections(marketPlayers, coaches);
+        if (_showTransactionMenu)
+        {
+            EnsureTransactionCache();
+        }
         _filterButton.Label = _showFilterDropdown
             ? $"Filter: {GetFilterLabel(_filterMode)} ^"
             : $"Filter: {GetFilterLabel(_filterMode)} v";
+        _tradeButton.Label = _showTransactionMenu ? "Close Transaction" : "Open Transaction";
 
+        var transferBudget = _franchiseSession.GetTransferBudget();
+        var rosterCount = _franchiseSession.GetSelectedTeamRosterCount();
         uiRenderer.DrawText("Transfers", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"{_franchiseSession.SelectedTeamName}  |  Available Budget: {FormatMoney(transferBudget)}  |  Roster: {rosterCount}/{RosterCap}", new Rectangle(168, 82, Math.Max(520, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
         var filterBounds = GetFilterButtonBounds();
         uiRenderer.DrawButton(_filterButton.Label, filterBounds, filterBounds.Contains(Mouse.GetState().Position) || _showFilterDropdown ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
 
         uiRenderer.DrawWrappedTextInBounds(
-            "Talk to your coaches for plain-English reads on league players, then swap players if you want to make a move.",
+            "Open a transaction with the owning club to buy or offer a trade package. Buying requires roster space, and package value depends on the other club's positional needs.",
             new Rectangle(168, 112, 620, 40),
             Color.White,
             uiRenderer.UiSmallFont,
@@ -180,17 +182,25 @@ public sealed class TransfersScreen : GameScreen
 
         DrawCoaches(uiRenderer, coaches);
         DrawMarketPlayers(uiRenderer, marketPlayers);
-        DrawOfferPlayers(uiRenderer, offerPlayers);
         DrawReportArea(uiRenderer, coaches, marketPlayers);
 
         var mousePosition = Mouse.GetState().Position;
         var tradeButtonBounds = GetTradeButtonBounds();
+        var statusBounds = new Rectangle(40, _viewport.Y - 62, Math.Max(480, _viewport.X - 420), 52);
+        uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 10, statusBounds.Y + 8, statusBounds.Width - 20, statusBounds.Height - 16), Color.White, uiRenderer.UiSmallFont, 2);
         uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !_showFilterDropdown && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_tradeButton.Label, tradeButtonBounds, !_showFilterDropdown && tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+        var tradeButtonColor = _showTransactionMenu ? Color.DarkSlateBlue : Color.OliveDrab;
+        uiRenderer.DrawButton(_tradeButton.Label, tradeButtonBounds, !_showFilterDropdown && tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : tradeButtonColor, Color.White);
 
         if (_showFilterDropdown)
         {
             DrawFilterDropdown(uiRenderer);
+        }
+
+        if (_showTransactionMenu)
+        {
+            DrawTransactionMenu(uiRenderer);
         }
     }
 
@@ -224,31 +234,12 @@ public sealed class TransfersScreen : GameScreen
             var isSelected = _selectedPlayerId == player.PlayerId;
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
             var ownTag = player.IsOnSelectedTeam ? " (Yours)" : string.Empty;
-            var label = $"{player.TeamAbbreviation} {Truncate(player.PlayerName, 15)} {player.PrimaryPosition} Age {player.Age}{ownTag}";
+            var feeTag = !player.IsOnSelectedTeam ? $"  {FormatMoney(player.TransferFee)}" : string.Empty;
+            var label = $"{player.TeamAbbreviation} {Truncate(player.PlayerName, 14)} {player.PrimaryPosition} Age {player.Age}{feeTag}{ownTag}";
             uiRenderer.DrawButton(label, bounds, color, Color.White);
         }
 
         DrawListPaging(uiRenderer, GetMarketPreviousBounds(), GetMarketNextBounds(), _marketPageIndex, marketPlayers.Count);
-    }
-
-    private void DrawOfferPlayers(UiRenderer uiRenderer, IReadOnlyList<ScoutingPlayerCard> offerPlayers)
-    {
-        var offerHeaderBounds = new Rectangle(GetOfferRowBounds(0).X, 174, GetOfferRowBounds(0).Width, 24);
-        uiRenderer.DrawTextInBounds("YOUR TRADE CHIP", offerHeaderBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
-        var visiblePlayers = offerPlayers.Skip(_offerPageIndex * PageSize).Take(PageSize).ToList();
-
-        for (var i = 0; i < visiblePlayers.Count; i++)
-        {
-            var player = visiblePlayers[i];
-            var bounds = GetOfferRowBounds(i);
-            var isHovered = !_showFilterDropdown && bounds.Contains(Mouse.GetState().Position);
-            var isSelected = _selectedOfferPlayerId == player.PlayerId;
-            var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
-            var label = $"{Truncate(player.PlayerName, 18)} {player.PrimaryPosition}/{player.SecondaryPosition} Age {player.Age}";
-            uiRenderer.DrawButton(label, bounds, color, Color.White);
-        }
-
-        DrawListPaging(uiRenderer, GetOfferPreviousBounds(), GetOfferNextBounds(), _offerPageIndex, offerPlayers.Count);
     }
 
     private void DrawReportArea(UiRenderer uiRenderer, IReadOnlyList<CoachProfileView> coaches, IReadOnlyList<ScoutingPlayerCard> marketPlayers)
@@ -259,21 +250,21 @@ public sealed class TransfersScreen : GameScreen
             ?? marketPlayers.FirstOrDefault();
 
         var reportPanelBounds = GetReportPanelBounds();
-        var movesPanelBounds = GetMovesPanelBounds(reportPanelBounds);
-
-        uiRenderer.DrawTextInBounds("TRADE REPORT", new Rectangle(reportPanelBounds.X, reportPanelBounds.Y - 30, 300, 24), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds("SCOUT REPORT", new Rectangle(reportPanelBounds.X, reportPanelBounds.Y - 26, 300, 22), Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawButton(string.Empty, reportPanelBounds, new Color(38, 48, 56), Color.White);
-        uiRenderer.DrawButton(string.Empty, movesPanelBounds, new Color(38, 48, 56), Color.White);
 
         if (selectedCoach == null || selectedPlayer == null)
         {
-            uiRenderer.DrawWrappedTextInBounds("Select a coach and a player to see a report.", new Rectangle(reportPanelBounds.X + 12, reportPanelBounds.Y + 12, reportPanelBounds.Width - 24, reportPanelBounds.Height - 24), Color.White, uiRenderer.ScoreboardFont, 2);
+            uiRenderer.DrawWrappedTextInBounds("Select a coach and a player to see a scouting report.", new Rectangle(reportPanelBounds.X + 12, reportPanelBounds.Y + 14, reportPanelBounds.Width - 24, reportPanelBounds.Height - 24), Color.White, uiRenderer.ScoreboardFont, 3);
             return;
         }
 
         var report = _franchiseSession.GetCoachScoutingReport(selectedPlayer.PlayerId, selectedCoach.Role);
         uiRenderer.DrawTextInBounds($"{report.CoachName} - {report.CoachRole}", new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 8, reportPanelBounds.Width - 20, 16), Color.Goldenrod, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"Specialty: {selectedCoach.Specialty} | Voice: {selectedCoach.Voice}", new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 24, reportPanelBounds.Width - 20, 16), Color.White, uiRenderer.UiSmallFont);
+        var feeLine = selectedPlayer.IsOnSelectedTeam
+            ? "Already on your roster"
+            : $"Asking Price: {FormatMoney(selectedPlayer.TransferFee)}";
+        uiRenderer.DrawTextInBounds(feeLine, new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 26, reportPanelBounds.Width - 20, 16), selectedPlayer.IsOnSelectedTeam ? Color.Gray : Color.Gold, uiRenderer.UiSmallFont);
 
         var reportText = string.Join(" ", new[]
         {
@@ -281,18 +272,9 @@ public sealed class TransfersScreen : GameScreen
             report.Summary,
             report.Strengths,
             report.Concern,
-            report.TransferRecommendation,
-            $"Status: {_statusMessage}"
+            report.TransferRecommendation
         });
-
-        uiRenderer.DrawWrappedTextInBounds(reportText, new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 44, reportPanelBounds.Width - 20, reportPanelBounds.Height - 52), Color.White, uiRenderer.UiSmallFont, 5);
-
-        uiRenderer.DrawTextInBounds("Recent Moves", new Rectangle(movesPanelBounds.X + 10, movesPanelBounds.Y + 8, movesPanelBounds.Width - 20, 16), Color.White, uiRenderer.UiSmallFont);
-        var recentMoves = _franchiseSession.GetRecentTransferSummaries(2);
-        var movesText = recentMoves.Count == 0
-            ? "No recent swaps yet."
-            : string.Join(" ", recentMoves);
-        uiRenderer.DrawWrappedTextInBounds(movesText, new Rectangle(movesPanelBounds.X + 10, movesPanelBounds.Y + 28, movesPanelBounds.Width - 20, movesPanelBounds.Height - 36), Color.White, uiRenderer.UiSmallFont, 5);
+        uiRenderer.DrawWrappedTextInBounds(reportText, new Rectangle(reportPanelBounds.X + 10, reportPanelBounds.Y + 48, reportPanelBounds.Width - 20, reportPanelBounds.Height - 56), Color.White, uiRenderer.UiSmallFont, 8);
     }
 
     private void DrawListPaging(UiRenderer uiRenderer, Rectangle previousBounds, Rectangle nextBounds, int currentPage, int totalItems)
@@ -326,7 +308,7 @@ public sealed class TransfersScreen : GameScreen
 
     private bool TrySelectMarketPlayer(Point mousePosition)
     {
-        var visiblePlayers = ApplyFilter(_franchiseSession.GetScoutingBoardPlayers()).Skip(_marketPageIndex * PageSize).Take(PageSize).ToList();
+        var visiblePlayers = GetMarketPlayers().Skip(_marketPageIndex * PageSize).Take(PageSize).ToList();
         for (var i = 0; i < visiblePlayers.Count; i++)
         {
             if (!GetMarketRowBounds(i).Contains(mousePosition))
@@ -335,48 +317,150 @@ public sealed class TransfersScreen : GameScreen
             }
 
             _selectedPlayerId = visiblePlayers[i].PlayerId;
-            _statusMessage = $"{visiblePlayers[i].PlayerName} is now on the board for discussion.";
+            _statusMessage = $"{visiblePlayers[i].PlayerName} is on the board. Asking price: {FormatMoney(visiblePlayers[i].TransferFee)}. Open Transaction to negotiate with {visiblePlayers[i].TeamAbbreviation}.";
             return true;
         }
 
         return false;
     }
 
-    private bool TrySelectOfferPlayer(Point mousePosition)
+    private void OpenTransactionMenu()
     {
-        var visiblePlayers = _franchiseSession.GetTradeChipPlayers().Skip(_offerPageIndex * PageSize).Take(PageSize).ToList();
-        for (var i = 0; i < visiblePlayers.Count; i++)
+        if (_showTransactionMenu)
         {
-            if (!GetOfferRowBounds(i).Contains(mousePosition))
+            _showTransactionMenu = false;
+            _selectedTradeChipIds.Clear();
+            _transactionTargetPlayerId = null;
+            _transactionCacheDirty = true;
+            _statusMessage = "Transaction closed. Select another player whenever you are ready.";
+            return;
+        }
+
+        if (!_selectedPlayerId.HasValue)
+        {
+            _statusMessage = "Select a player from the market first.";
+            return;
+        }
+
+        var selectedPlayer = GetScoutingBoardPlayers().FirstOrDefault(player => player.PlayerId == _selectedPlayerId.Value);
+        if (selectedPlayer == null)
+        {
+            _statusMessage = "That player is no longer available on the market.";
+            return;
+        }
+
+        if (selectedPlayer.IsOnSelectedTeam)
+        {
+            _statusMessage = "That player is already on your roster.";
+            return;
+        }
+
+        _transactionTargetPlayerId = selectedPlayer.PlayerId;
+        _showTransactionMenu = true;
+        _tradeChipPageIndex = 0;
+        _selectedTradeChipIds.Clear();
+        _transactionCacheDirty = true;
+        _statusMessage = $"Transaction opened with {selectedPlayer.TeamName}. Buy outright or build a trade package.";
+    }
+
+    private bool TryHandleTransactionClick(Point mousePosition)
+    {
+        if (GetTransactionCloseBounds().Contains(mousePosition))
+        {
+            _showTransactionMenu = false;
+            _selectedTradeChipIds.Clear();
+            _transactionTargetPlayerId = null;
+            _transactionCacheDirty = true;
+            _statusMessage = "Transaction closed.";
+            return true;
+        }
+
+        if (GetTransactionBuyBounds().Contains(mousePosition))
+        {
+            CompleteTransactionPurchase();
+            return true;
+        }
+
+        if (GetTransactionTradeBounds().Contains(mousePosition))
+        {
+            CompleteTradePackage();
+            return true;
+        }
+
+        if (GetTradeChipPreviousBounds().Contains(mousePosition))
+        {
+            _tradeChipPageIndex = Math.Max(0, _tradeChipPageIndex - 1);
+            return true;
+        }
+
+        if (GetTradeChipNextBounds().Contains(mousePosition))
+        {
+            var chipCount = _tradeChipCache.Count;
+            var maxPage = GetMaxPage(chipCount);
+            if (_tradeChipPageIndex < maxPage)
+            {
+                _tradeChipPageIndex++;
+            }
+
+            return true;
+        }
+
+        var visibleChips = _tradeChipCache.Skip(_tradeChipPageIndex * PageSize).Take(PageSize).ToList();
+        for (var i = 0; i < visibleChips.Count; i++)
+        {
+            if (!GetTradeChipRowBounds(i).Contains(mousePosition))
             {
                 continue;
             }
 
-            _selectedOfferPlayerId = visiblePlayers[i].PlayerId;
-            _statusMessage = $"You are offering {visiblePlayers[i].PlayerName} in the swap.";
+            var playerId = visibleChips[i].PlayerId;
+            if (!_selectedTradeChipIds.Add(playerId))
+            {
+                _selectedTradeChipIds.Remove(playerId);
+            }
+
             return true;
         }
 
-        return false;
+        return GetTransactionPanelBounds().Contains(mousePosition);
     }
 
-    private void CompleteTrade()
+    private void CompleteTransactionPurchase()
     {
-        if (!_selectedPlayerId.HasValue || !_selectedOfferPlayerId.HasValue)
+        if (!_transactionTargetPlayerId.HasValue)
         {
-            _statusMessage = "Pick both a target and an outgoing player first.";
+            _statusMessage = "No transaction target selected.";
             return;
         }
 
-        _franchiseSession.TryTradeForPlayer(_selectedPlayerId.Value, _selectedOfferPlayerId.Value, out _statusMessage);
+        _franchiseSession.TryBuyPlayer(_transactionTargetPlayerId.Value, out _statusMessage);
+        MarkAllCachesDirty();
         RefreshSelections();
     }
 
-    private void RefreshSelections(IReadOnlyList<ScoutingPlayerCard>? marketPlayers = null, IReadOnlyList<ScoutingPlayerCard>? offerPlayers = null, IReadOnlyList<CoachProfileView>? coaches = null)
+    private void CompleteTradePackage()
+    {
+        if (!_transactionTargetPlayerId.HasValue)
+        {
+            _statusMessage = "No transaction target selected.";
+            return;
+        }
+
+        if (_selectedTradeChipIds.Count == 0)
+        {
+            _statusMessage = "Select at least one player from your roster to include in the trade package.";
+            return;
+        }
+
+        _franchiseSession.TryTradeForPlayerPackage(_transactionTargetPlayerId.Value, _selectedTradeChipIds.ToList(), out _statusMessage);
+        MarkAllCachesDirty();
+        RefreshSelections();
+    }
+
+    private void RefreshSelections(IReadOnlyList<ScoutingPlayerCard>? marketPlayers = null, IReadOnlyList<CoachProfileView>? coaches = null)
     {
         coaches ??= _franchiseSession.GetCoachingStaff();
-        marketPlayers ??= ApplyFilter(_franchiseSession.GetScoutingBoardPlayers());
-        offerPlayers ??= _franchiseSession.GetTradeChipPlayers();
+        marketPlayers ??= GetMarketPlayers();
 
         if (coaches.Count > 0 && coaches.All(coach => !string.Equals(coach.Role, _selectedCoachRole, StringComparison.OrdinalIgnoreCase)))
         {
@@ -388,18 +472,86 @@ public sealed class TransfersScreen : GameScreen
             _selectedPlayerId = marketPlayers.FirstOrDefault()?.PlayerId;
         }
 
-        if (!_selectedOfferPlayerId.HasValue || offerPlayers.All(player => player.PlayerId != _selectedOfferPlayerId.Value))
-        {
-            _selectedOfferPlayerId = offerPlayers.FirstOrDefault()?.PlayerId;
-        }
-
-        ClampPages(marketPlayers.Count, offerPlayers.Count);
+        ClampPages(marketPlayers.Count);
     }
 
-    private void ClampPages(int marketCount, int offerCount)
+    private IReadOnlyList<ScoutingPlayerCard> GetScoutingBoardPlayers()
+    {
+        EnsureMarketCache();
+        return _scoutingBoardCache;
+    }
+
+    private IReadOnlyList<ScoutingPlayerCard> GetMarketPlayers()
+    {
+        EnsureMarketCache();
+        return _marketPlayersCache;
+    }
+
+    private void EnsureMarketCache()
+    {
+        if (!_marketCacheDirty)
+        {
+            return;
+        }
+
+        _scoutingBoardCache = _franchiseSession.GetScoutingBoardPlayers().ToList();
+        _marketPlayersCache = ApplyFilter(_scoutingBoardCache);
+        _marketCacheDirty = false;
+    }
+
+    private void EnsureTransactionCache()
+    {
+        EnsureMarketCache();
+        if (!_transactionCacheDirty)
+        {
+            return;
+        }
+
+        _tradeChipAdjustedValueCache.Clear();
+        _tradeChipNeedLabelCache.Clear();
+        _tradeChipCache.Clear();
+
+        if (!_transactionTargetPlayerId.HasValue)
+        {
+            _transactionAskingPrice = 0m;
+            _transactionOwningTeamName = string.Empty;
+            _transactionCacheDirty = false;
+            return;
+        }
+
+        var targetPlayer = _scoutingBoardCache.FirstOrDefault(player => player.PlayerId == _transactionTargetPlayerId.Value);
+        if (targetPlayer == null)
+        {
+            _transactionAskingPrice = 0m;
+            _transactionOwningTeamName = string.Empty;
+            _transactionCacheDirty = false;
+            return;
+        }
+
+        _transactionOwningTeamName = targetPlayer.TeamName;
+        _transactionAskingPrice = _franchiseSession.GetPlayerAskingPrice(targetPlayer.PlayerId);
+        _tradeChipCache = _franchiseSession.GetTradeChipPlayers()
+            .Where(player => player.PlayerId != targetPlayer.PlayerId)
+            .ToList();
+
+        foreach (var chip in _tradeChipCache)
+        {
+            _tradeChipAdjustedValueCache[chip.PlayerId] = _franchiseSession.GetTradeChipValueForTeam(chip.PlayerId, _transactionOwningTeamName);
+            _tradeChipNeedLabelCache[chip.PlayerId] = _franchiseSession.GetTeamPositionNeedLabel(_transactionOwningTeamName, chip.PrimaryPosition);
+        }
+
+        _transactionCacheDirty = false;
+    }
+
+    private void MarkAllCachesDirty()
+    {
+        _marketCacheDirty = true;
+        _transactionCacheDirty = true;
+    }
+
+    private void ClampPages(int marketCount)
     {
         _marketPageIndex = Math.Clamp(_marketPageIndex, 0, GetMaxPage(marketCount));
-        _offerPageIndex = Math.Clamp(_offerPageIndex, 0, GetMaxPage(offerCount));
     }
 
     private static int GetMaxPage(int totalCount)
@@ -410,6 +562,123 @@ public sealed class TransfersScreen : GameScreen
     private Rectangle GetFilterButtonBounds() => new(_viewport.X - 520, 40, 200, 44);
 
     private Rectangle GetTradeButtonBounds() => new(_viewport.X - 300, 38, 240, 44);
+
+    private void DrawTransactionMenu(UiRenderer uiRenderer)
+    {
+        var panelBounds = GetTransactionPanelBounds();
+        uiRenderer.DrawButton(string.Empty, panelBounds, new Color(22, 28, 34), Color.White);
+        uiRenderer.DrawTextInBounds("TRANSACTION", new Rectangle(panelBounds.X + 12, panelBounds.Y + 8, 240, 20), Color.Goldenrod, uiRenderer.UiSmallFont);
+
+        var targetPlayerId = _transactionTargetPlayerId ?? _selectedPlayerId;
+        if (!targetPlayerId.HasValue)
+        {
+            uiRenderer.DrawWrappedTextInBounds("Select a market player to start a transaction.", new Rectangle(panelBounds.X + 12, panelBounds.Y + 40, panelBounds.Width - 24, 48), Color.White, uiRenderer.UiSmallFont, 2);
+            return;
+        }
+
+        var targetPlayer = GetScoutingBoardPlayers().FirstOrDefault(player => player.PlayerId == targetPlayerId.Value);
+        if (targetPlayer == null)
+        {
+            uiRenderer.DrawWrappedTextInBounds("That target is no longer available.", new Rectangle(panelBounds.X + 12, panelBounds.Y + 40, panelBounds.Width - 24, 48), Color.White, uiRenderer.UiSmallFont, 2);
+            return;
+        }
+
+        _transactionTargetPlayerId = targetPlayer.PlayerId;
+        var askingPrice = _transactionAskingPrice;
+        var rosterCount = _franchiseSession.GetSelectedTeamRosterCount();
+        var hasRosterRoomForBuy = rosterCount < RosterCap;
+
+        var targetSummaryBounds = new Rectangle(panelBounds.X + 12, panelBounds.Y + 36, panelBounds.Width - 24, 54);
+        uiRenderer.DrawButton(string.Empty, targetSummaryBounds, new Color(35, 44, 52), Color.White);
+        uiRenderer.DrawTextInBounds($"Target: {targetPlayer.PlayerName} ({targetPlayer.PrimaryPosition}, {targetPlayer.Age})", new Rectangle(targetSummaryBounds.X + 8, targetSummaryBounds.Y + 6, targetSummaryBounds.Width - 16, 18), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"Owning Team: {targetPlayer.TeamName}   Asking Price: {FormatMoney(askingPrice)}", new Rectangle(targetSummaryBounds.X + 8, targetSummaryBounds.Y + 26, targetSummaryBounds.Width - 16, 18), Color.Gold, uiRenderer.UiSmallFont);
+
+        uiRenderer.DrawTextInBounds($"Your Roster: {rosterCount}/{RosterCap}", new Rectangle(panelBounds.X + 12, panelBounds.Y + 98, 180, 18), hasRosterRoomForBuy ? Color.White : Color.OrangeRed, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds(hasRosterRoomForBuy ? "Buy is available." : "Buy disabled: roster cap reached.", new Rectangle(panelBounds.X + 200, panelBounds.Y + 98, panelBounds.Width - 212, 18), hasRosterRoomForBuy ? Color.DarkSeaGreen : Color.OrangeRed, uiRenderer.UiSmallFont);
+
+        var buyButtonBounds = GetTransactionBuyBounds();
+        var tradeButtonBounds = GetTransactionTradeBounds();
+        var closeButtonBounds = GetTransactionCloseBounds();
+        var mousePosition = Mouse.GetState().Position;
+
+        var buyColor = hasRosterRoomForBuy ? (buyButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab) : Color.DimGray;
+        uiRenderer.DrawButton("Buy In Transaction", buyButtonBounds, buyColor, Color.White);
+        uiRenderer.DrawButton("Submit Trade Package", tradeButtonBounds, tradeButtonBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
+        uiRenderer.DrawButton("Close", closeButtonBounds, closeButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+
+        var chipsHeaderBounds = new Rectangle(panelBounds.X + 12, panelBounds.Y + 154, panelBounds.Width - 24, 24);
+        uiRenderer.DrawTextInBounds("YOUR TRADE CHIPS (value adjusts to target team's positional needs)", chipsHeaderBounds, Color.White, uiRenderer.UiSmallFont);
+
+        _tradeChipPageIndex = Math.Clamp(_tradeChipPageIndex, 0, GetMaxPage(_tradeChipCache.Count));
+        var visibleChips = _tradeChipCache.Skip(_tradeChipPageIndex * PageSize).Take(PageSize).ToList();
+
+        for (var i = 0; i < visibleChips.Count; i++)
+        {
+            var chip = visibleChips[i];
+            var rowBounds = GetTradeChipRowBounds(i);
+            var isSelected = _selectedTradeChipIds.Contains(chip.PlayerId);
+            var isHovered = rowBounds.Contains(mousePosition);
+            var rowColor = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
+
+            _tradeChipAdjustedValueCache.TryGetValue(chip.PlayerId, out var adjustedValue);
+            _tradeChipNeedLabelCache.TryGetValue(chip.PlayerId, out var needLabel);
+            var toggle = isSelected ? "[X]" : "[ ]";
+            var label = $"{toggle} {Truncate(chip.PlayerName, 16)} {chip.PrimaryPosition}  {FormatMoney(adjustedValue)}  ({needLabel})";
+            uiRenderer.DrawButton(label, rowBounds, rowColor, Color.White);
+        }
+
+        DrawListPaging(uiRenderer, GetTradeChipPreviousBounds(), GetTradeChipNextBounds(), _tradeChipPageIndex, _tradeChipCache.Count);
+
+        var offeredValue = _selectedTradeChipIds.Sum(playerId => _tradeChipAdjustedValueCache.TryGetValue(playerId, out var value) ? value : 0m);
+        var acceptanceValue = decimal.Round(askingPrice * 0.93m, 0);
+        uiRenderer.DrawTextInBounds($"Selected Offer Value: {FormatMoney(offeredValue)}", new Rectangle(panelBounds.X + 12, panelBounds.Bottom - 34, 260, 20), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"Expected Acceptance: {FormatMoney(acceptanceValue)}", new Rectangle(panelBounds.X + 276, panelBounds.Bottom - 34, 260, 20), Color.White, uiRenderer.UiSmallFont);
+    }
+
+    private Rectangle GetTransactionPanelBounds()
+    {
+        var width = Math.Min(980, _viewport.X - 120);
+        var height = Math.Min(620, _viewport.Y - 110);
+        var x = (_viewport.X - width) / 2;
+        var y = Math.Max(90, (_viewport.Y - height) / 2);
+        return new Rectangle(x, y, width, height);
+    }
+
+    private Rectangle GetTransactionBuyBounds()
+    {
+        var panel = GetTransactionPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 122, 220, 28);
+    }
+
+    private Rectangle GetTransactionTradeBounds()
+    {
+        var panel = GetTransactionPanelBounds();
+        return new Rectangle(panel.X + 244, panel.Y + 122, 240, 28);
+    }
+
+    private Rectangle GetTransactionCloseBounds()
+    {
+        var panel = GetTransactionPanelBounds();
+        return new Rectangle(panel.Right - 92, panel.Y + 122, 80, 28);
+    }
+
+    private Rectangle GetTradeChipRowBounds(int index)
+    {
+        var panel = GetTransactionPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 182 + (index * 36), panel.Width - 24, 30);
+    }
+
+    private Rectangle GetTradeChipPreviousBounds()
+    {
+        var panel = GetTransactionPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Bottom - 68, 84, 26);
+    }
+
+    private Rectangle GetTradeChipNextBounds()
+    {
+        var panel = GetTransactionPanelBounds();
+        return new Rectangle(panel.Right - 96, panel.Bottom - 68, 84, 26);
+    }
 
     private void DrawFilterDropdown(UiRenderer uiRenderer)
     {
@@ -438,6 +707,7 @@ public sealed class TransfersScreen : GameScreen
             _filterMode = options[i];
             _marketPageIndex = 0;
             _showFilterDropdown = false;
+            _marketCacheDirty = true;
             return true;
         }
 
@@ -532,6 +802,11 @@ public sealed class TransfersScreen : GameScreen
         };
     }
 
+    private static string FormatMoney(decimal amount)
+    {
+        return amount >= 1_000_000m ? $"${amount / 1_000_000m:0.0}M" : $"${amount / 1_000m:0}K";
+    }
+
     private static string Truncate(string value, int maxLength)
     {
         return value.Length <= maxLength ? value : value[..maxLength];
@@ -552,38 +827,21 @@ public sealed class TransfersScreen : GameScreen
         var coachBounds = GetCoachRowBounds(0);
         var gap = 24;
         var x = coachBounds.Right + gap;
-        var availableWidth = Math.Max(960, _viewport.X - 80 - (gap * 2));
-        var marketWidth = Math.Clamp((int)(availableWidth * 0.32f), 280, 380);
+        var reportX = (int)(_viewport.X * 0.62f);
+        var marketWidth = Math.Max(280, reportX - x - gap);
         return new Rectangle(x, 210 + (index * 34), marketWidth, 30);
     }
 
-    private Rectangle GetOfferRowBounds(int index)
-    {
-        var marketBounds = GetMarketRowBounds(0);
-        var gap = 24;
-        var x = marketBounds.Right + gap;
-        return new Rectangle(x, 210 + (index * 34), Math.Max(300, _viewport.X - x - 40), 30);
-    }
+    private Rectangle GetMarketPreviousBounds() => new(GetMarketRowBounds(0).X, Math.Max(490, _viewport.Y - 80), 84, 28);
 
-    private Rectangle GetMarketPreviousBounds() => new(GetMarketRowBounds(0).X, 490, 84, 34);
-
-    private Rectangle GetMarketNextBounds() => new(GetMarketRowBounds(0).Right - 84, 490, 84, 34);
-
-    private Rectangle GetOfferPreviousBounds() => new(GetOfferRowBounds(0).X, 490, 84, 34);
-
-    private Rectangle GetOfferNextBounds() => new(GetOfferRowBounds(0).Right - 84, 490, 84, 34);
+    private Rectangle GetMarketNextBounds() => new(GetMarketRowBounds(0).Right - 84, Math.Max(490, _viewport.Y - 80), 84, 28);
 
     private Rectangle GetReportPanelBounds()
     {
-        var bottomY = Math.Max(548, _viewport.Y - 160);
-        var width = Math.Max(520, (int)(_viewport.X * 0.62f));
-        return new Rectangle(40, bottomY, Math.Min(width, _viewport.X - 420), 140);
-    }
-
-    private Rectangle GetMovesPanelBounds(Rectangle reportPanelBounds)
-    {
-        var x = reportPanelBounds.Right + 30;
-        return new Rectangle(x, reportPanelBounds.Y, Math.Max(250, _viewport.X - x - 40), reportPanelBounds.Height);
+        var marketBounds = GetMarketRowBounds(0);
+        var x = marketBounds.Right + 24;
+        var statusTop = _viewport.Y - 72;
+        return new Rectangle(x, 200, Math.Max(280, _viewport.X - x - 40), Math.Max(300, statusTop - 210));
     }
 
     private enum ScoutingFilterMode

@@ -105,6 +105,7 @@ public sealed class CoachingStaffScreen : GameScreen
         var selectedCoach = coaches.FirstOrDefault(coach => string.Equals(coach.Role, _selectedRole, StringComparison.OrdinalIgnoreCase))
             ?? coaches.FirstOrDefault();
         var candidates = _franchiseSession.GetCoachCandidates(_selectedRole);
+        var coachSalaries = _franchiseSession.GetSelectedTeamEconomy().CoachContracts.ToDictionary(c => c.Role, c => c.AnnualSalary, StringComparer.OrdinalIgnoreCase);
         var mousePosition = Mouse.GetState().Position;
         var selectedCoachPanelBounds = GetSelectedCoachPanelBounds();
         var candidatePanelBounds = GetCandidatePanelBounds();
@@ -132,7 +133,11 @@ public sealed class CoachingStaffScreen : GameScreen
             var color = isDropTarget
                 ? Color.Goldenrod
                 : (isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray));
-            uiRenderer.DrawButton($"{coach.Role}: {coach.Name}", bounds, color, Color.White);
+            var roleSalary = coachSalaries.GetValueOrDefault(coach.Role, 0m);
+            var roleLabel = roleSalary > 0m
+                ? $"{coach.Role}: {coach.Name}  {FormatSalary(roleSalary)}"
+                : $"{coach.Role}: {coach.Name}";
+            uiRenderer.DrawButton(roleLabel, bounds, color, Color.White);
         }
 
         uiRenderer.DrawText("SELECTED ROLE", new Vector2(selectedCoachPanelBounds.X + 16, 176), Color.White, uiRenderer.UiMediumFont);
@@ -143,7 +148,8 @@ public sealed class CoachingStaffScreen : GameScreen
             uiRenderer.DrawTextInBounds(selectedCoach.Name, new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 30, selectedCoachPanelBounds.Width - 32, 22), Color.White, uiRenderer.UiMediumFont);
             uiRenderer.DrawTextInBounds($"Specialty: {selectedCoach.Specialty}", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 60, selectedCoachPanelBounds.Width - 32, 16), Color.White, uiRenderer.UiSmallFont);
             uiRenderer.DrawTextInBounds($"Voice: {selectedCoach.Voice}", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 82, selectedCoachPanelBounds.Width - 32, 16), Color.White, uiRenderer.UiSmallFont);
-            uiRenderer.DrawWrappedTextInBounds("Drop a coach here or on the matching role row to make the move.", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 108, selectedCoachPanelBounds.Width - 32, 36), Color.White, uiRenderer.UiSmallFont, 2);
+            var selectedSalary = coachSalaries.GetValueOrDefault(selectedCoach.Role, 0m);
+            uiRenderer.DrawTextInBounds($"Salary: {FormatSalary(selectedSalary)}", new Rectangle(selectedCoachPanelBounds.X + 16, selectedCoachPanelBounds.Y + 104, selectedCoachPanelBounds.Width - 32, 16), Color.Gold, uiRenderer.UiSmallFont);
         }
 
         uiRenderer.DrawText($"AVAILABLE {_selectedRole.ToUpperInvariant()} OPTIONS", new Vector2(candidatePanelBounds.X + 16, candidatePanelBounds.Y - 26), Color.White, uiRenderer.UiMediumFont);
@@ -272,6 +278,11 @@ public sealed class CoachingStaffScreen : GameScreen
                string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase) &&
                string.Equals(left.Specialty, right.Specialty, StringComparison.OrdinalIgnoreCase) &&
                string.Equals(left.Voice, right.Voice, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatSalary(decimal amount)
+    {
+        return amount >= 1_000_000m ? $"${amount / 1_000_000m:0.0}M" : $"${amount / 1_000m:0}K";
     }
 
     private static string Truncate(string value, int maxLength)
