@@ -26,6 +26,8 @@ public sealed class ScheduleScreen : GameScreen
     private Point _viewport = new(1280, 720);
     private DateTime _visibleMonth;
     private DateTime _selectedDate;
+    private DateTime _selectionAnchorDate;
+    private readonly HashSet<DateTime> _selectedDates = new();
     private string _statusMessage = "Off-days now include team practices and recovery sessions. Use Sim Season to fast-forward to the regular-season finish.";
 
     private const int LayoutMargin = 48;
@@ -81,6 +83,7 @@ public sealed class ScheduleScreen : GameScreen
     public override void OnEnter()
     {
         SyncCalendarToFranchiseDate();
+        ResetSelectionToSingleDay(_selectedDate);
         _ignoreClicksUntilRelease = true;
     }
 
@@ -168,6 +171,12 @@ public sealed class ScheduleScreen : GameScreen
         var practiceFocusValueBounds = GetPracticeFocusValueBounds();
         var practiceFocusRightBounds = GetPracticeFocusRightBounds();
         var simSeasonBounds = GetSimSeasonButtonBounds();
+        var compactMode = UseCompactTopControlMode();
+        var monthLabel = compactMode ? _visibleMonth.ToString("MMM yyyy") : _visibleMonth.ToString("MMMM yyyy");
+        var focusHeaderLabel = compactMode
+            ? (selectedPracticePlan != null ? "Day Plan" : "Default Focus")
+            : (selectedPracticePlan != null ? "Selected Day Plan" : "Default Practice Focus");
+        var simSeasonLabel = compactMode ? "Sim" : _simSeasonButton.Label;
 
         uiRenderer.DrawText("Schedule / Training", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, 280, 22), Color.White, uiRenderer.UiSmallFont);
@@ -175,14 +184,15 @@ public sealed class ScheduleScreen : GameScreen
         uiRenderer.DrawWrappedTextInBounds("Games in blue; practices and recovery in green.", new Rectangle(LayoutMargin, 130, 360, 28), Color.White, uiRenderer.UiSmallFont, 2);
 
         uiRenderer.DrawButton(_previousMonthButton.Label, previousMonthBounds, previousMonthBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawTextInBounds(_visibleMonth.ToString("MMMM yyyy"), monthLabelBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
+        uiRenderer.DrawButton(string.Empty, monthLabelBounds, monthLabelBounds.Contains(mousePosition) ? new Color(52, 60, 72) : new Color(40, 48, 60), Color.White);
+        uiRenderer.DrawTextInBounds(monthLabel, monthLabelBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
         uiRenderer.DrawButton(_nextMonthButton.Label, nextMonthBounds, nextMonthBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
 
-        uiRenderer.DrawTextInBounds(selectedPracticePlan != null ? "Selected Day Plan" : "Default Practice Focus", practiceFocusLabelBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
+        uiRenderer.DrawTextInBounds(focusHeaderLabel, practiceFocusLabelBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
         uiRenderer.DrawButton(_practiceFocusPreviousButton.Label, practiceFocusLeftBounds, practiceFocusLeftBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
         uiRenderer.DrawButton(practiceFocusLabel, practiceFocusValueBounds, practiceFocusValueBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
         uiRenderer.DrawButton(_practiceFocusNextButton.Label, practiceFocusRightBounds, practiceFocusRightBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
-        uiRenderer.DrawButton(_simSeasonButton.Label, simSeasonBounds, simSeasonBounds.Contains(mousePosition) ? Color.DarkRed : Color.Firebrick, Color.White);
+        uiRenderer.DrawButton(simSeasonLabel, simSeasonBounds, simSeasonBounds.Contains(mousePosition) ? Color.DarkRed : Color.Firebrick, Color.White);
 
         if (teamGames.Count == 0)
         {
@@ -221,16 +231,48 @@ public sealed class ScheduleScreen : GameScreen
     private void ChangeSelectedDayPracticeFocus(int direction)
     {
         var teamGames = GetScheduleRows();
-        if (GetPracticePlan(_selectedDate.Date, teamGames) != null)
+        if (_selectedDates.Count <= 1)
         {
-            _statusMessage = _franchiseSession.CyclePracticeFocus(direction, _selectedDate.Date);
+            if (GetPracticePlan(_selectedDate.Date, teamGames) != null)
+            {
+                _statusMessage = _franchiseSession.CyclePracticeFocus(direction, _selectedDate.Date);
+                return;
+            }
+
+            var defaultMessage = _franchiseSession.CyclePracticeFocus(direction);
+            _statusMessage = GetGamesForDate(_selectedDate.Date, teamGames).Count > 0
+                ? $"{_selectedDate:ddd, MMM d} is a game day, so {defaultMessage.ToLowerInvariant()}"
+                : $"No team workout is scheduled for {_selectedDate:ddd, MMM d}, so {defaultMessage.ToLowerInvariant()}";
             return;
         }
 
-        var defaultMessage = _franchiseSession.CyclePracticeFocus(direction);
-        _statusMessage = GetGamesForDate(_selectedDate.Date, teamGames).Count > 0
-            ? $"{_selectedDate:ddd, MMM d} is a game day, so {defaultMessage.ToLowerInvariant()}"
-            : $"No team workout is scheduled for {_selectedDate:ddd, MMM d}, so {defaultMessage.ToLowerInvariant()}";
+        var focusOptions = Enum.GetValues<TeamPracticeFocus>();
+        var currentFocus = _franchiseSession.GetPracticeFocus(_selectedDate.Date);
+        var currentIndex = Array.IndexOf(focusOptions, currentFocus);
+        if (currentIndex < 0)
+        {
+            currentIndex = 0;
+        }
+
+        var nextIndex = (currentIndex + direction % focusOptions.Length + focusOptions.Length) % focusOptions.Length;
+        var nextFocus = focusOptions[nextIndex];
+
+        var selectedPracticeDays = _selectedDates
+            .Where(date => GetPracticePlan(date, teamGames) != null)
+            .ToList();
+        if (selectedPracticeDays.Count == 0)
+        {
+            _statusMessage = "The selected range has no practice days to update.";
+            return;
+        }
+
+        _statusMessage = _franchiseSession.SetPracticeFocusForDates(selectedPracticeDays, nextFocus);
+
+        var skippedCount = _selectedDates.Count - selectedPracticeDays.Count;
+        if (skippedCount > 0)
+        {
+            _statusMessage = $"{_statusMessage} Skipped {skippedCount} game/open day(s).";
+        }
     }
 
     private void PromptSimToSeasonEnd()
@@ -269,10 +311,15 @@ public sealed class ScheduleScreen : GameScreen
 
         _visibleMonth = ClampVisibleMonth(new DateTime(franchiseDate.Year, franchiseDate.Month, 1));
         _selectedDate = franchiseDate;
+        _selectionAnchorDate = _selectedDate;
+        _selectedDates.Clear();
+        _selectedDates.Add(_selectedDate.Date);
     }
 
     private bool TrySelectCalendarDay(Point mousePosition)
     {
+        var keyboardState = Keyboard.GetState();
+        var extendSelection = keyboardState.IsKeyDown(Keys.LeftShift) || keyboardState.IsKeyDown(Keys.RightShift);
         var gridStartDate = GetGridStartDate();
         var seasonStart = GetCalendarStartDate();
         var seasonEnd = GetCalendarEndDate();
@@ -295,6 +342,15 @@ public sealed class ScheduleScreen : GameScreen
             if (selectedDate.Month != _visibleMonth.Month || selectedDate.Year != _visibleMonth.Year)
             {
                 _visibleMonth = ClampVisibleMonth(new DateTime(selectedDate.Year, selectedDate.Month, 1));
+            }
+
+            if (extendSelection)
+            {
+                ApplyRangeSelection(_selectionAnchorDate.Date, selectedDate, seasonStart, seasonEnd);
+            }
+            else
+            {
+                ResetSelectionToSingleDay(selectedDate);
             }
 
             return true;
@@ -338,7 +394,7 @@ public sealed class ScheduleScreen : GameScreen
             var games = isInSeasonRange ? GetGamesForDate(date, teamGames) : [];
             var practicePlan = isInSeasonRange ? GetPracticePlan(date, teamGames) : null;
             var isCurrentMonth = date.Month == _visibleMonth.Month && date.Year == _visibleMonth.Year;
-            var isSelected = isInSeasonRange && date == _selectedDate.Date;
+            var isSelected = isInSeasonRange && _selectedDates.Contains(date);
             var isToday = isInSeasonRange && date == _franchiseSession.GetCurrentFranchiseDate().Date;
             var isHovered = isInSeasonRange && bounds.Contains(Mouse.GetState().Position);
             var backgroundColor = isInSeasonRange
@@ -376,7 +432,10 @@ public sealed class ScheduleScreen : GameScreen
         var rightPanelX = panelBounds.X + leftPanelWidth + 18;
         var rightPanelWidth = panelBounds.Right - rightPanelX - 14;
 
-        uiRenderer.DrawTextInBounds($"Selected Day: {_selectedDate:dddd, MMMM d}", new Rectangle(panelBounds.X + 12, panelBounds.Y + 8, leftPanelWidth - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
+        var selectedRangeLabel = _selectedDates.Count > 1
+            ? $"Selected Days: {_selectedDates.Count} ({_selectedDates.Min():MMM d} - {_selectedDates.Max():MMM d})"
+            : $"Selected Day: {_selectedDate:dddd, MMMM d}";
+        uiRenderer.DrawTextInBounds(selectedRangeLabel, new Rectangle(panelBounds.X + 12, panelBounds.Y + 8, leftPanelWidth - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
         uiRenderer.DrawTextInBounds(isSelectedPracticeDay ? $"Plan for This Day: {practiceFocusLabel}" : $"Default Plan: {practiceFocusLabel}", new Rectangle(rightPanelX, panelBounds.Y + 8, rightPanelWidth, 18), Color.White, uiRenderer.UiSmallFont);
 
         var lines = BuildSelectedDayLines(teamGames);
@@ -555,54 +614,149 @@ public sealed class ScheduleScreen : GameScreen
         return candidate;
     }
 
+    private void ResetSelectionToSingleDay(DateTime selectedDate)
+    {
+        _selectionAnchorDate = selectedDate.Date;
+        _selectedDates.Clear();
+        _selectedDates.Add(selectedDate.Date);
+    }
+
+    private void ApplyRangeSelection(DateTime startDate, DateTime endDate, DateTime seasonStart, DateTime seasonEnd)
+    {
+        _selectedDates.Clear();
+        var rangeStart = startDate <= endDate ? startDate : endDate;
+        var rangeEnd = startDate <= endDate ? endDate : startDate;
+
+        for (var date = rangeStart.Date; date <= rangeEnd.Date; date = date.AddDays(1))
+        {
+            if (date >= seasonStart.Date && date <= seasonEnd.Date)
+            {
+                _selectedDates.Add(date);
+            }
+        }
+
+        if (_selectedDates.Count == 0)
+        {
+            _selectedDates.Add(_selectedDate.Date);
+        }
+    }
+
     private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+
+    private bool UseCompactTopControlMode()
+    {
+        var compactModeSetting = _franchiseSession.GetDisplaySettings().ScheduleCompactMode;
+        return compactModeSetting switch
+        {
+            ScheduleCompactMode.On => true,
+            ScheduleCompactMode.Off => false,
+            _ => _viewport.X <= 1240
+        };
+    }
+
+    private int GetPracticeArrowWidth() => UseCompactTopControlMode() ? 40 : 44;
+
+    private int GetMonthArrowWidth() => UseCompactTopControlMode() ? 46 : 52;
+
+    private int GetTopControlHeight() => UseCompactTopControlMode() ? 34 : 36;
+
+    private int GetPracticeGap() => UseCompactTopControlMode() ? 2 : 3;
+
+    private int GetMonthGap() => UseCompactTopControlMode() ? 4 : 6;
+
+    private int GetTopControlsY() => 100;
+
+    private int GetWrappedMonthControlsY() => 144;
+
+    private int GetPracticeControlStartX()
+    {
+        var monthControlX = GetMonthControlLeftX();
+        var totalPracticeWidth = (GetPracticeArrowWidth() * 2) + (GetPracticeGap() * 2) + GetPracticeFocusValueWidth();
+        return Math.Max(LayoutMargin, monthControlX - totalPracticeWidth - 12);
+    }
+
+    private int GetPracticeControlFixedWidth() => (GetPracticeArrowWidth() * 2) + (GetPracticeGap() * 2);
+
+    private int GetPracticeFocusValueWidth()
+    {
+        return UseCompactTopControlMode()
+            ? Math.Clamp((int)Math.Round(_viewport.X * 0.10), 80, 140)
+            : Math.Clamp((int)Math.Round(_viewport.X * 0.12), 100, 160);
+    }
+
+    private int GetMonthLabelWidth()
+    {
+        return UseCompactTopControlMode()
+            ? Math.Clamp((int)Math.Round(_viewport.X * 0.16), 140, 220)
+            : Math.Clamp((int)Math.Round(_viewport.X * 0.18), 180, 280);
+    }
+
+    private int GetMonthControlBlockWidth()
+    {
+        return (GetMonthArrowWidth() * 2) + (GetMonthGap() * 2) + GetMonthLabelWidth();
+    }
+
+    private int GetMonthControlLeftX()
+    {
+        var simBounds = GetSimSeasonButtonBounds();
+        return Math.Max(LayoutMargin, simBounds.X - 16 - GetMonthControlBlockWidth());
+    }
+
+    private bool UseWrappedTopControlLayout()
+    {
+        var available = GetMonthControlLeftX() - 20 - GetPracticeControlStartX() - GetPracticeControlFixedWidth();
+        var minimum = UseCompactTopControlMode() ? 124 : 136;
+        return available < minimum;
+    }
 
     private Rectangle GetPreviousMonthBounds()
     {
-        var nextBounds = GetNextMonthBounds();
-        return new Rectangle(Math.Max(LayoutMargin + 560, nextBounds.X - 260), 100, 52, 36);
+        var y = UseWrappedTopControlLayout() ? GetWrappedMonthControlsY() : GetTopControlsY();
+        return new Rectangle(GetMonthControlLeftX(), y, GetMonthArrowWidth(), GetTopControlHeight());
     }
 
     private Rectangle GetNextMonthBounds()
     {
-        var simSeasonBounds = GetSimSeasonButtonBounds();
-        return new Rectangle(Math.Max(LayoutMargin + 760, simSeasonBounds.X - 68), 100, 52, 36);
+        var previousBounds = GetPreviousMonthBounds();
+        return new Rectangle(previousBounds.Right + GetMonthGap() + GetMonthLabelWidth() + GetMonthGap(), previousBounds.Y, GetMonthArrowWidth(), GetTopControlHeight());
     }
 
     private Rectangle GetMonthLabelBounds()
     {
         var previousBounds = GetPreviousMonthBounds();
-        var nextBounds = GetNextMonthBounds();
-        return new Rectangle(previousBounds.Right + 12, 103, Math.Max(160, nextBounds.X - previousBounds.Right - 24), 30);
+        return new Rectangle(previousBounds.Right + GetMonthGap(), previousBounds.Y + 3, GetMonthLabelWidth(), 30);
     }
 
     private Rectangle GetPracticeFocusLeftBounds()
     {
-        var centerX = _viewport.X / 2;
-        return new Rectangle(centerX - 156, 100, 44, 36);
+        return new Rectangle(GetPracticeControlStartX(), GetTopControlsY(), GetPracticeArrowWidth(), GetTopControlHeight());
     }
 
     private Rectangle GetPracticeFocusValueBounds()
     {
-        var centerX = _viewport.X / 2;
-        return new Rectangle(centerX - 104, 100, 208, 36);
+        var leftBounds = GetPracticeFocusLeftBounds();
+        return new Rectangle(leftBounds.Right + GetPracticeGap(), leftBounds.Y, GetPracticeFocusValueWidth(), GetTopControlHeight());
     }
 
     private Rectangle GetPracticeFocusRightBounds()
     {
-        var centerX = _viewport.X / 2;
-        return new Rectangle(centerX + 112, 100, 44, 36);
+        var valueBounds = GetPracticeFocusValueBounds();
+        return new Rectangle(valueBounds.Right + GetPracticeGap(), valueBounds.Y, GetPracticeArrowWidth(), GetTopControlHeight());
     }
 
     private Rectangle GetPracticeFocusLabelBounds()
     {
         var valueBounds = GetPracticeFocusValueBounds();
-        return new Rectangle(valueBounds.X - 80, 78, valueBounds.Width + 160, 18);
+        var horizontalPadding = UseCompactTopControlMode() ? 48 : 80;
+        return new Rectangle(valueBounds.X - horizontalPadding, valueBounds.Y - 22, valueBounds.Width + (horizontalPadding * 2), 18);
     }
 
     private Rectangle GetSimSeasonButtonBounds()
     {
-        return new Rectangle(Math.Max(LayoutMargin + 840, _viewport.X - 220), 100, 160, 36);
+        var width = UseCompactTopControlMode()
+            ? Math.Clamp((int)Math.Round(_viewport.X * 0.11), 84, 124)
+            : Math.Clamp((int)Math.Round(_viewport.X * 0.15), 140, 180);
+        return new Rectangle(Math.Max(LayoutMargin, _viewport.X - LayoutMargin - width), GetTopControlsY(), width, GetTopControlHeight());
     }
 
     private Rectangle GetSeasonSimPromptBounds()
@@ -626,8 +780,8 @@ public sealed class ScheduleScreen : GameScreen
 
     private int GetCellWidth()
     {
-        var availableWidth = Math.Max(980, _viewport.X - (LayoutMargin * 2));
-        return Math.Max(140, (availableWidth - (CalendarGap * 6)) / 7);
+        var availableWidth = Math.Max(700, _viewport.X - (LayoutMargin * 2));
+        return Math.Max(88, (availableWidth - (CalendarGap * 6)) / 7);
     }
 
     private int GetCellHeight()
@@ -644,7 +798,7 @@ public sealed class ScheduleScreen : GameScreen
     private Rectangle GetSelectedDayPanelBounds()
     {
         var top = CalendarTop + (GetCellHeight() * 6) + (CalendarGap * 5) + 18;
-        return new Rectangle(LayoutMargin, top, Math.Max(1000, _viewport.X - (LayoutMargin * 2)), GetSelectedDayPanelHeight());
+        return new Rectangle(LayoutMargin, top, Math.Max(620, _viewport.X - (LayoutMargin * 2)), GetSelectedDayPanelHeight());
     }
 
     private Rectangle GetDayCellBounds(int index)

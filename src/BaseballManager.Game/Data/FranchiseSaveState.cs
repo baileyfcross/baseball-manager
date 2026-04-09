@@ -213,6 +213,8 @@ public sealed class DisplaySettingsState
     public DisplayWindowMode WindowMode { get; set; } = DisplayWindowMode.Windowed;
 
     public bool ShowRealTimeClock { get; set; } = true;
+
+    public ScheduleCompactMode ScheduleCompactMode { get; set; } = ScheduleCompactMode.Auto;
 }
 
 public sealed class PlayerHiddenRatingsState
@@ -497,6 +499,13 @@ public enum DisplayWindowMode
     Windowed,
     BorderlessWindow,
     Fullscreen
+}
+
+public enum ScheduleCompactMode
+{
+    Auto,
+    On,
+    Off
 }
 
 public enum TeamPracticeFocus

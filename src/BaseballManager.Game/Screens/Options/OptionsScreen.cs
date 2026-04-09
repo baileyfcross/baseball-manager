@@ -26,6 +26,12 @@ public sealed class OptionsScreen : GameScreen
         (1920, 1080)
     ];
     private readonly int[] _refreshRateOptions = [30, 60, 75, 120, 144];
+    private readonly ScheduleCompactMode[] _scheduleCompactModeOptions =
+    [
+        ScheduleCompactMode.Auto,
+        ScheduleCompactMode.On,
+        ScheduleCompactMode.Off
+    ];
 
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
@@ -34,6 +40,7 @@ public sealed class OptionsScreen : GameScreen
     private int _resolutionIndex;
     private int _refreshRateIndex;
     private bool _showRealTimeClock;
+    private int _scheduleCompactModeIndex;
     private string _statusMessage = "Adjust display settings or manage saves.";
 
     private const int LayoutHorizontalPadding = 24;
@@ -53,10 +60,10 @@ public sealed class OptionsScreen : GameScreen
     private const int BaseResolutionY = 230;
     private const int BaseRefreshY = 300;
     private const int BaseClockY = 370;
-    private const int BaseDeleteCurrentY = 430;
-    private const int BaseDeleteQuickMatchY = 486;
-    private const int BaseDeleteAllY = 542;
-    private const int BaseStatusY = 598;
+    private const int BaseDeleteCurrentY = 500;
+    private const int BaseDeleteQuickMatchY = 556;
+    private const int BaseDeleteAllY = 612;
+    private const int BaseStatusY = 668;
 
     public OptionsScreen(ScreenManager screenManager, FranchiseSession franchiseSession, GameRoot gameRoot)
     {
@@ -121,6 +128,10 @@ public sealed class OptionsScreen : GameScreen
         var clockLeftBounds = GetSelectorLeftBounds(3, layout);
         var clockValueBounds = GetSelectorValueBounds(3, layout);
         var clockRightBounds = GetSelectorRightBounds(3, layout);
+        var compactLabelBounds = GetSelectorLabelBounds(4, layout);
+        var compactLeftBounds = GetSelectorLeftBounds(4, layout);
+        var compactValueBounds = GetSelectorValueBounds(4, layout);
+        var compactRightBounds = GetSelectorRightBounds(4, layout);
 
         DrawSelectorRow(
             uiRenderer,
@@ -160,6 +171,16 @@ public sealed class OptionsScreen : GameScreen
             clockLeftBounds,
             clockValueBounds,
             clockRightBounds,
+            mousePosition);
+
+        DrawSelectorRow(
+            uiRenderer,
+            "Schedule Compact Mode",
+            GetScheduleCompactModeLabel(),
+            compactLabelBounds,
+            compactLeftBounds,
+            compactValueBounds,
+            compactRightBounds,
             mousePosition);
 
         var hasTeamSave = _franchiseSession.HasFranchiseSaveData;
@@ -213,6 +234,9 @@ public sealed class OptionsScreen : GameScreen
         var clockLeftBounds = GetSelectorLeftBounds(3, layout);
         var clockValueBounds = GetSelectorValueBounds(3, layout);
         var clockRightBounds = GetSelectorRightBounds(3, layout);
+        var compactLeftBounds = GetSelectorLeftBounds(4, layout);
+        var compactValueBounds = GetSelectorValueBounds(4, layout);
+        var compactRightBounds = GetSelectorRightBounds(4, layout);
         var deleteCurrentTeamBounds = GetDeleteCurrentTeamBounds(layout);
         var deleteQuickMatchBounds = GetDeleteQuickMatchBounds(layout);
         var deleteAllBounds = GetDeleteAllBounds(layout);
@@ -264,6 +288,19 @@ public sealed class OptionsScreen : GameScreen
             clockValueBounds.Contains(mousePosition))
         {
             ToggleClockVisibility();
+            return;
+        }
+
+        if (compactLeftBounds.Contains(mousePosition))
+        {
+            ChangeScheduleCompactMode(-1);
+            return;
+        }
+
+        if (compactRightBounds.Contains(mousePosition) ||
+            compactValueBounds.Contains(mousePosition))
+        {
+            ChangeScheduleCompactMode(1);
             return;
         }
 
@@ -319,6 +356,14 @@ public sealed class OptionsScreen : GameScreen
         _statusMessage = $"Real-time clock {(_showRealTimeClock ? "enabled" : "disabled")}.";
     }
 
+    private void ChangeScheduleCompactMode(int direction)
+    {
+        _scheduleCompactModeIndex = WrapIndex(_scheduleCompactModeIndex + direction, _scheduleCompactModeOptions.Length);
+        var compactMode = _scheduleCompactModeOptions[_scheduleCompactModeIndex];
+        _franchiseSession.UpdateScheduleCompactMode(compactMode);
+        _statusMessage = $"Schedule compact mode set to {GetScheduleCompactModeLabel()}.";
+    }
+
     private void ApplyDisplaySettings()
     {
         var windowMode = _windowModeOptions[_windowModeIndex];
@@ -337,6 +382,7 @@ public sealed class OptionsScreen : GameScreen
         _resolutionIndex = FindResolutionIndex(displaySettings.ScreenWidth, displaySettings.ScreenHeight);
         _refreshRateIndex = FindRefreshRateIndex(displaySettings.RefreshRate);
         _showRealTimeClock = displaySettings.ShowRealTimeClock;
+        _scheduleCompactModeIndex = FindScheduleCompactModeIndex(displaySettings.ScheduleCompactMode);
     }
 
     private int FindWindowModeIndex(DisplayWindowMode windowMode)
@@ -376,6 +422,19 @@ public sealed class OptionsScreen : GameScreen
         }
 
         return 1;
+    }
+
+    private int FindScheduleCompactModeIndex(ScheduleCompactMode compactMode)
+    {
+        for (var i = 0; i < _scheduleCompactModeOptions.Length; i++)
+        {
+            if (_scheduleCompactModeOptions[i] == compactMode)
+            {
+                return i;
+            }
+        }
+
+        return 0;
     }
 
     private void DrawSelectorRow(
@@ -423,6 +482,16 @@ public sealed class OptionsScreen : GameScreen
     private string GetClockLabel()
     {
         return _showRealTimeClock ? "On" : "Off";
+    }
+
+    private string GetScheduleCompactModeLabel()
+    {
+        return _scheduleCompactModeOptions[_scheduleCompactModeIndex] switch
+        {
+            ScheduleCompactMode.On => "On",
+            ScheduleCompactMode.Off => "Off",
+            _ => "Auto"
+        };
     }
 
     private LayoutMetrics GetLayoutMetrics()

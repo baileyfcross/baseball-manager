@@ -125,6 +125,18 @@ public sealed class FranchiseSession
         Save();
     }
 
+    public void UpdateScheduleCompactMode(ScheduleCompactMode scheduleCompactMode)
+    {
+        var displaySettings = GetDisplaySettings();
+        if (displaySettings.ScheduleCompactMode == scheduleCompactMode)
+        {
+            return;
+        }
+
+        displaySettings.ScheduleCompactMode = scheduleCompactMode;
+        Save();
+    }
+
     public TeamPracticeFocus GetPracticeFocus(DateTime? date = null)
     {
         return SelectedTeam == null
@@ -202,6 +214,63 @@ public sealed class FranchiseSession
 
         Save();
         return $"Default practice focus set to {GetPracticeFocusLabel(teamState.PracticeFocus)}.";
+    }
+
+    public string SetPracticeFocusForDate(DateTime targetDate, TeamPracticeFocus focus)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a franchise team before changing the practice plan.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        var practiceDateKey = BuildPracticeDateKey(targetDate);
+        if (focus == teamState.PracticeFocus)
+        {
+            teamState.PracticeFocusOverrides.Remove(practiceDateKey);
+        }
+        else
+        {
+            teamState.PracticeFocusOverrides[practiceDateKey] = focus;
+        }
+
+        Save();
+        return $"Practice plan for {targetDate:ddd, MMM d} set to {GetPracticeFocusLabel(focus)}.";
+    }
+
+    public string SetPracticeFocusForDates(IEnumerable<DateTime> targetDates, TeamPracticeFocus focus)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a franchise team before changing the practice plan.";
+        }
+
+        var dates = targetDates
+            .Select(date => date.Date)
+            .Distinct()
+            .OrderBy(date => date)
+            .ToList();
+        if (dates.Count == 0)
+        {
+            return "Select one or more days first.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        foreach (var date in dates)
+        {
+            var practiceDateKey = BuildPracticeDateKey(date);
+            if (focus == teamState.PracticeFocus)
+            {
+                teamState.PracticeFocusOverrides.Remove(practiceDateKey);
+            }
+            else
+            {
+                teamState.PracticeFocusOverrides[practiceDateKey] = focus;
+            }
+        }
+
+        Save();
+        return $"Applied {GetPracticeFocusLabel(focus)} to {dates.Count} selected day(s).";
     }
 
     public static string GetPracticeFocusLabel(TeamPracticeFocus focus)

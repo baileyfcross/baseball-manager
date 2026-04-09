@@ -8,7 +8,8 @@
     "ScreenHeight": 1080,
     "RefreshRate": 144,
     "WindowMode": 0,
-    "ShowRealTimeClock": false
+    "ShowRealTimeClock": false,
+    "ScheduleCompactMode": 0
   },
   "PlayerRatings": {
     "7cc319b2-e1da-45d9-94d2-e5be5ea7cb8d": {
@@ -90081,7 +90082,7 @@
           "Name": "",
           "Specialty": "",
           "Voice": "",
-          "Country": "U.S. High School",
+          "Country": "Japan",
           "PositionFocus": "Any",
           "TraitFocus": "Best Athlete",
           "AssignmentMode": "Unassigned",
@@ -90568,8 +90569,24 @@
       "CurrentLiveMatch": null
     },
     "Nashville Foxes": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "a528f8a9-d0c9-4c8f-8190-2d13f9fca64f",
+        "f11162fc-7a71-4b16-9e10-11f075d571da",
+        "53a8b25b-8929-4b56-9e86-5a688ecc3efb",
+        "31e6525e-0b80-4e1b-ad69-21a1da745bdb",
+        "7b1b1b46-56fb-45dd-b9ab-9eb2de8bb4f2",
+        "b49b8d75-b1ca-4b7a-aa42-80096230411d",
+        "4e895b94-c1fd-4d8f-9ca6-9e94ce556bf6",
+        "a9a5145b-4301-4add-83c8-01a4df52cf28",
+        "dba2a9af-4080-4e0a-9472-ac826cbcfb7b"
+      ],
+      "RotationSlots": [
+        "6d08a623-3ca9-4da9-8a42-a8628205b2b0",
+        "e6ddc9c3-f747-433f-aff9-2e963eb4bb14",
+        "55efd229-2a53-4887-9d2d-bfb245d5208b",
+        "32faed3f-899f-4a8e-899a-a96363a2b3df",
+        "66ff6d88-905b-4b80-9707-122d47eeccd8"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -91109,8 +91126,24 @@
       "CurrentLiveMatch": null
     },
     "St. Louis Owls": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "a52465f8-390e-4c58-aa77-1bc9a250b909",
+        "22cb5135-feae-45b8-835b-ae2184d2ed06",
+        "3da7baa8-1c2f-402d-b394-bb2ced57256b",
+        "c46e1905-b735-433d-ae62-a77ac44ab4ec",
+        "c87daba9-7970-4431-bdf6-39cfabbfe22d",
+        "82b53d8d-b898-453a-94df-5cec7d7154e0",
+        "f509bdfa-f5ae-498a-bc8f-aff0ce5cf933",
+        "34a444e8-b1f1-483a-aed4-15061cc75e2a",
+        "834948c7-06ba-4391-b865-b259783848d1"
+      ],
+      "RotationSlots": [
+        "6e3e2eef-77b6-47d7-b0d9-b541ac8dacb5",
+        "9b79301c-3c0f-487d-b847-1e5baaf61303",
+        "d6b9f857-a11a-4ea6-8e57-5c5877ae8548",
+        "211a7215-636d-45c5-8ebb-9c35635b2b17",
+        "c29a3c02-5e1e-4ad2-b059-92814ad0db71"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -91650,8 +91683,24 @@
       "CurrentLiveMatch": null
     },
     "Portland Captains": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "806d1104-4479-4aaf-8a2e-569e92770249",
+        "9d2de551-0193-47a1-b420-fe70c2656aed",
+        "eddea4ba-048e-486c-9999-0f55001b063f",
+        "956092f1-06bb-42eb-ae5f-2ca84a3d8efc",
+        "2f30db88-c078-4f5e-9455-95ad37d4e06f",
+        "7bb8b3f8-33f2-45e4-a336-cd83542b9913",
+        "1e1e1385-509e-4341-a9e0-23ff8e118412",
+        "afe2b457-5f11-44b8-990e-596b60deeac8",
+        "58959a7d-34fd-4d02-b81d-57f6a93cdd7d"
+      ],
+      "RotationSlots": [
+        "68234d8f-9720-47dd-a880-467334137c30",
+        "d644ffa7-4623-4c26-9306-efa650566b8f",
+        "4416a32d-4f5b-4af2-9da0-793bbf2d679c",
+        "a63e1f5d-d97c-4ce7-9171-a659a58dc7de",
+        "91ceb608-347e-426b-8318-1018034f4413"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -92191,8 +92240,24 @@
       "CurrentLiveMatch": null
     },
     "Baltimore Pilots": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "7a06f4c0-4a6d-48de-afc5-2aa543024ebd",
+        "5b846fcf-782c-46ed-9b03-1fecf687da60",
+        "28c8a5e4-1e30-4dc9-a09e-d1f642c3a699",
+        "45dbae39-5d22-4ba0-97d1-4fe0942d5317",
+        "937b4689-b71c-479b-a5d3-50fc8bffdc34",
+        "7676b20c-3551-4780-9a68-fa05d1f939c2",
+        "61dcda41-0a21-45ab-aad5-40e656994fcf",
+        "f5117b48-5c09-452c-ac4b-580e4b3badb1",
+        "c9a7af5e-7fc9-4a64-9484-a49559053543"
+      ],
+      "RotationSlots": [
+        "feb18f72-8049-4730-8c4d-998e92cdf0c1",
+        "46d45a44-139a-4f97-996a-883399e07f4d",
+        "eba70181-7df4-4031-96de-f5f1fbad6faa",
+        "0a01ec6a-0856-4528-9daf-e16050c22156",
+        "babdcab3-553f-4a97-b290-8d4244d99008"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -92732,8 +92797,24 @@
       "CurrentLiveMatch": null
     },
     "Austin Stars": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "39a618e6-83c8-476f-8d81-878371038d20",
+        "da9fa9fe-8950-4f57-99f3-f393ca431776",
+        "ef818f4a-41db-4a36-bbf3-e42cbe8b6692",
+        "3ba8369b-9db6-4072-a5bf-93ba78e5c93f",
+        "be885ad1-2a5b-43cf-ac5a-a34e0e998d91",
+        "34a7e330-6451-4ae3-8a08-13445864235f",
+        "62065e1e-4155-40e6-ba17-04535b218fe8",
+        "1adda192-b64a-4f0e-90c0-e556e1a5d61c",
+        "b4b944f9-97b0-4631-8fe3-5be4bad0be5b"
+      ],
+      "RotationSlots": [
+        "a22061d6-3369-491c-a5c2-36bb48174009",
+        "8fcd1f52-80c6-45d7-bdec-d8b12f37b934",
+        "fb5fbb70-00e8-47de-87c4-38addbf140d6",
+        "45188274-25b1-4ac6-ae5c-3411f7b7496c",
+        "4666b080-fdf1-45ef-bf51-b65e04d5eb99"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -93273,8 +93354,24 @@
       "CurrentLiveMatch": null
     },
     "Toronto Lions": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "beac8fa3-6abf-44a9-b346-aaf653e57215",
+        "18148cbd-5ec9-4a99-8ac0-3501edad83c9",
+        "6e463dc2-c9e6-42db-9388-1e056681c579",
+        "11256fea-1021-4b3c-904a-6682a825dfdb",
+        "9a63bde1-4ec2-46b0-ada6-6f63bca84ba8",
+        "254a50d7-e399-4a4a-8a6d-d1881ca59690",
+        "234872de-1d8a-499d-b975-ea203dc0ccbb",
+        "a4c880e7-b636-4ac3-bc8f-6da363de49ef",
+        "d1326315-54f3-4e2b-9eb2-6b2aecfef1df"
+      ],
+      "RotationSlots": [
+        "9f6bcf89-6815-4f34-b0c3-fc51665841f5",
+        "41f443e3-099e-4a5f-adc4-4693cad1d3d8",
+        "d84e8a1a-9f58-4d32-aeeb-cd5078280285",
+        "4c38e62e-b376-48bd-a234-54de3df5807a",
+        "dcfffcc0-e674-4feb-adab-3da8d6715c73"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -93814,8 +93911,24 @@
       "CurrentLiveMatch": null
     },
     "Pittsburgh Bears": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "58d8011c-b13c-4fd9-817a-1d05d8cbf30e",
+        "e3f63cee-dce9-4253-89ad-21a737a71104",
+        "96e3f7d9-03f9-4f8a-ada0-0ca025188d30",
+        "ebd46eab-9b77-4ada-8ec6-c3b606741226",
+        "b9d626e0-1fd5-4806-98fe-fb4438cb4b8c",
+        "22994f85-0e38-44b6-8c95-ea394861c8fb",
+        "8f03749e-405d-4545-a442-97808b3bef1a",
+        "f55ee944-873a-411c-8904-361d07518a93",
+        "718604f9-e0c6-4f8a-871f-42fb632890fc"
+      ],
+      "RotationSlots": [
+        "7a8cbefb-3317-419b-8e6f-c00a96059d00",
+        "5286610b-4b80-4948-bb4d-90ef47d5b3c7",
+        "fa2612ba-b2a2-4ce6-9db4-79b8a0c602b5",
+        "901b2ff4-4944-44f6-aa7e-113c0ac18dbd",
+        "36c02156-0e4c-43e5-87b4-1bbc44cf4189"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -94355,8 +94468,24 @@
       "CurrentLiveMatch": null
     },
     "Charlotte Storm": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "7077750f-0432-476b-8ddb-7ef5a67c0ad5",
+        "4bd2e9ef-ba01-4e9a-962c-0ba8f0414876",
+        "c03cd2fa-51c0-4532-9e98-e0713449b65e",
+        "98749a2c-421d-44e1-92d8-27b031b30b26",
+        "d722479e-65f6-4276-ab8f-bc7aed0266dc",
+        "c219acf3-4083-4c13-8f46-338b5e9d7acd",
+        "1ec0d251-5b81-4543-9451-deccf5322c49",
+        "ad56a778-ab52-4c00-b8f3-cb0374a8b7fc",
+        "8c88cead-ceae-490d-a095-fae1559d3da9"
+      ],
+      "RotationSlots": [
+        "b664415f-84fb-428d-80e3-c53df3a8b372",
+        "d22767c4-90bb-4a9f-b622-e07a76002ac8",
+        "247e9034-3fd7-44a4-8644-2943125dd4f0",
+        "8748f544-da9b-43e0-aa70-bdb858c107dd",
+        "fc85448a-bf83-4a96-98ac-76d5a07332f9"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -94896,8 +95025,24 @@
       "CurrentLiveMatch": null
     },
     "Denver Comets": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "d24694fb-67a8-4d25-a28d-bcc9062b79ee",
+        "5e7254d3-94c6-4c6b-8be6-af81f5c91a06",
+        "c82f8839-0498-4743-9360-02395be4fa7d",
+        "15c829a5-5d57-45fe-a3ea-8d04cd10729c",
+        "f702a3ff-86cd-4f07-8c60-5736460f87ed",
+        "e54882c1-fedd-4f11-89a0-802f88e27eea",
+        "3a8ac774-99d0-4658-bb64-234092a57399",
+        "2f08a98b-faf7-4759-ae6a-4e09c024d437",
+        "3eb8ff8d-3eac-4a71-ad2b-6fd673963bce"
+      ],
+      "RotationSlots": [
+        "1c0bc8b6-e2b2-42bd-b1c9-f85bfab9a3c3",
+        "0057800d-0f37-4d5c-b30b-6a34d0f063c6",
+        "647d3d7d-0fe3-49f9-b5e5-d3997a50d8d5",
+        "ae9a5773-eb09-46e7-896b-4bcd100ebff8",
+        "adb7f60f-b368-4807-8184-354ab4e7b6cf"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -95437,8 +95582,24 @@
       "CurrentLiveMatch": null
     },
     "Houston Knights": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "3ec533e1-6367-4193-b172-189777108ade",
+        "51dd9a3c-2163-42a9-ab1a-45d551dacbb6",
+        "606ac65a-e32d-4888-8a72-ec2aaff271ec",
+        "1a489138-eec4-4f78-968c-820aec7a0ddc",
+        "18c1c9b2-7364-4105-bf57-3a34c4cded9b",
+        "2584d636-2536-4596-a82e-2d03b5cc5fef",
+        "4a9f77ff-8c8e-483a-a7f6-9b4fed990778",
+        "77bcdb36-4f5d-44ff-9459-8d1b66b24583",
+        "b4221486-b5ad-4a3a-8dfa-bb78353b88d3"
+      ],
+      "RotationSlots": [
+        "49cf3142-7d03-4fb0-80c6-ef1c4c73e9f3",
+        "b4b8fd12-0740-4f9e-a97b-70e6b4e35287",
+        "e9504c5d-dd7b-43b6-9c6b-bc3e32f2104c",
+        "42afbf28-6c47-4f80-858d-f01d22f111dc",
+        "da47e106-32d1-4deb-8edc-3ed8e2475bf7"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -95978,8 +96139,24 @@
       "CurrentLiveMatch": null
     },
     "Indianapolis Anchors": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "a4255626-edf3-45e4-8055-7e4969a3ba52",
+        "74da77f0-5436-494a-8dfe-275e7f487f7e",
+        "90ebecf9-2886-4173-b67f-d39500943741",
+        "3ba54629-6633-493c-9952-800924e445d8",
+        "c04c90fb-e4e1-4839-ac77-61b604697051",
+        "66a78b38-8d62-4089-90bd-0525cdf67574",
+        "b767b8c2-2903-4883-bbed-e2f472b0bd24",
+        "0242f16d-8591-4802-b13b-4559d67b2610",
+        "dbc1bb44-cd6d-4892-84c8-defeffb588b1"
+      ],
+      "RotationSlots": [
+        "84c100ed-e5ba-4875-a105-96eb159b60a5",
+        "80261ff1-20fb-40ff-b721-2222dc6a886c",
+        "9cb3a004-2300-403c-916b-e8aeb5992fda",
+        "5b8118c7-4382-4db5-813f-e23cb59aef70",
+        "5abd4322-cc72-4f3b-bad1-a81b7d8dc15a"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -96519,8 +96696,24 @@
       "CurrentLiveMatch": null
     },
     "Milwaukee Giants": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "fe290822-0df8-484d-ade0-387654923ad3",
+        "a1a2fe97-7a29-490b-ae7b-e4904a74761f",
+        "b92831ba-3069-490c-9c6d-f8e27e135aa1",
+        "f7d168a2-a44e-4c24-8afa-a6593f736b0c",
+        "2f943cbc-4db7-4fd9-85b8-e5064101d08c",
+        "6bfd32c7-ebc7-4f6a-94c1-a848ca6f0395",
+        "684fa2b9-29f1-40fc-a60b-cafdb03690f9",
+        "c42ac468-05e0-463a-8783-f5b6d6057b07",
+        "fd12cd84-f4aa-46dc-9730-f51ecefb9028"
+      ],
+      "RotationSlots": [
+        "69bb6886-a094-4e2a-b3b1-a2b1f69085cc",
+        "22bbda78-acb8-44d6-ad1f-06126626aa73",
+        "e32c6e31-655d-429a-a986-0c5bac37c132",
+        "3af2fd58-d9ae-4b7d-a089-3a272e6eb239",
+        "0f684012-e19a-4689-ab13-50292d72dc25"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -97060,8 +97253,24 @@
       "CurrentLiveMatch": null
     },
     "Chicago Dragons": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "8f52b9a2-2f64-4728-adc1-d188a65ba453",
+        "4669a6b1-24eb-49d8-b37d-92dd21db45fa",
+        "ccfdcbe0-40f4-4e9a-97f3-54b57547ba12",
+        "4a043215-c56b-466e-81be-4b8b7dc2266e",
+        "cbe94ac9-c0c0-42bd-a19c-9a6f974227b4",
+        "33baed50-4b00-4be6-9931-7ba361f08b38",
+        "70c6d0fc-a3e7-416d-abbc-de328e196eb8",
+        "bd0a49f4-88b4-4ee8-b6ba-0b45b02a243e",
+        "d324bf14-a710-4227-a700-461047a45910"
+      ],
+      "RotationSlots": [
+        "8ea81064-8ba4-436c-9a88-6be9e68a5d18",
+        "0604fc0e-0190-44c5-9bce-92d9914aa60a",
+        "49b0509b-195c-48ec-b870-c704e892cd2a",
+        "61bcaac4-e846-4d2b-8f43-1c6e491c5b4f",
+        "266b7741-b1dd-42a8-8c2c-c6686a8f3efc"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -97601,8 +97810,24 @@
       "CurrentLiveMatch": null
     },
     "Los Angeles Sharks": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "a055c33d-8a0f-4595-a125-42d03b3ac58e",
+        "b825eb22-bb75-4a43-b42a-712dcea5a96e",
+        "e2ed1c44-c060-4a2d-a5db-1145a3e305f1",
+        "d5dd34af-b418-44ee-bf0d-0e445a2f9a50",
+        "168d00a4-0b3b-48d7-9877-67364cbbf4ea",
+        "34446c9b-8685-4c55-9b6e-a5929ef9581b",
+        "e17a1b03-7941-4b8f-8834-90d9773a1d8b",
+        "b8a341c0-4e38-499c-b7cf-a41f9342bfee",
+        "71409301-b1a9-4b60-8ddb-9882ef4098c1"
+      ],
+      "RotationSlots": [
+        "837851d8-8bb1-46ab-b41f-23333c1d5ba2",
+        "6da15fc4-e26d-4177-97a7-cf31eb677226",
+        "a3cfb88b-29ad-4771-bcf5-7edbac54dc88",
+        "7a6cdec4-737e-4eb2-9050-1f626de4b600",
+        "507c90a7-81c5-42f0-9c31-e9e0db3cdfe1"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -98142,8 +98367,24 @@
       "CurrentLiveMatch": null
     },
     "Miami Aces": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "0f35f581-7025-4a80-ba7a-1d912ad7bb11",
+        "6590e8a8-a385-4400-a54f-de96e81ed419",
+        "2847bef1-1d8a-4b50-8fcf-382a4d8b45b1",
+        "a595765f-a71f-43e1-bc6d-af408789b6db",
+        "f9156629-c1b3-42c2-b64d-167b9d219fa9",
+        "4c8e10fc-ed0f-4b42-b20d-3aadbe84334b",
+        "378be826-2564-4272-b9fa-bc99a0e8089d",
+        "298018dc-d4e8-4d11-81cd-74ff5fd71fc3",
+        "cfe6d12e-ed32-4372-9d96-0d6db9cf138a"
+      ],
+      "RotationSlots": [
+        "a37caeae-34fe-4f90-96e3-496cea2e441a",
+        "0483f739-8ab0-40c6-8854-104ace259ba5",
+        "2d2ab438-12a6-47ec-9afc-a17094638bbe",
+        "4accc011-e57d-4b2e-a9fe-a2c5d2cd21be",
+        "fb58e99c-9168-47ad-ba16-49deb114991c"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -98683,8 +98924,24 @@
       "CurrentLiveMatch": null
     },
     "Phoenix Hawks": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "0fd7e57c-7b41-4170-96cf-03fe75660fd8",
+        "0c72c719-732f-419d-b19e-274c51a004b6",
+        "cd991b4b-ae47-4f0c-b31a-067a0d1c8cf8",
+        "2c11675d-91f1-4feb-a69f-7b79ca827870",
+        "73afe0ae-b80f-4a26-99bb-6eda885cb621",
+        "887d18a3-0c65-4e31-914f-eba18352dc9b",
+        "b2f1a08b-722e-4680-81cf-cd7a5248fe52",
+        "a180a6af-fa06-4420-a351-e0b961f4fd34",
+        "6c4bbc99-64ca-472d-91b5-8275fdf8cd76"
+      ],
+      "RotationSlots": [
+        "26c8d0ed-58f4-4c6a-b2c3-5162327a9cba",
+        "f83a75ea-b856-4acb-8ee5-9ad39b2e8f73",
+        "ed2a4d45-8d13-4b8b-a466-3c2cc9114899",
+        "a41a4155-45d6-408e-a74e-a29d746ba49f",
+        "ae3ea41c-36c4-4ac5-97f4-83fb3134ce74"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -99224,8 +99481,24 @@
       "CurrentLiveMatch": null
     },
     "Kansas City Wolves": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "e258c9f2-d00c-49ac-9b08-b59a687112ed",
+        "6c212cba-0975-4de4-a6e7-d6ffd06b38e2",
+        "4773c54b-e29c-43d8-b4cc-1e9c44309c3f",
+        "ec3ab5ca-e0ba-4449-a340-c5e6471f1a3b",
+        "b269104f-314e-4dcc-8959-92a1081d38ef",
+        "9fda2ae4-f518-4954-8860-1cb50e956dce",
+        "b0c8db37-7e3f-4437-b212-6a0024c240ab",
+        "54141e34-ac00-443b-80e8-d953f35837f6",
+        "595b0b89-1be8-45af-83e1-e6ae0107cf3f"
+      ],
+      "RotationSlots": [
+        "42f1c079-ddd2-4a6b-ad86-c4a35c5d09e0",
+        "3e4c32e7-5801-4d6d-bfc5-5a25a9b09e10",
+        "1b2a325b-35e6-4a75-8923-04ccd5e84b21",
+        "17cab279-b425-4b0a-aeed-1cf07fda897e",
+        "265c55b3-abb9-417d-878b-620c8a82e65b"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -99765,8 +100038,24 @@
       "CurrentLiveMatch": null
     },
     "Dallas Rockets": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "55ae2902-e19f-4b84-895e-4c8f7adad8ef",
+        "04089ed1-b42b-45c1-9c08-a7891fd6655a",
+        "92ce5c48-2b02-41c8-a2ee-6dca922992a2",
+        "36e18174-f58a-4714-acff-d872186fba5d",
+        "5334e553-1e7f-4017-acb4-ab0e33ab89f3",
+        "7b08a05e-8d3e-475a-bfac-5e240989cfba",
+        "fdaae916-9dbf-4a90-b873-37a1a4ba19ac",
+        "d5d69736-bf32-4cc3-af21-4002f50bdefb",
+        "2c1a60e9-2a00-4e30-8444-5a0a5f4af5ef"
+      ],
+      "RotationSlots": [
+        "397d8caf-8a5b-45fb-b01c-1fda941a5a0a",
+        "21c9d4f5-d76e-4fd6-bfe2-a233c61fca79",
+        "945906b2-c428-4bda-8480-a8f98bc05815",
+        "10fff83c-bda7-462d-9c85-2e382d90ef92",
+        "cc973008-9c30-4bcb-a28e-8d96827028b1"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -100306,8 +100595,24 @@
       "CurrentLiveMatch": null
     },
     "Minneapolis Guardians": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "ff777e56-5f86-4e27-a86d-1bb44a1addcd",
+        "f1d770e6-3881-494b-a3ea-81a39d9c5b61",
+        "570dba09-1ffe-4ba3-94a0-811233c7976e",
+        "55dcc5a1-cce1-4a7c-8274-7cd1c31772fe",
+        "49ff5eab-a32c-40b4-9852-f1730f27cf27",
+        "038e91df-843e-4f6e-903a-dcd4558c7ac4",
+        "73f214ab-6a7d-45a1-8902-2d833b9ec772",
+        "e67e9adf-74ee-49dd-8e62-c2f12f312d32",
+        "4a76f622-8326-46c0-b4d3-0e81f73793b7"
+      ],
+      "RotationSlots": [
+        "0ef16b4e-ca9d-4776-902c-2dd119e75812",
+        "f1f48fd0-6ee9-44bd-a704-a38a90264c26",
+        "a0706e34-79a7-4978-a27a-5236ad583bc3",
+        "3184ee93-571b-446c-b563-4bb5bba7a6a0",
+        "244e12a8-f1cb-48f3-8d36-e6fe305cecfc"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -100847,8 +101152,24 @@
       "CurrentLiveMatch": null
     },
     "Seattle Storm 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "5038a9f9-38b5-43b3-93db-4a162d4491df",
+        "b5cf544c-271d-42c5-8ac9-abba39991634",
+        "94e2e120-6908-4897-b46a-14ae7fb6293f",
+        "2817ecae-283f-4f6f-86b3-0f38197d7844",
+        "9a027aa9-47a9-4b3f-88c1-a9af3dac0867",
+        "15b4266c-3c92-4fc3-82ff-f59f0bfcafe3",
+        "c4cbff0e-cc48-434d-bdf3-c25a85fab3d5",
+        "8bdc1654-fedc-4a89-b072-119f0fef4cb2",
+        "fafb9534-e019-459d-9b37-2e0ef17bee4d"
+      ],
+      "RotationSlots": [
+        "08d7f176-83a0-4dd3-9d2a-5ba68fcf41cc",
+        "6c7d9378-0149-409c-b1d4-364ace401660",
+        "399fd824-ca7d-4fa4-91fe-e77718b82b1b",
+        "258040f8-2296-444e-a249-8a73bed993e7",
+        "73633fa9-945c-4ba1-a6af-51ea1513b2d1"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -101388,8 +101709,24 @@
       "CurrentLiveMatch": null
     },
     "Philadelphia Knights 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "a6ef7797-4bad-46d9-ba9e-00a31447d503",
+        "08fad0ce-dc10-4f12-9e01-a8cdb1d0280a",
+        "655e23ee-5c16-4da8-bfec-c2b89a4b7832",
+        "7995a7b0-9cfe-47e6-bfea-981499e2bce9",
+        "68b54203-98c8-4b76-8284-620ceb04b47d",
+        "717c90a7-58c6-4919-a277-fc45110717d6",
+        "f1b4c769-facc-4e87-80a9-74e8f1964c93",
+        "15a81f2d-2215-4866-b513-b9a6c025f8f8",
+        "3ce3e212-cce9-4cf7-991d-8765a6245d3e"
+      ],
+      "RotationSlots": [
+        "77bc256a-4f6c-44e5-b1cf-f56cf35d4652",
+        "f8b26053-eb99-4d9b-829a-797b0a9ef05d",
+        "e573e989-2d90-41a5-82ea-5b30128bce7a",
+        "129884a6-00af-44da-a0e2-ea2570549fb8",
+        "b268b073-870d-49b4-b4c4-e3e310ccbfaf"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -101929,8 +102266,24 @@
       "CurrentLiveMatch": null
     },
     "Atlanta Captains 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "64a24f7f-d880-432e-b82d-40b4ad0aa144",
+        "f8361787-1b8b-42f2-9d1b-175661019eef",
+        "df628161-d95b-430d-b663-09d7002f6179",
+        "294a134b-d298-4a5d-b133-6a165a2279e8",
+        "71d5bf40-d38c-48e9-9b31-945b97de22b6",
+        "9225860c-3cfd-42cc-9a18-fca5c2b05056",
+        "28dc9966-ae42-4fdb-ba9f-2e56385755d9",
+        "00421bfb-5f59-422e-b6ae-5b9cbd3201fc",
+        "39eb1822-affc-4f6a-b949-7a767b565668"
+      ],
+      "RotationSlots": [
+        "6442a328-2e79-443e-b550-df0611e9c2db",
+        "802fc100-08d2-4e9f-8260-1de6f13ba7ab",
+        "8c42a651-9854-46e6-81b6-8910f7eab667",
+        "44d3568d-1854-495b-8450-d32a57009531",
+        "da3f26c4-9fa0-4e53-ac2c-295d48822f12"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -102470,8 +102823,24 @@
       "CurrentLiveMatch": null
     },
     "San Diego Falcons 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "6d1dc702-1220-48d9-a544-7fbbc57eb46a",
+        "e625123a-277b-4464-aad3-2fd63823aab1",
+        "276fd417-4b90-4418-89bb-3818b7e3b8b3",
+        "81fd4164-fa5b-45ad-b61b-3f722472e6de",
+        "1b09d60b-5355-49b8-a1b6-5d3cad12f2ba",
+        "157c773d-f7e1-45f3-b132-5d04551a84a9",
+        "86fbbd74-204a-4eb8-b800-564e78638721",
+        "42c84421-46bd-49be-a00f-1f140b2eec0f",
+        "3ccce693-830a-4ee1-b0d7-b782a44feed7"
+      ],
+      "RotationSlots": [
+        "5e0dfc1f-cd10-477d-a1c5-7526aaf1f78e",
+        "a09c9f15-7e4e-4d12-a2c2-fd1002730630",
+        "f512c348-9f6b-4fdd-9d9d-26fd264e6169",
+        "9dbc9089-cfb0-4eea-89c5-bede8abf8656",
+        "483fc281-b691-4121-8ea1-02cccc634ecc"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -103011,8 +103380,24 @@
       "CurrentLiveMatch": null
     },
     "Tampa Pilots 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "5f3ae01b-05db-46fc-b34d-c16dbbe4a152",
+        "a37cd562-0a81-4cba-9b31-3b7028fe2731",
+        "180adec2-344d-4372-b48f-05d4c6442e6f",
+        "eaefe757-c24c-4c3a-b723-f806cdd7538a",
+        "7d77dcf1-3d3e-4910-b835-fa5ce6b577e5",
+        "9e51ef06-7bd2-45d8-8a25-cb7475aae30a",
+        "2ccb30bb-11c5-435d-900c-23eaa581db42",
+        "75d5b46c-89e7-4ace-a271-b0c60f74390a",
+        "d5f8eb40-bde0-41b6-a926-d7dba169a0c6"
+      ],
+      "RotationSlots": [
+        "ba6eb0a8-3a8c-4556-a36c-d4a5aa2630a7",
+        "8092a746-6e64-4078-b155-a93949ab89de",
+        "1f0b5c77-456d-4f71-9af0-0c1f7a756422",
+        "2276d576-d697-47a7-a032-804b0e2289cc",
+        "ca33bf6c-2a20-4b0e-9589-39c4621de05c"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -103552,8 +103937,24 @@
       "CurrentLiveMatch": null
     },
     "Cleveland Sharks 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "eac559c0-f8a4-4171-81d7-0600c0450c44",
+        "a0c1007d-00f6-43b7-a547-592d17671665",
+        "f49eac90-8e85-4074-9f3c-70b22b1f78a5",
+        "f995ebc9-ab63-4ce0-88ff-81921d8c93e0",
+        "f5cfdc69-06be-4cfe-842c-6286976ef1c4",
+        "e9fdd3c1-2af7-4073-a87a-811664d1a7cc",
+        "92c698f3-b406-4c6a-af24-72bbb5095c33",
+        "cf4c309a-1940-41e6-a3c1-c0ecd6b9c420",
+        "27956303-3c70-4806-8fbd-b130ace95870"
+      ],
+      "RotationSlots": [
+        "36bd4331-7a98-4b9a-bb28-6142a62b794e",
+        "285c571e-d00d-464d-b74f-b32292d88ea8",
+        "1164a552-098f-4f2c-8610-7c8f6b0ea499",
+        "c9ed01f3-06b3-4fa8-93fb-00af6efb10c3",
+        "4d0b7894-78c7-451b-8491-bf8e8e6dce53"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -104093,8 +104494,24 @@
       "CurrentLiveMatch": null
     },
     "Detroit Bears 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "60fe4880-6422-4d16-a7a9-2a0ee86f9eb5",
+        "05ab633b-001f-4a18-aff6-27e646231725",
+        "c35776ee-4a16-475c-ae2d-e75e05d41522",
+        "5d7a1fa2-00b0-446a-94b3-1be41a6176be",
+        "d590566e-f038-49b8-9c61-ffb547fe635f",
+        "269c0979-63da-445d-8485-04948ab94abe",
+        "7fa95b3e-d7da-4dec-b080-8189c03b6c21",
+        "23c5b3c7-899f-492e-b1a0-17a9341385c4",
+        "7cccdceb-9e48-4706-adc0-f79933614d3e"
+      ],
+      "RotationSlots": [
+        "8170cd07-78ce-4f9c-9147-cf40944c47ac",
+        "644d6eb2-6685-4325-832b-f15daa57b11f",
+        "dcd44270-0f09-44f3-ad6a-5f17ff82817e",
+        "63513877-f5d1-4f0a-80ac-8a13b9d7d04e",
+        "0555f72e-ad5f-4cad-bea6-8f7fc3a0f4fd"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -104634,8 +105051,24 @@
       "CurrentLiveMatch": null
     },
     "New York Hawks 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "8501e2e1-425e-4d7a-87a7-d0ab8d95670b",
+        "de240457-a9c4-48c9-a512-0042a431c727",
+        "8f6d0b37-72d6-4466-9bc9-c67454bdc202",
+        "703e3133-5016-429d-9097-a78e0d5683db",
+        "3bdd249c-3304-4170-838c-8f3fba35073d",
+        "af3e5eb3-5bfb-431d-aa2a-0e6f56bc661a",
+        "7c7af143-f0c4-411a-9268-deacdc8615c8",
+        "08a4c9b4-6e67-48d3-a02e-bfa1b0b3f05a",
+        "aacb64f9-b449-4087-884b-4db1aa7efdc0"
+      ],
+      "RotationSlots": [
+        "d5296c66-9153-4da0-b155-aece25c868ee",
+        "bc13b2bb-12ca-48d9-b557-ba6f469edb57",
+        "fb353c6f-4ffb-45b2-b616-81f912047669",
+        "a8a3a296-a411-4e94-b5d7-67aa54f662d0",
+        "684306ea-dc23-45a9-a89b-8bd7b0a0e801"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -105175,8 +105608,24 @@
       "CurrentLiveMatch": null
     },
     "San Francisco Owls 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "89bcd9b1-5337-4e51-853f-0184af08e6d2",
+        "fbce20ef-08eb-4326-9fef-fae2d89fa080",
+        "7f5b640c-9d2d-40d0-aa4b-d84f8f1718c9",
+        "98c61fad-065b-4bab-bcab-4bc5bbe562f9",
+        "c1ef976e-b1bc-4679-8618-c30dcaea21fa",
+        "8a8817f5-197f-4355-bfb1-53ba690a16c3",
+        "517b4cf9-1b29-4bf6-914c-05eb0c0a6d45",
+        "0b702dc3-d37d-4550-b1f6-415ea3a83b5f",
+        "c9847428-2429-4f0a-94e7-c9e1211db1dd"
+      ],
+      "RotationSlots": [
+        "be1470e0-9fa9-40fd-ba53-a94017646122",
+        "c856bf80-797c-42d2-8cce-011b76f692f8",
+        "7fbefa2f-c9a4-4313-b20a-42b99792821e",
+        "5784d967-120d-4883-8f12-de95eafc43f7",
+        "8df77dc6-9374-48f0-8b5d-7876660bb9be"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
@@ -105716,8 +106165,24 @@
       "CurrentLiveMatch": null
     },
     "Washington Aces 2": {
-      "LineupSlots": [],
-      "RotationSlots": [],
+      "LineupSlots": [
+        "91c50e04-a58f-4470-ba3e-55ab91a1aaba",
+        "3d1973fe-f2e9-4eb2-82fe-57022e52d6c7",
+        "1c0c58f7-dadb-47c8-815f-5f24317e3f3a",
+        "5c760a68-a4f9-4a9c-9a2b-0d22bf909f28",
+        "7cc50823-6194-4b1c-a0ea-d9281c5882e2",
+        "fa39f577-e433-4ae9-bc03-40085c57e6a2",
+        "d016e851-8367-4267-9824-0e8520d50034",
+        "4544851e-6ca7-42b8-9572-0fe6fb816019",
+        "7f54e4b4-6a9c-4e35-a558-c69606314bf8"
+      ],
+      "RotationSlots": [
+        "33138a58-cffb-420e-98bc-62fb93226475",
+        "895f8d57-1b9f-40b4-ae04-7f1018642431",
+        "c0fa6e01-50f7-4760-85a5-944f173073ad",
+        "2f635b3b-0e67-4ca9-8bae-d77f9c7a8243",
+        "6518ffa0-f8dd-4ffd-ae27-141f4f3ed238"
+      ],
       "PracticeFocus": 0,
       "PracticeFocusOverrides": {},
       "CoachingStaff": [
