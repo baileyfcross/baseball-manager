@@ -63,4 +63,18 @@ public sealed class LiveMatchViewModel
     public string HighlightedFielder { get; init; } = string.Empty;
 
     public float BallHighlightAlpha { get; init; } = 1f;
+
+    public bool ManagerMenuVisible { get; init; }
+
+    public string ManagerModeLabel { get; init; } = string.Empty;
+
+    public string ManagerPromptText { get; init; } = string.Empty;
+
+    public string ManagerTargetLabel { get; init; } = string.Empty;
+
+    public IReadOnlyList<string> ManagerOptions { get; init; } = [];
+
+    public int ManagerSelectionIndex { get; init; }
+
+    public string ManagerFeedbackText { get; init; } = string.Empty;
 }

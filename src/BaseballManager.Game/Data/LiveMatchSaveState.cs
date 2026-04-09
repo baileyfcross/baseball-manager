@@ -62,7 +62,13 @@ public sealed class MatchTeamSaveState
 
     public List<MatchPlayerSnapshot> Lineup { get; set; } = new();
 
+    public List<MatchPlayerSnapshot> BenchPlayers { get; set; } = new();
+
+    public List<MatchPlayerSnapshot> BullpenPlayers { get; set; } = new();
+
     public MatchPlayerSnapshot? StartingPitcher { get; set; }
+
+    public MatchPlayerSnapshot? CurrentPitcher { get; set; }
 
     public int BattingIndex { get; set; }
 
@@ -71,6 +77,8 @@ public sealed class MatchTeamSaveState
     public int Hits { get; set; }
 
     public int PitchCount { get; set; }
+
+    public Dictionary<Guid, int> PitchCountsByPitcher { get; set; } = new();
 }
 
 public sealed record LiveMatchRestoreState(

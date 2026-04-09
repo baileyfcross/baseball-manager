@@ -267,4 +267,25 @@ public sealed class AtBatResolverTests
         Assert.Equal(10, state.Inning.Number);
         Assert.Contains("Top 10", result.Description, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Resolve_ThirdOutInBottomNinthWithAwayLead_EndsTheGame()
+    {
+        var state = MatchStateFactory.CreateDefault();
+        var resolver = new AtBatResolver();
+
+        state.Inning.Number = 9;
+        state.Inning.IsTopHalf = false;
+        state.Inning.Outs = 2;
+        state.Count.Strikes = 2;
+        state.HomeTeam.Runs = 2;
+        state.AwayTeam.Runs = 4;
+
+        var result = resolver.Resolve(state, new SequenceRandom(nextValues: [20]));
+
+        Assert.True(state.IsGameOver);
+        Assert.True(result.IsGameOver);
+        Assert.Contains("Ballgame", result.Description, StringComparison.Ordinal);
+        Assert.Contains(state.AwayTeam.Name, result.Description, StringComparison.Ordinal);
+    }
 }

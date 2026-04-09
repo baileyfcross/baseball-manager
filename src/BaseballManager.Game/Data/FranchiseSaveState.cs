@@ -31,7 +31,50 @@ public sealed class FranchiseSaveState
 
     public LiveMatchSaveState? QuickMatchLiveMatch { get; set; }
 
+    public CompletedLiveMatchSummaryState? LastCompletedLiveMatch { get; set; }
+
     public Dictionary<string, TeamFranchiseState> Teams { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class CompletedLiveMatchSummaryState
+{
+    public string AwayTeamName { get; set; } = string.Empty;
+
+    public string HomeTeamName { get; set; } = string.Empty;
+
+    public string AwayAbbreviation { get; set; } = string.Empty;
+
+    public string HomeAbbreviation { get; set; } = string.Empty;
+
+    public int AwayRuns { get; set; }
+
+    public int HomeRuns { get; set; }
+
+    public int AwayHits { get; set; }
+
+    public int HomeHits { get; set; }
+
+    public int AwayPitchCount { get; set; }
+
+    public int HomePitchCount { get; set; }
+
+    public string AwayStartingPitcherName { get; set; } = string.Empty;
+
+    public string HomeStartingPitcherName { get; set; } = string.Empty;
+
+    public int FinalInningNumber { get; set; }
+
+    public bool EndedInTopHalf { get; set; }
+
+    public int CompletedPlays { get; set; }
+
+    public bool WasFranchiseMatch { get; set; }
+
+    public string WinningTeamName { get; set; } = string.Empty;
+
+    public string FinalPlayDescription { get; set; } = string.Empty;
+
+    public DateTime CompletedAtUtc { get; set; } = DateTime.UtcNow;
 }
 
 public sealed class TeamFranchiseState

@@ -52,6 +52,40 @@ public sealed class LiveMatchHudRenderer
         }
 
         uiRenderer.DrawText(viewModel.StatusText, new Vector2(48, viewport.Height - 42), Color.White, uiRenderer.ScoreboardFont);
+
+        if (viewModel.ManagerMenuVisible)
+        {
+            DrawManagerOverlay(viewModel, uiRenderer);
+        }
+    }
+
+    private static void DrawManagerOverlay(LiveMatchViewModel viewModel, UiRenderer uiRenderer)
+    {
+        var panelBounds = new Rectangle(40, 40, 420, 320);
+        uiRenderer.DrawButton(string.Empty, panelBounds, new Color(18, 24, 34, 228), Color.Transparent);
+        uiRenderer.DrawText("MANAGER", new Vector2(panelBounds.X + 18, panelBounds.Y + 16), Color.Gold, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText(viewModel.ManagerModeLabel, new Vector2(panelBounds.X + 18, panelBounds.Y + 52), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(viewModel.ManagerPromptText, new Rectangle(panelBounds.X + 18, panelBounds.Y + 80, panelBounds.Width - 36, 50), Color.White, uiRenderer.UiSmallFont, 3);
+        uiRenderer.DrawTextInBounds(viewModel.ManagerTargetLabel, new Rectangle(panelBounds.X + 18, panelBounds.Y + 136, panelBounds.Width - 36, 22), Color.White, uiRenderer.UiSmallFont);
+
+        var optionsTop = panelBounds.Y + 168;
+        if (viewModel.ManagerOptions.Count == 0)
+        {
+            uiRenderer.DrawTextInBounds("No options available.", new Rectangle(panelBounds.X + 18, optionsTop, panelBounds.Width - 36, 24), Color.Orange, uiRenderer.UiSmallFont);
+        }
+        else
+        {
+            for (var index = 0; index < Math.Min(5, viewModel.ManagerOptions.Count); index++)
+            {
+                var rowBounds = new Rectangle(panelBounds.X + 18, optionsTop + (index * 28), panelBounds.Width - 36, 24);
+                var isSelected = index == viewModel.ManagerSelectionIndex;
+                uiRenderer.DrawButton(string.Empty, rowBounds, isSelected ? new Color(56, 78, 102) : new Color(34, 42, 52), Color.Transparent);
+                var label = isSelected ? $"> {viewModel.ManagerOptions[index]}" : viewModel.ManagerOptions[index];
+                uiRenderer.DrawTextInBounds(label, new Rectangle(rowBounds.X + 6, rowBounds.Y + 1, rowBounds.Width - 12, rowBounds.Height - 2), Color.White, uiRenderer.UiSmallFont);
+            }
+        }
+
+        uiRenderer.DrawWrappedTextInBounds(viewModel.ManagerFeedbackText, new Rectangle(panelBounds.X + 18, panelBounds.Bottom - 54, panelBounds.Width - 36, 36), Color.Gold, uiRenderer.UiSmallFont, 2);
     }
 
     private static IEnumerable<string> WrapTextToWidth(string text, int maxWidth, SpriteFont? font)

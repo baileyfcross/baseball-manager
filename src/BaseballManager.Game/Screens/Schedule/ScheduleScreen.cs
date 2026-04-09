@@ -557,15 +557,23 @@ public sealed class ScheduleScreen : GameScreen
 
     private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
-    private Rectangle GetPreviousMonthBounds() => new(Math.Max(LayoutMargin + 720, _viewport.X - 420), 40, 52, 36);
+    private Rectangle GetPreviousMonthBounds()
+    {
+        var nextBounds = GetNextMonthBounds();
+        return new Rectangle(Math.Max(LayoutMargin + 560, nextBounds.X - 260), 100, 52, 36);
+    }
 
-    private Rectangle GetNextMonthBounds() => new(Math.Max(LayoutMargin + 980, _viewport.X - 160), 40, 52, 36);
+    private Rectangle GetNextMonthBounds()
+    {
+        var simSeasonBounds = GetSimSeasonButtonBounds();
+        return new Rectangle(Math.Max(LayoutMargin + 760, simSeasonBounds.X - 68), 100, 52, 36);
+    }
 
     private Rectangle GetMonthLabelBounds()
     {
         var previousBounds = GetPreviousMonthBounds();
         var nextBounds = GetNextMonthBounds();
-        return new Rectangle(previousBounds.Right + 12, 42, Math.Max(160, nextBounds.X - previousBounds.Right - 24), 30);
+        return new Rectangle(previousBounds.Right + 12, 103, Math.Max(160, nextBounds.X - previousBounds.Right - 24), 30);
     }
 
     private Rectangle GetPracticeFocusLeftBounds()
@@ -594,7 +602,7 @@ public sealed class ScheduleScreen : GameScreen
 
     private Rectangle GetSimSeasonButtonBounds()
     {
-        return new Rectangle(Math.Max(LayoutMargin + 840, _viewport.X - 220), 144, 160, 36);
+        return new Rectangle(Math.Max(LayoutMargin + 840, _viewport.X - 220), 100, 160, 36);
     }
 
     private Rectangle GetSeasonSimPromptBounds()

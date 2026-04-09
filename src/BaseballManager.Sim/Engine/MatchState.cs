@@ -49,7 +49,7 @@ public sealed class MatchState
 
     public MatchPlayerSnapshot CurrentBatter => OffensiveTeam.CurrentBatter;
 
-    public MatchPlayerSnapshot CurrentPitcher => DefensiveTeam.StartingPitcher;
+    public MatchPlayerSnapshot CurrentPitcher => DefensiveTeam.CurrentPitcher;
 
     public MatchPlayerSnapshot? GetPlayer(Guid? playerId)
     {

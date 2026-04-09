@@ -1,6 +1,7 @@
 using BaseballManager.Application.Transactions;
 using BaseballManager.Contracts.ImportDtos;
 using BaseballManager.Core.Economy;
+using BaseballManager.Sim.AI;
 using BaseballManager.Sim.Economy;
 using BaseballManager.Sim.Engine;
 using BaseballManager.Sim.Results;
@@ -41,6 +42,7 @@ public sealed class FranchiseSession
     private readonly SetBudgetAllocationUseCase _setBudgetAllocationUseCase = new();
     private readonly SignPlayerContractUseCase _signPlayerContractUseCase = new();
     private readonly ReleasePlayerUseCase _releasePlayerUseCase = new();
+    private readonly ManagerAi _managerAi = new();
     private readonly HireCoachUseCase _hireCoachUseCase = new();
     private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
 
@@ -1122,6 +1124,183 @@ public sealed class FranchiseSession
         return true;
     }
 
+    public bool TryBuyPlayerWithTradeChips(Guid targetPlayerId, IReadOnlyList<Guid> offeredPlayerIds, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a franchise team before making a move.";
+            return false;
+        }
+
+        // If no trade chips offered, fall back to regular buy
+        if (offeredPlayerIds.Count == 0)
+        {
+            return TryBuyPlayer(targetPlayerId, out statusMessage);
+        }
+
+        var targetPlayer = FindPlayerImport(targetPlayerId);
+        if (targetPlayer == null)
+        {
+            statusMessage = "Player not found in the league database.";
+            return false;
+        }
+
+        var selectedTeamName = SelectedTeam.Name;
+        var targetTeamName = GetAssignedTeamName(targetPlayerId, targetPlayer.TeamName);
+
+        if (string.Equals(targetTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = $"{targetPlayer.FullName} is already on your roster.";
+            return false;
+        }
+
+        var uniqueOfferedIds = offeredPlayerIds
+            .Distinct()
+            .Where(playerId => playerId != targetPlayerId)
+            .ToList();
+
+        if (uniqueOfferedIds.Count == 0)
+        {
+            return TryBuyPlayer(targetPlayerId, out statusMessage);
+        }
+
+        // Validate all offered players are on the selected team
+        var offeredPlayers = new List<PlayerImportDto>();
+        foreach (var offeredPlayerId in uniqueOfferedIds)
+        {
+            var offeredPlayer = FindPlayerImport(offeredPlayerId);
+            if (offeredPlayer == null)
+            {
+                statusMessage = "One of the offered players could not be found.";
+                return false;
+            }
+
+            var offeredTeamName = GetAssignedTeamName(offeredPlayerId, offeredPlayer.TeamName);
+            if (!string.Equals(offeredTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+            {
+                statusMessage = $"{offeredPlayer.FullName} is not on your roster.";
+                return false;
+            }
+
+            offeredPlayers.Add(offeredPlayer);
+        }
+
+        var contractsByPlayerId = GetContractsByPlayerId();
+        var askingPrice = CalculateAcquisitionCost(targetPlayer, targetTeamName, contractsByPlayerId);
+        var packageValue = offeredPlayers.Sum(player => GetTradeChipValueForTeam(player.PlayerId, targetTeamName));
+        var requiredValue = decimal.Round(askingPrice * 0.93m, 0);
+
+        // Check if we have enough roster space for a trade (incoming 1, outgoing N)
+        if (!HasRosterRoom(selectedTeamName, incomingPlayers: 1, outgoingPlayers: uniqueOfferedIds.Count))
+        {
+            statusMessage = $"Trade would exceed the {MaxRosterSize}-player roster cap.";
+            return false;
+        }
+
+        decimal cashNeeded = 0m;
+        if (packageValue < requiredValue)
+        {
+            // Need to make up the difference with cash
+            cashNeeded = requiredValue - packageValue;
+            var transferBudget = GetTransferBudget();
+            if (cashNeeded > transferBudget)
+            {
+                statusMessage = $"{targetTeamName} wants more value. Package is {GetBudgetDisplay(packageValue)}, they want {GetBudgetDisplay(requiredValue)}, and you only have {GetBudgetDisplay(transferBudget)} budget available. Try offering more players.";
+                return false;
+            }
+        }
+
+        // All validations passed - execute the hybrid transaction (trade with potential cash top-up)
+        var selectedTeamState = GetOrCreateTeamState(selectedTeamName);
+        var targetTeamState = GetOrCreateTeamState(targetTeamName);
+
+        // Deduct cash if needed
+        if (cashNeeded > 0)
+        {
+            selectedTeamState.Economy.CashOnHand = decimal.Round(selectedTeamState.Economy.CashOnHand - cashNeeded, 2);
+        }
+
+        // Give receiving team half of the cash value (or proportional split for package)
+        var cashToReceivingTeam = decimal.Round((cashNeeded + packageValue) * 0.5m, 2);
+        targetTeamState.Economy.CashOnHand = decimal.Round(targetTeamState.Economy.CashOnHand + cashToReceivingTeam, 2);
+
+        selectedTeamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(selectedTeamState.Economy);
+        targetTeamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(targetTeamState.Economy);
+
+        // Assign incoming player
+        _saveState.PlayerAssignments[targetPlayerId] = selectedTeamName;
+
+        // Remove outgoing players from their current team
+        foreach (var outgoingPlayerId in uniqueOfferedIds)
+        {
+            _saveState.PlayerAssignments[outgoingPlayerId] = targetTeamName;
+        }
+
+        InitializeLineupSlots(selectedTeamState, selectedTeamName);
+        InitializeRotationSlots(selectedTeamState, selectedTeamName);
+        InitializeLineupSlots(targetTeamState, targetTeamName);
+        InitializeRotationSlots(targetTeamState, targetTeamName);
+
+        // Clear players from lineup/rotation slots
+        foreach (var outgoingPlayerId in uniqueOfferedIds)
+        {
+            ClearPlayerFromSlots(selectedTeamState.LineupSlots, outgoingPlayerId);
+            ClearPlayerFromSlots(selectedTeamState.RotationSlots, outgoingPlayerId);
+        }
+
+        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
+
+        // Move contracts
+        MovePlayerContract(targetPlayerId, targetTeamState.Economy, selectedTeamState.Economy, targetPlayer.FullName);
+        foreach (var outgoingPlayer in offeredPlayers)
+        {
+            MovePlayerContract(outgoingPlayer.PlayerId, selectedTeamState.Economy, targetTeamState.Economy, outgoingPlayer.FullName);
+        }
+
+        // Update fan interest based on incoming player quality
+        var ratings = GetPlayerRatings(targetPlayer.PlayerId, targetPlayer.FullName, targetPlayer.PrimaryPosition, targetPlayer.SecondaryPosition, targetPlayer.Age);
+        var interestGain = ratings.OverallRating switch { >= 80 => 2, >= 70 => 1, _ => 0 };
+
+        // Apply interest penalty for each outgoing player
+        var interestLoss = offeredPlayers.Count;
+        selectedTeamState.Economy.FanInterest = Math.Clamp(selectedTeamState.Economy.FanInterest + interestGain - interestLoss, 10, 100);
+        selectedTeamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(selectedTeamState.Economy);
+
+        // Log financial snapshot
+        var totalValue = cashNeeded + packageValue;
+        FinanceMath.AddSnapshot(selectedTeamState.Economy, new FinancialSnapshot
+        {
+            EffectiveDate = GetCurrentFranchiseDate(),
+            Category = "Trade/Transfer",
+            Revenue = 0m,
+            Expenses = cashNeeded,
+            Attendance = 0,
+            FanInterest = selectedTeamState.Economy.FanInterest,
+            CashAfter = selectedTeamState.Economy.CashOnHand,
+            Notes = $"Traded {string.Join(", ", offeredPlayers.Select(p => p.FullName))} to {targetTeamName} for {targetPlayer.FullName}."
+        });
+
+        // Add transfer records
+        var outgoingNames = string.Join(", ", offeredPlayers.Select(p => p.FullName));
+        var transactionDesc = cashNeeded > 0
+            ? $"Traded {outgoingNames} to {targetTeamName} for {targetPlayer.FullName} (package value: {GetBudgetDisplay(packageValue)}, cash: {GetBudgetDisplay(cashNeeded)})."
+            : $"Traded {outgoingNames} to {targetTeamName} for {targetPlayer.FullName}.";
+
+        AddTransferRecord(selectedTeamName, transactionDesc);
+        AddTransferRecord(targetTeamName, $"Received {targetPlayer.FullName} from {selectedTeamName}, gave {outgoingNames}.");
+        Save();
+
+        statusMessage = $"Trade complete: {outgoingNames} → {targetTeamName}, {targetPlayer.FullName} ← {selectedTeamName}";
+        if (cashNeeded > 0)
+        {
+            statusMessage += $". (Package: {GetBudgetDisplay(packageValue)} + {GetBudgetDisplay(cashNeeded)} cash)";
+        }
+        return true;
+    }
+
     public bool TryTradeForPlayerPackage(Guid targetPlayerId, IReadOnlyList<Guid> offeredPlayerIds, out string statusMessage)
     {
         if (SelectedTeam == null)
@@ -1693,6 +1872,11 @@ public sealed class FranchiseSession
 
         while (!engine.CurrentState.IsGameOver)
         {
+            if (_managerAi.TryApplyDefensiveManagerDecision(engine.CurrentState))
+            {
+                continue;
+            }
+
             var batter = engine.CurrentState.CurrentBatter;
             var pitcher = engine.CurrentState.CurrentPitcher;
             var defensiveTeam = engine.CurrentState.DefensiveTeam;
@@ -1952,6 +2136,45 @@ public sealed class FranchiseSession
     public void PrepareFranchiseMatch()
     {
         PendingLiveMatchMode = LiveMatchMode.Franchise;
+    }
+
+    public CompletedLiveMatchSummaryState? GetLastCompletedLiveMatchSummary()
+    {
+        return _saveState.LastCompletedLiveMatch;
+    }
+
+    public void CaptureCompletedLiveMatch(MatchState finalState, LiveMatchMode mode)
+    {
+        var awayRuns = finalState.AwayTeam.Runs;
+        var homeRuns = finalState.HomeTeam.Runs;
+        var winningTeam = awayRuns == homeRuns
+            ? "Tie"
+            : (awayRuns > homeRuns ? finalState.AwayTeam.Name : finalState.HomeTeam.Name);
+
+        _saveState.LastCompletedLiveMatch = new CompletedLiveMatchSummaryState
+        {
+            AwayTeamName = finalState.AwayTeam.Name,
+            HomeTeamName = finalState.HomeTeam.Name,
+            AwayAbbreviation = finalState.AwayTeam.Abbreviation,
+            HomeAbbreviation = finalState.HomeTeam.Abbreviation,
+            AwayRuns = awayRuns,
+            HomeRuns = homeRuns,
+            AwayHits = finalState.AwayTeam.Hits,
+            HomeHits = finalState.HomeTeam.Hits,
+            AwayPitchCount = finalState.AwayTeam.PitchCount,
+            HomePitchCount = finalState.HomeTeam.PitchCount,
+            AwayStartingPitcherName = finalState.AwayTeam.StartingPitcher.FullName,
+            HomeStartingPitcherName = finalState.HomeTeam.StartingPitcher.FullName,
+            FinalInningNumber = finalState.Inning.Number,
+            EndedInTopHalf = finalState.Inning.IsTopHalf,
+            CompletedPlays = finalState.CompletedPlays,
+            WasFranchiseMatch = mode == LiveMatchMode.Franchise,
+            WinningTeamName = winningTeam,
+            FinalPlayDescription = finalState.LatestEvent.Description,
+            CompletedAtUtc = DateTime.UtcNow
+        };
+
+        Save();
     }
 
     public LiveMatchSaveState? GetLiveMatchState()
@@ -2282,6 +2505,7 @@ public sealed class FranchiseSession
         teamState.Economy.FacilitiesLevel = Math.Clamp(teamState.Economy.FacilitiesLevel, 1, 5);
         teamState.Economy.TicketPrice = Math.Clamp(teamState.Economy.TicketPrice, 12m, 80m);
         teamState.Economy.StadiumCapacity = Math.Clamp(teamState.Economy.StadiumCapacity, 20_000, 55_000);
+        teamState.Economy.CashOnHand = Math.Max(teamState.Economy.CashOnHand, 1_000_000m);
         teamState.Economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(teamState.Economy);
         return hasChanges;
     }
@@ -3588,7 +3812,7 @@ public sealed class FranchiseSession
     private void ApplyCompletedGame(MatchTeamState team, bool wonGame)
     {
         var countedPlayers = new HashSet<Guid>();
-        foreach (var player in team.Lineup.Append(team.StartingPitcher))
+        foreach (var player in team.Lineup)
         {
             if (!countedPlayers.Add(player.Id))
             {
@@ -3602,10 +3826,32 @@ public sealed class FranchiseSession
             }
         }
 
-        ApplyPitcherGameFatigue(team.StartingPitcher, team.PitchCount);
+        var participatingPitchers = team.PitchCountsByPitcher
+            .Where(pair => pair.Value > 0)
+            .Select(pair => new { Pitcher = team.FindPlayer(pair.Key), PitchCount = pair.Value })
+            .Where(entry => entry.Pitcher != null)
+            .Select(entry => new { Pitcher = entry.Pitcher!, entry.PitchCount })
+            .ToList();
 
-        var pitcherStats = GetPlayerSeasonStats(team.StartingPitcher.Id);
-        pitcherStats.GamesPitched++;
+        if (participatingPitchers.Count == 0)
+        {
+            participatingPitchers.Add(new { Pitcher = team.StartingPitcher, PitchCount = team.PitchCount });
+        }
+
+        foreach (var pitcherEntry in participatingPitchers)
+        {
+            if (countedPlayers.Add(pitcherEntry.Pitcher.Id))
+            {
+                GetPlayerSeasonStats(pitcherEntry.Pitcher.Id).GamesPlayed++;
+            }
+
+            ApplyPitcherGameFatigue(pitcherEntry.Pitcher, pitcherEntry.PitchCount);
+
+            var relieverStats = GetPlayerSeasonStats(pitcherEntry.Pitcher.Id);
+            relieverStats.GamesPitched++;
+        }
+
+        var pitcherStats = GetPlayerSeasonStats(team.CurrentPitcher.Id);
         if (wonGame)
         {
             pitcherStats.Wins++;
@@ -3618,8 +3864,10 @@ public sealed class FranchiseSession
 
     private void RecordRecentGameStats(MatchState finalState)
     {
-        foreach (var player in finalState.AwayTeam.Lineup.Append(finalState.AwayTeam.StartingPitcher)
-                     .Concat(finalState.HomeTeam.Lineup.Append(finalState.HomeTeam.StartingPitcher))
+        foreach (var player in finalState.AwayTeam.Lineup
+                     .Concat(finalState.AwayTeam.PitchCountsByPitcher.Keys.Select(id => finalState.AwayTeam.FindPlayer(id)).OfType<MatchPlayerSnapshot>())
+                     .Concat(finalState.HomeTeam.Lineup)
+                     .Concat(finalState.HomeTeam.PitchCountsByPitcher.Keys.Select(id => finalState.HomeTeam.FindPlayer(id)).OfType<MatchPlayerSnapshot>())
                      .GroupBy(player => player.Id)
                      .Select(group => group.First()))
         {
@@ -3987,22 +4235,42 @@ public sealed class FranchiseSession
         return $"{(latestWonGame ? "W" : "L")}{streakCount}";
     }
 
+    public MatchTeamState CreateMatchTeamState(TeamImportDto team, bool preferFranchiseSelections)
+    {
+        return BuildTeamSnapshot(team, preferFranchiseSelections);
+    }
+
     private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)
     {
-        var lineup = preferFranchiseSelections
-            ? BuildSelectedTeamLineup()
-            : BuildImportedTeamLineup(team.Name);
+        List<MatchPlayerSnapshot> lineup;
+        List<MatchPlayerSnapshot> bench;
+        List<MatchPlayerSnapshot> bullpen;
+        MatchPlayerSnapshot? pitcher;
+
+        if (preferFranchiseSelections)
+        {
+            lineup = BuildSelectedTeamLineup();
+            bench = BuildSelectedTeamBench(lineup);
+            bullpen = BuildSelectedTeamBullpen();
+            pitcher = BuildSelectedTeamPitcher();
+        }
+        else
+        {
+            var aiPlan = BuildAiManagedTeamPlan(team.Name);
+            lineup = aiPlan.Lineup.ToList();
+            bench = aiPlan.Bench.ToList();
+            bullpen = aiPlan.Bullpen.ToList();
+            pitcher = aiPlan.StartingPitcher;
+        }
 
         if (lineup.Count == 0)
         {
             lineup = BuildPlaceholderLineup(team.Name);
         }
 
-        var pitcher = preferFranchiseSelections
-            ? BuildSelectedTeamPitcher() ?? lineup.First()
-            : BuildImportedPitcher(team.Name) ?? lineup.First();
+        pitcher ??= lineup.First();
 
-        return new MatchTeamState(team.Name, team.Abbreviation, lineup, pitcher);
+        return new MatchTeamState(team.Name, team.Abbreviation, lineup, pitcher, bench, bullpen);
     }
 
     private List<MatchPlayerSnapshot> BuildSelectedTeamLineup()
@@ -4050,29 +4318,42 @@ public sealed class FranchiseSession
             : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age);
     }
 
-    private List<MatchPlayerSnapshot> BuildImportedTeamLineup(string teamName)
+    private List<MatchPlayerSnapshot> BuildSelectedTeamBench(IReadOnlyList<MatchPlayerSnapshot> lineup)
     {
-        var lineup = GetTeamRoster(teamName)
-            .Where(player => player.LineupSlot.HasValue && !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
-            .OrderBy(player => player.LineupSlot)
-            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
-            .ToList();
-
-        var fillPlayers = GetTeamRoster(teamName)
-            .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
+        return GetBenchPlayers()
+            .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
             .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
             .ThenBy(player => player.PlayerName)
+            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
             .ToList();
+    }
 
-        foreach (var player in fillPlayers)
-        {
-            if (lineup.Count >= 9)
-            {
-                break;
-            }
+    private List<MatchPlayerSnapshot> BuildSelectedTeamBullpen()
+    {
+        return GetBullpenPlayers()
+            .Where(player => !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
+            .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
+            .ThenBy(player => player.PlayerName)
+            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
+            .ToList();
+    }
 
-            lineup.Add(CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age));
-        }
+    private ManagerAiTeamPlan BuildAiManagedTeamPlan(string teamName)
+    {
+        var candidates = GetTeamRoster(teamName)
+            .Select(player => new ManagerAiRosterCandidate(
+                CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age),
+                GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition),
+                !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition),
+                player.LineupSlot,
+                player.RotationSlot))
+            .ToList();
+        return _managerAi.BuildTeamPlan(candidates);
+    }
+
+    private List<MatchPlayerSnapshot> BuildImportedTeamLineup(string teamName)
+    {
+        var lineup = BuildAiManagedTeamPlan(teamName).Lineup.ToList();
 
         while (lineup.Count < 9)
         {
@@ -4084,10 +4365,7 @@ public sealed class FranchiseSession
 
     private MatchPlayerSnapshot? BuildImportedPitcher(string teamName)
     {
-        var pitcher = SelectStartingPitcher(GetTeamRoster(teamName), teamName);
-        return pitcher == null
-            ? null
-            : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age);
+        return BuildAiManagedTeamPlan(teamName).StartingPitcher;
     }
 
     private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age)

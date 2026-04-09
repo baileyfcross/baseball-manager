@@ -73,11 +73,15 @@ public static class LiveMatchStateMapper
             Name = team.Name,
             Abbreviation = team.Abbreviation,
             Lineup = team.Lineup.ToList(),
+            BenchPlayers = team.BenchPlayers.ToList(),
+            BullpenPlayers = team.BullpenPlayers.ToList(),
             StartingPitcher = team.StartingPitcher,
+            CurrentPitcher = team.CurrentPitcher,
             BattingIndex = team.BattingIndex,
             Runs = team.Runs,
             Hits = team.Hits,
-            PitchCount = team.PitchCount
+            PitchCount = team.PitchCount,
+            PitchCountsByPitcher = team.PitchCountsByPitcher.ToDictionary(pair => pair.Key, pair => pair.Value)
         };
     }
 
@@ -86,15 +90,29 @@ public static class LiveMatchStateMapper
         var lineup = saveTeam.Lineup?.Count > 0
             ? saveTeam.Lineup.Select(NormalizeSnapshot).ToList()
             : MatchTeamState.CreatePlaceholder(fallbackName, fallbackAbbreviation).Lineup;
+        var benchPlayers = saveTeam.BenchPlayers?.Select(NormalizeSnapshot).ToList() ?? [];
+        var bullpenPlayers = saveTeam.BullpenPlayers?.Select(NormalizeSnapshot).ToList() ?? [];
         var startingPitcher = NormalizeSnapshot(saveTeam.StartingPitcher
             ?? lineup.FirstOrDefault()
             ?? MatchTeamState.CreatePlaceholder(fallbackName, fallbackAbbreviation).StartingPitcher);
+        var currentPitcher = NormalizeSnapshot(saveTeam.CurrentPitcher ?? startingPitcher);
+        var pitchCountsByPitcher = saveTeam.PitchCountsByPitcher?
+            .Where(pair => pair.Key != Guid.Empty)
+            .ToDictionary(pair => pair.Key, pair => Math.Max(0, pair.Value)) ?? [];
+        if (pitchCountsByPitcher.Count == 0 && saveTeam.PitchCount > 0)
+        {
+            pitchCountsByPitcher[currentPitcher.Id] = Math.Max(0, saveTeam.PitchCount);
+        }
 
         var runtimeTeam = new MatchTeamState(
             string.IsNullOrWhiteSpace(saveTeam.Name) ? fallbackName : saveTeam.Name,
             string.IsNullOrWhiteSpace(saveTeam.Abbreviation) ? fallbackAbbreviation : saveTeam.Abbreviation,
             lineup,
-            startingPitcher)
+            startingPitcher,
+            benchPlayers,
+            bullpenPlayers,
+            currentPitcher,
+            pitchCountsByPitcher)
         {
             BattingIndex = Math.Max(0, saveTeam.BattingIndex),
             Runs = Math.Max(0, saveTeam.Runs),

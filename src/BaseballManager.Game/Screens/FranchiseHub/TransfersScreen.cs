@@ -433,7 +433,16 @@ public sealed class TransfersScreen : GameScreen
             return;
         }
 
-        _franchiseSession.TryBuyPlayer(_transactionTargetPlayerId.Value, out _statusMessage);
+        // If trade chips are selected, use the hybrid buy-with-trades method
+        if (_selectedTradeChipIds.Count > 0)
+        {
+            _franchiseSession.TryBuyPlayerWithTradeChips(_transactionTargetPlayerId.Value, _selectedTradeChipIds.ToList(), out _statusMessage);
+        }
+        else
+        {
+            _franchiseSession.TryBuyPlayer(_transactionTargetPlayerId.Value, out _statusMessage);
+        }
+
         MarkAllCachesDirty();
         RefreshSelections();
     }
@@ -593,16 +602,24 @@ public sealed class TransfersScreen : GameScreen
         uiRenderer.DrawTextInBounds($"Target: {targetPlayer.PlayerName} ({targetPlayer.PrimaryPosition}, {targetPlayer.Age})", new Rectangle(targetSummaryBounds.X + 8, targetSummaryBounds.Y + 6, targetSummaryBounds.Width - 16, 18), Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawTextInBounds($"Owning Team: {targetPlayer.TeamName}   Asking Price: {FormatMoney(askingPrice)}", new Rectangle(targetSummaryBounds.X + 8, targetSummaryBounds.Y + 26, targetSummaryBounds.Width - 16, 18), Color.Gold, uiRenderer.UiSmallFont);
 
-        uiRenderer.DrawTextInBounds($"Your Roster: {rosterCount}/{RosterCap}", new Rectangle(panelBounds.X + 12, panelBounds.Y + 98, 180, 18), hasRosterRoomForBuy ? Color.White : Color.OrangeRed, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds(hasRosterRoomForBuy ? "Buy is available." : "Buy disabled: roster cap reached.", new Rectangle(panelBounds.X + 200, panelBounds.Y + 98, panelBounds.Width - 212, 18), hasRosterRoomForBuy ? Color.DarkSeaGreen : Color.OrangeRed, uiRenderer.UiSmallFont);
+        var hasTradeChipsSelected = _selectedTradeChipIds.Count > 0;
+        var canBuyDirectly = hasRosterRoomForBuy;
+        var canBuyWithTrade = !hasRosterRoomForBuy && hasTradeChipsSelected;
+        var canBuy = canBuyDirectly || canBuyWithTrade;
+
+        var rosterStatusColor = hasRosterRoomForBuy ? Color.White : Color.OrangeRed;
+        var rosterStatusText = hasRosterRoomForBuy ? "Buy is available." : $"Buy disabled: roster cap reached.{(hasTradeChipsSelected ? " (Select Buy with trade chips to swap players instead)" : "")}";
+        uiRenderer.DrawTextInBounds($"Your Roster: {rosterCount}/{RosterCap}", new Rectangle(panelBounds.X + 12, panelBounds.Y + 98, 180, 18), rosterStatusColor, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds(rosterStatusText, new Rectangle(panelBounds.X + 200, panelBounds.Y + 98, panelBounds.Width - 212, 18), rosterStatusColor, uiRenderer.UiSmallFont);
 
         var buyButtonBounds = GetTransactionBuyBounds();
         var tradeButtonBounds = GetTransactionTradeBounds();
         var closeButtonBounds = GetTransactionCloseBounds();
         var mousePosition = Mouse.GetState().Position;
 
-        var buyColor = hasRosterRoomForBuy ? (buyButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab) : Color.DimGray;
-        uiRenderer.DrawButton("Buy In Transaction", buyButtonBounds, buyColor, Color.White);
+        var buyButtonLabel = hasTradeChipsSelected ? "Buy/Trade" : "Buy In Transaction";
+        var buyColor = canBuy ? (buyButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab) : Color.DimGray;
+        uiRenderer.DrawButton(buyButtonLabel, buyButtonBounds, buyColor, Color.White);
         uiRenderer.DrawButton("Submit Trade Package", tradeButtonBounds, tradeButtonBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
         uiRenderer.DrawButton("Close", closeButtonBounds, closeButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
 

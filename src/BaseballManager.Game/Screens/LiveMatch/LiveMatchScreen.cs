@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Graphics.Rendering.LiveMatch;
 using BaseballManager.Game.Input;
+using BaseballManager.Game.Screens.PostGame;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens.MainMenu;
 using BaseballManager.Game.Screens;
@@ -77,6 +78,42 @@ public sealed class LiveMatchScreen : GameScreen
             ReturnToPreviousScreen();
         }
 
+        if (_presenter.IsManagerMenuVisible)
+        {
+            if (IsNewKeyPress(currentKeyboardState, Keys.M) || IsNewKeyPress(currentKeyboardState, Keys.Escape))
+            {
+                _presenter.ToggleManagerMenu();
+            }
+            else if (IsNewKeyPress(currentKeyboardState, Keys.Tab))
+            {
+                _presenter.CycleManagerMode();
+            }
+            else if (IsNewKeyPress(currentKeyboardState, Keys.Up))
+            {
+                _presenter.MoveManagerSelection(-1);
+            }
+            else if (IsNewKeyPress(currentKeyboardState, Keys.Down))
+            {
+                _presenter.MoveManagerSelection(1);
+            }
+            else if (IsNewKeyPress(currentKeyboardState, Keys.Left))
+            {
+                _presenter.MoveManagerTargetLineupSlot(-1);
+            }
+            else if (IsNewKeyPress(currentKeyboardState, Keys.Right))
+            {
+                _presenter.MoveManagerTargetLineupSlot(1);
+            }
+            else if (IsNewKeyPress(currentKeyboardState, Keys.Enter))
+            {
+                _presenter.ApplySelectedManagerAction();
+            }
+
+            _previousKeyboardState = currentKeyboardState;
+            _previousMouseState = currentMouseState;
+            return;
+        }
+
         if (IsNewKeyPress(currentKeyboardState, Keys.Escape))
         {
             ReturnToPreviousScreen();
@@ -96,10 +133,21 @@ public sealed class LiveMatchScreen : GameScreen
                     _presenter.StepPitch();
                 }
 
+                if (IsNewKeyPress(currentKeyboardState, Keys.M))
+                {
+                    _presenter.ToggleManagerMenu();
+                }
+
                 UpdatePlayResolution(gameTime);
                 UpdateFieldLayer(gameTime);
                 UpdateOverlayLayer();
                 HandlePauseAndManagerCommands();
+
+                if (_presenter.ViewModel.IsGameOver)
+                {
+                    _screenManager.TransitionTo(nameof(PostGameScreen));
+                    return;
+                }
             }
             catch (Exception ex)
             {

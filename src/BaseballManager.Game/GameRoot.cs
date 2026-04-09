@@ -1,6 +1,8 @@
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Data;
+using BaseballManager.Game.Screens.GameDay;
+using BaseballManager.Game.Screens.PostGame;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens;
 using BaseballManager.Game.Screens.LiveMatch;
@@ -62,7 +64,10 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         _screenManager.Register(new CoachingStaffScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new StandingsScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new FinancesScreen(_screenManager, _franchiseSession));
+        _screenManager.Register(new GameDayScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new LiveMatchScreen(_screenManager, _leagueData, _franchiseSession));
+        _screenManager.Register(new PostGameScreen(_screenManager, _franchiseSession));
+        _screenManager.Register(new BoxScoreScreen(_screenManager, _franchiseSession));
 
         _screenManager.SetInitialScreen(mainMenuScreen);
         base.Initialize();

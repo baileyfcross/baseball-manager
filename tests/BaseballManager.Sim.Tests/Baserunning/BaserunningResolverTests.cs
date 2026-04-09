@@ -124,6 +124,64 @@ public sealed class BaserunningResolverTests
         Assert.Contains("scores", result.AdditionalDescription, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void ResolveAdvance_WalkWithoutRunnerOnFirst_DoesNotForceExistingRunners()
+    {
+        var state = MatchStateFactory.CreateDefault();
+        var resolver = new BaserunningResolver();
+        var offense = state.OffensiveTeam;
+        var batterId = offense.CurrentBatter.Id;
+
+        state.Baserunners.SecondBaseRunnerId = offense.Lineup[2].Id;
+        state.Baserunners.ThirdBaseRunnerId = offense.Lineup[3].Id;
+
+        var result = resolver.ResolveAdvance(state, CreateOutcome("Walk", batterId, basesAwarded: 1, isWalk: true, countsAsHit: false), new SequenceRandom());
+
+        Assert.Equal(0, result.RunsScored);
+        Assert.Equal(batterId, state.Baserunners.FirstBaseRunnerId);
+        Assert.Equal(offense.Lineup[2].Id, state.Baserunners.SecondBaseRunnerId);
+        Assert.Equal(offense.Lineup[3].Id, state.Baserunners.ThirdBaseRunnerId);
+    }
+
+    [Fact]
+    public void ResolveAdvance_GroundoutWithTwoOuts_DoesNotAdvanceRunners()
+    {
+        var state = MatchStateFactory.CreateDefault();
+        var resolver = new BaserunningResolver();
+        var offense = state.OffensiveTeam;
+
+        state.Baserunners.FirstBaseRunnerId = offense.Lineup[1].Id;
+        state.Baserunners.SecondBaseRunnerId = offense.Lineup[2].Id;
+
+        var result = resolver.ResolveAdvance(
+            state,
+            CreateOutcome("Groundout", offense.CurrentBatter.Id, basesAwarded: 0, isOut: true, countsAsHit: false, outsBeforePlay: 2, fielder: "SS"),
+            new SequenceRandom());
+
+        Assert.Equal(0, result.RunsScored);
+        Assert.Equal(offense.Lineup[1].Id, state.Baserunners.FirstBaseRunnerId);
+        Assert.Equal(offense.Lineup[2].Id, state.Baserunners.SecondBaseRunnerId);
+        Assert.Null(state.Baserunners.ThirdBaseRunnerId);
+    }
+
+    [Fact]
+    public void ResolveAdvance_FlyoutWithTwoOuts_DoesNotAllowTagUpRun()
+    {
+        var state = MatchStateFactory.CreateDefault();
+        var resolver = new BaserunningResolver();
+        var offense = state.OffensiveTeam;
+
+        state.Baserunners.ThirdBaseRunnerId = offense.Lineup[2].Id;
+
+        var result = resolver.ResolveAdvance(
+            state,
+            CreateOutcome("Flyout", offense.CurrentBatter.Id, basesAwarded: 0, isOut: true, countsAsHit: false, outsBeforePlay: 2, fielder: "CF"),
+            new SequenceRandom(nextDoubleValues: [0.0d]));
+
+        Assert.Equal(0, result.RunsScored);
+        Assert.Equal(offense.Lineup[2].Id, state.Baserunners.ThirdBaseRunnerId);
+    }
+
     private static PlateAppearanceOutcome CreateOutcome(
         string code,
         Guid batterId,

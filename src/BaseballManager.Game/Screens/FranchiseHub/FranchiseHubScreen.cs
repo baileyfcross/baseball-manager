@@ -2,6 +2,7 @@ using BaseballManager.Application.Franchise;
 using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
+using BaseballManager.Game.Screens.GameDay;
 using BaseballManager.Game.Screens.LiveMatch;
 using BaseballManager.Game.Screens.MainMenu;
 using BaseballManager.Game.Screens.Roster;
@@ -181,7 +182,7 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         _startMatchUseCase.Execute();
         _franchiseSession.PrepareFranchiseMatch();
-        _screenManager.TransitionTo(nameof(LiveMatchScreen));
+        _screenManager.TransitionTo(nameof(GameDayScreen));
     }
 
     private void SimDay()

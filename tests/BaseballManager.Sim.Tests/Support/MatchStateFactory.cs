@@ -15,14 +15,18 @@ internal static class MatchStateFactory
         string name,
         string abbreviation,
         IEnumerable<MatchPlayerSnapshot>? lineup = null,
-        MatchPlayerSnapshot? startingPitcher = null)
+        MatchPlayerSnapshot? startingPitcher = null,
+        IEnumerable<MatchPlayerSnapshot>? benchPlayers = null,
+        IEnumerable<MatchPlayerSnapshot>? bullpenPlayers = null,
+        MatchPlayerSnapshot? currentPitcher = null,
+        IDictionary<Guid, int>? pitchCountsByPitcher = null)
     {
         var resolvedLineup = lineup?.ToList() ?? Enumerable.Range(1, 9)
             .Select(index => CreatePlayer($"{name} Batter {index}", index % 2 == 0 ? "IF" : "OF"))
             .ToList();
 
         var resolvedPitcher = startingPitcher ?? CreatePlayer($"{name} Pitcher", "SP", pitchingRating: 72, armRating: 60, staminaRating: 70);
-        return new MatchTeamState(name, abbreviation, resolvedLineup, resolvedPitcher);
+        return new MatchTeamState(name, abbreviation, resolvedLineup, resolvedPitcher, benchPlayers, bullpenPlayers, currentPitcher, pitchCountsByPitcher);
     }
 
     public static MatchPlayerSnapshot CreatePlayer(
