@@ -196,6 +196,8 @@ public sealed class AtBatResolverTests
         Assert.Equal(3, result.RunsScored);
         Assert.Equal(3, state.HomeTeam.Runs);
         Assert.Equal(0, state.AwayTeam.Runs);
+        Assert.Equal(3, state.HomeRunsByInning[0]);
+        Assert.Contains(state.HomeTeam.Lineup[2].Id, result.ScoringPlayerIds);
         Assert.False(state.Baserunners.HasRunnerOnFirst);
         Assert.False(state.Baserunners.HasRunnerOnSecond);
         Assert.False(state.Baserunners.HasRunnerOnThird);

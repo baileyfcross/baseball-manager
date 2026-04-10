@@ -11,6 +11,10 @@ public static class LiveMatchStateMapper
         {
             AwayTeam = ToSaveTeam(matchState.AwayTeam),
             HomeTeam = ToSaveTeam(matchState.HomeTeam),
+            AwayRunsByInning = matchState.AwayRunsByInning.ToList(),
+            HomeRunsByInning = matchState.HomeRunsByInning.ToList(),
+            AwayErrors = matchState.AwayErrors,
+            HomeErrors = matchState.HomeErrors,
             InningNumber = matchState.Inning.Number,
             IsTopHalf = matchState.Inning.IsTopHalf,
             Outs = matchState.Inning.Outs,
@@ -46,6 +50,15 @@ public static class LiveMatchStateMapper
         };
 
         matchState.Inning.Number = Math.Max(1, saveState.InningNumber);
+        matchState.EnsureInningTracked(matchState.Inning.Number);
+        var awayLinescore = saveState.AwayRunsByInning is { Count: > 0 } ? saveState.AwayRunsByInning : [0];
+        var homeLinescore = saveState.HomeRunsByInning is { Count: > 0 } ? saveState.HomeRunsByInning : [0];
+        matchState.AwayRunsByInning.Clear();
+        matchState.AwayRunsByInning.AddRange(awayLinescore);
+        matchState.HomeRunsByInning.Clear();
+        matchState.HomeRunsByInning.AddRange(homeLinescore);
+        matchState.AwayErrors = Math.Max(0, saveState.AwayErrors);
+        matchState.HomeErrors = Math.Max(0, saveState.HomeErrors);
         matchState.Inning.IsTopHalf = saveState.IsTopHalf;
         matchState.Inning.Outs = Math.Clamp(saveState.Outs, 0, 3);
         matchState.Count.Balls = Math.Clamp(saveState.Balls, 0, 4);
@@ -179,6 +192,7 @@ public static class LiveMatchStateMapper
             OutsRecorded = resultEvent.OutsRecorded,
             BatterId = resultEvent.BatterId,
             PitcherId = resultEvent.PitcherId,
+            ScoringPlayerIds = resultEvent.ScoringPlayerIds?.ToList() ?? [],
             BallX = resultEvent.BallX,
             BallY = resultEvent.BallY,
             Fielder = resultEvent.Fielder,

@@ -9,6 +9,14 @@ public sealed class LiveMatchSaveState
 
     public MatchTeamSaveState HomeTeam { get; set; } = new();
 
+    public List<int> AwayRunsByInning { get; set; } = [0];
+
+    public List<int> HomeRunsByInning { get; set; } = [0];
+
+    public int AwayErrors { get; set; }
+
+    public int HomeErrors { get; set; }
+
     public int InningNumber { get; set; } = 1;
 
     public bool IsTopHalf { get; set; } = true;

@@ -45,6 +45,7 @@ public sealed class FranchiseSession
     private readonly ManagerAi _managerAi = new();
     private readonly HireCoachUseCase _hireCoachUseCase = new();
     private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
+    private bool _preferLiveBoxScore;
 
     public FranchiseSession(ImportedLeagueData leagueData, FranchiseStateStore stateStore)
     {
@@ -59,6 +60,7 @@ public sealed class FranchiseSession
         _saveState.PlayerAssignments ??= new Dictionary<Guid, string>();
         _saveState.CompletedScheduleGameKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _saveState.CompletedScheduleGameResults ??= new Dictionary<string, CompletedScheduleGameResult>(StringComparer.OrdinalIgnoreCase);
+        _saveState.CompletedGameBoxScores ??= new Dictionary<string, CompletedGameBoxScoreState>(StringComparer.OrdinalIgnoreCase);
 
         if (!string.IsNullOrWhiteSpace(_saveState.SelectedTeamName))
         {
@@ -356,6 +358,21 @@ public sealed class FranchiseSession
     public ScheduleImportDto? GetNextScheduledGame()
     {
         return GetNextScheduledGameForSelectedTeam();
+    }
+
+    public bool HasPendingScheduledGame()
+    {
+        return GetNextScheduledGameForSelectedTeam() != null;
+    }
+
+    public void SetPreferLiveBoxScore(bool preferLiveBoxScore)
+    {
+        _preferLiveBoxScore = preferLiveBoxScore;
+    }
+
+    public bool ShouldUseLiveBoxScore()
+    {
+        return _preferLiveBoxScore && GetLiveMatchState() is { IsGameOver: false };
     }
 
     public void SelectTeam(TeamImportDto team)
@@ -1672,6 +1689,16 @@ public sealed class FranchiseSession
             .ToList();
     }
 
+    public string GetTeamRecordLabel(string teamName)
+    {
+        if (string.IsNullOrWhiteSpace(teamName))
+        {
+            return "0-0";
+        }
+
+        return BuildRecordSummaryLabel(GetTeamRecordSummary(teamName));
+    }
+
     public string AdjustBudgetAllocation(string budgetKey, int direction)
     {
         if (SelectedTeam == null)
@@ -1909,7 +1936,9 @@ public sealed class FranchiseSession
         }
 
         RecordCompletedGame(finalState);
-        FinalizeFranchiseScheduledGame(finalState, scheduledGame, advanceDateAfterGame);
+        var completedScheduledGame = FinalizeFranchiseScheduledGame(finalState, scheduledGame, advanceDateAfterGame) ?? scheduledGame;
+        var completedSummary = BuildCompletedLiveMatchSummary(finalState, LiveMatchMode.Franchise, completedScheduledGame);
+        StoreCompletedGameBoxScore(finalState, completedScheduledGame, completedSummary, setCurrentView: false);
         return true;
     }
 
@@ -2212,15 +2241,69 @@ public sealed class FranchiseSession
         return _saveState.LastCompletedLiveMatch;
     }
 
-    public void CaptureCompletedLiveMatch(MatchState finalState, LiveMatchMode mode)
+    public CompletedGameBoxScoreState? GetCurrentCompletedGameBoxScore()
+    {
+        if (!string.IsNullOrWhiteSpace(_saveState.CurrentViewedBoxScoreGameKey) &&
+            _saveState.CompletedGameBoxScores.TryGetValue(_saveState.CurrentViewedBoxScoreGameKey, out var selectedBoxScore))
+        {
+            return selectedBoxScore;
+        }
+
+        var summary = _saveState.LastCompletedLiveMatch;
+        if (summary == null)
+        {
+            return null;
+        }
+
+        var summaryKey = BuildCompletedGameBoxScoreKey(completedScheduledGame: null, summary);
+        return _saveState.CompletedGameBoxScores.TryGetValue(summaryKey, out var boxScore)
+            ? boxScore
+            : null;
+    }
+
+    public bool HasCompletedGameBoxScore(ScheduleImportDto game)
+    {
+        return _saveState.CompletedGameBoxScores.ContainsKey(BuildScheduleGameKey(game));
+    }
+
+    public bool OpenCompletedGameBoxScore(ScheduleImportDto game)
+    {
+        var key = BuildScheduleGameKey(game);
+        if (!_saveState.CompletedGameBoxScores.TryGetValue(key, out var boxScore))
+        {
+            return false;
+        }
+
+        _preferLiveBoxScore = false;
+        _saveState.CurrentViewedBoxScoreGameKey = key;
+        _saveState.LastCompletedLiveMatch = boxScore.Summary;
+        Save();
+        return true;
+    }
+
+    public void CaptureCompletedLiveMatch(MatchState finalState, LiveMatchMode mode, ScheduleImportDto? completedScheduledGame = null)
+    {
+        _preferLiveBoxScore = false;
+        completedScheduledGame ??= ResolveCompletedScheduledGame(finalState);
+        var summary = BuildCompletedLiveMatchSummary(finalState, mode, completedScheduledGame);
+        _saveState.LastCompletedLiveMatch = summary;
+        StoreCompletedGameBoxScore(finalState, completedScheduledGame, summary, setCurrentView: true);
+        Save();
+    }
+
+    private CompletedLiveMatchSummaryState BuildCompletedLiveMatchSummary(MatchState finalState, LiveMatchMode mode, ScheduleImportDto? completedScheduledGame)
     {
         var awayRuns = finalState.AwayTeam.Runs;
         var homeRuns = finalState.HomeTeam.Runs;
         var winningTeam = awayRuns == homeRuns
             ? "Tie"
             : (awayRuns > homeRuns ? finalState.AwayTeam.Name : finalState.HomeTeam.Name);
+        var awayRecord = GetTeamRecordSummary(finalState.AwayTeam.Name);
+        var homeRecord = GetTeamRecordSummary(finalState.HomeTeam.Name);
+        var selectedTeamName = mode == LiveMatchMode.Franchise ? SelectedTeam?.Name ?? string.Empty : string.Empty;
+        var nextGame = mode == LiveMatchMode.Franchise ? GetNextScheduledGameForSelectedTeam() : null;
 
-        _saveState.LastCompletedLiveMatch = new CompletedLiveMatchSummaryState
+        return new CompletedLiveMatchSummaryState
         {
             AwayTeamName = finalState.AwayTeam.Name,
             HomeTeamName = finalState.HomeTeam.Name,
@@ -2234,16 +2317,278 @@ public sealed class FranchiseSession
             HomePitchCount = finalState.HomeTeam.PitchCount,
             AwayStartingPitcherName = finalState.AwayTeam.StartingPitcher.FullName,
             HomeStartingPitcherName = finalState.HomeTeam.StartingPitcher.FullName,
+            ScheduledDate = completedScheduledGame?.Date.Date ?? DateTime.Today,
+            GameNumber = completedScheduledGame?.GameNumber ?? 1,
+            Venue = string.IsNullOrWhiteSpace(completedScheduledGame?.Venue) ? $"{finalState.HomeTeam.Name} Ballpark" : completedScheduledGame.Venue,
+            AwayRecord = BuildRecordSummaryLabel(awayRecord),
+            HomeRecord = BuildRecordSummaryLabel(homeRecord),
             FinalInningNumber = finalState.Inning.Number,
             EndedInTopHalf = finalState.Inning.IsTopHalf,
             CompletedPlays = finalState.CompletedPlays,
             WasFranchiseMatch = mode == LiveMatchMode.Franchise,
             WinningTeamName = winningTeam,
+            SelectedTeamName = selectedTeamName,
+            SelectedTeamResultLabel = BuildSelectedTeamResultLabel(finalState, selectedTeamName),
+            NextGameLabel = BuildNextGameLabel(nextGame),
+            FranchiseDateAfterGame = mode == LiveMatchMode.Franchise ? GetCurrentFranchiseDate() : DateTime.MinValue,
             FinalPlayDescription = finalState.LatestEvent.Description,
             CompletedAtUtc = DateTime.UtcNow
         };
+    }
 
-        Save();
+    private void StoreCompletedGameBoxScore(MatchState finalState, ScheduleImportDto? completedScheduledGame, CompletedLiveMatchSummaryState summary, bool setCurrentView)
+    {
+        var key = BuildCompletedGameBoxScoreKey(completedScheduledGame, summary);
+        var scheduledDate = summary.ScheduledDate == default ? GetCurrentFranchiseDate().Date : summary.ScheduledDate.Date;
+
+        _saveState.CompletedGameBoxScores[key] = new CompletedGameBoxScoreState
+        {
+            GameKey = key,
+            Summary = summary,
+            AwayRunsByInning = finalState.AwayRunsByInning.Count > 0 ? [.. finalState.AwayRunsByInning] : BuildFallbackLinescore(finalState.AwayTeam.Runs, finalState.Inning.Number),
+            HomeRunsByInning = finalState.HomeRunsByInning.Count > 0 ? [.. finalState.HomeRunsByInning] : BuildFallbackLinescore(finalState.HomeTeam.Runs, finalState.Inning.Number),
+            AwayErrors = Math.Max(0, finalState.AwayErrors),
+            HomeErrors = Math.Max(0, finalState.HomeErrors),
+            AwayPitchingLines = BuildPitchingLines(finalState.AwayTeam, scheduledDate, finalState.AwayTeam.Abbreviation),
+            HomePitchingLines = BuildPitchingLines(finalState.HomeTeam, scheduledDate, finalState.HomeTeam.Abbreviation),
+            NotablePlayers = BuildNotablePlayerHighlights(finalState, scheduledDate)
+        };
+
+        if (setCurrentView || string.IsNullOrWhiteSpace(_saveState.CurrentViewedBoxScoreGameKey))
+        {
+            _saveState.CurrentViewedBoxScoreGameKey = key;
+        }
+    }
+
+    private List<CompletedPitchingLineState> BuildPitchingLines(MatchTeamState team, DateTime gameDate, string teamAbbreviation)
+    {
+        var pitcherEntries = team.PitchCountsByPitcher
+            .Where(pair => pair.Value > 0)
+            .Select(pair => new { Pitcher = team.FindPlayer(pair.Key), PitchCount = pair.Value })
+            .Where(entry => entry.Pitcher != null)
+            .Select(entry => new { Pitcher = entry.Pitcher!, entry.PitchCount })
+            .ToList();
+
+        if (pitcherEntries.Count == 0)
+        {
+            pitcherEntries.Add(new { Pitcher = team.StartingPitcher, PitchCount = Math.Max(0, team.PitchCount) });
+        }
+
+        return pitcherEntries
+            .Select(entry =>
+            {
+                var recentLine = GetMostRecentGameLine(entry.Pitcher.Id, gameDate);
+                return new CompletedPitchingLineState
+                {
+                    TeamAbbreviation = teamAbbreviation,
+                    PitcherName = entry.Pitcher.FullName,
+                    IsStartingPitcher = entry.Pitcher.Id == team.StartingPitcher.Id,
+                    PitchCount = Math.Max(0, entry.PitchCount),
+                    InningsPitchedOuts = Math.Max(0, recentLine?.InningsPitchedOuts ?? 0),
+                    EarnedRuns = Math.Max(0, recentLine?.EarnedRuns ?? 0),
+                    Strikeouts = Math.Max(0, recentLine?.PitcherStrikeouts ?? 0)
+                };
+            })
+            .OrderByDescending(line => line.IsStartingPitcher)
+            .ThenByDescending(line => line.PitchCount)
+            .ThenBy(line => line.PitcherName)
+            .ToList();
+    }
+
+    private List<CompletedPlayerHighlightState> BuildNotablePlayerHighlights(MatchState finalState, DateTime gameDate)
+    {
+        var players = finalState.AwayTeam.Lineup
+            .Concat(finalState.AwayTeam.BenchPlayers)
+            .Concat(finalState.AwayTeam.PitchCountsByPitcher.Keys.Select(id => finalState.AwayTeam.FindPlayer(id)).OfType<MatchPlayerSnapshot>())
+            .Concat(finalState.HomeTeam.Lineup)
+            .Concat(finalState.HomeTeam.BenchPlayers)
+            .Concat(finalState.HomeTeam.PitchCountsByPitcher.Keys.Select(id => finalState.HomeTeam.FindPlayer(id)).OfType<MatchPlayerSnapshot>())
+            .GroupBy(player => player.Id)
+            .Select(group => group.First())
+            .ToList();
+
+        var highlightCandidates = players
+            .Select(player =>
+            {
+                var recentLine = GetMostRecentGameLine(player.Id, gameDate);
+                if (recentLine == null)
+                {
+                    return null;
+                }
+
+                var teamAbbreviation = finalState.AwayTeam.FindPlayer(player.Id) != null
+                    ? finalState.AwayTeam.Abbreviation
+                    : finalState.HomeTeam.Abbreviation;
+                return new CompletedPlayerHighlightState
+                {
+                    TeamAbbreviation = teamAbbreviation,
+                    PlayerName = player.FullName,
+                    PrimaryPosition = player.PrimaryPosition,
+                    RunsScored = Math.Max(0, recentLine.RunsScored),
+                    Hits = Math.Max(0, recentLine.Hits),
+                    HomeRuns = Math.Max(0, recentLine.HomeRuns),
+                    Walks = Math.Max(0, recentLine.Walks),
+                    Strikeouts = Math.Max(0, recentLine.PitcherStrikeouts),
+                    SummaryLine = BuildHighlightSummaryLine(recentLine)
+                };
+            })
+            .OfType<CompletedPlayerHighlightState>()
+            .ToList();
+
+        var notablePlayers = highlightCandidates
+            .Where(player => player.HomeRuns > 0 || player.RunsScored > 0 || player.Hits >= 2 || player.Strikeouts >= 3)
+            .OrderByDescending(player => player.HomeRuns)
+            .ThenByDescending(player => player.RunsScored)
+            .ThenByDescending(player => player.Hits)
+            .ThenByDescending(player => player.Strikeouts)
+            .ThenBy(player => player.PlayerName)
+            .Take(6)
+            .ToList();
+
+        if (notablePlayers.Count > 0)
+        {
+            return notablePlayers;
+        }
+
+        return highlightCandidates
+            .Where(player => player.Hits > 0 || player.Strikeouts > 0)
+            .OrderByDescending(player => player.Hits)
+            .ThenByDescending(player => player.Strikeouts)
+            .ThenBy(player => player.PlayerName)
+            .Take(4)
+            .ToList();
+    }
+
+    private PlayerRecentGameStatState? GetMostRecentGameLine(Guid playerId, DateTime gameDate)
+    {
+        if (!_saveState.PlayerRecentGameStats.TryGetValue(playerId, out var recentGames) || recentGames.Count == 0)
+        {
+            return null;
+        }
+
+        return recentGames.LastOrDefault(game => game.GameDate.Date == gameDate.Date);
+    }
+
+    private static string BuildHighlightSummaryLine(PlayerRecentGameStatState gameLine)
+    {
+        var parts = new List<string>();
+        if (gameLine.RunsScored > 0)
+        {
+            parts.Add($"{gameLine.RunsScored} R");
+        }
+
+        if (gameLine.Hits > 0)
+        {
+            parts.Add($"{gameLine.Hits} H");
+        }
+
+        if (gameLine.HomeRuns > 0)
+        {
+            parts.Add(gameLine.HomeRuns == 1 ? "HR" : $"{gameLine.HomeRuns} HR");
+        }
+
+        if (gameLine.Walks > 0)
+        {
+            parts.Add($"{gameLine.Walks} BB");
+        }
+
+        if (gameLine.PitcherStrikeouts > 0)
+        {
+            parts.Add($"{gameLine.PitcherStrikeouts} K");
+        }
+
+        return parts.Count == 0 ? "Contributed defensively." : string.Join(", ", parts);
+    }
+
+    private static List<int> BuildFallbackLinescore(int totalRuns, int inningCount)
+    {
+        var line = Enumerable.Repeat(0, Math.Max(9, Math.Max(1, inningCount))).ToList();
+        if (line.Count > 0)
+        {
+            line[Math.Min(line.Count - 1, Math.Max(0, inningCount - 1))] = Math.Max(0, totalRuns);
+        }
+
+        return line;
+    }
+
+    private ScheduleImportDto? ResolveCompletedScheduledGame(MatchState finalState)
+    {
+        return _leagueData.Schedule
+            .Where(game =>
+                string.Equals(game.AwayTeamName, finalState.AwayTeam.Name, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(game.HomeTeamName, finalState.HomeTeam.Name, StringComparison.OrdinalIgnoreCase) &&
+                _saveState.CompletedScheduleGameKeys.Contains(BuildScheduleGameKey(game)))
+            .OrderByDescending(game => game.Date)
+            .ThenByDescending(game => game.GameNumber ?? 1)
+            .FirstOrDefault();
+    }
+
+    private static string BuildCompletedGameBoxScoreKey(ScheduleImportDto? completedScheduledGame, CompletedLiveMatchSummaryState summary)
+    {
+        if (completedScheduledGame != null)
+        {
+            return BuildScheduleGameKey(completedScheduledGame);
+        }
+
+        var scheduledDate = summary.ScheduledDate == default
+            ? summary.CompletedAtUtc.ToLocalTime().Date
+            : summary.ScheduledDate.Date;
+        return $"{scheduledDate:yyyyMMdd}|{summary.HomeTeamName}|{summary.AwayTeamName}|{Math.Max(1, summary.GameNumber)}";
+    }
+
+    private static string BuildRecordSummaryLabel(TeamRecordSummary summary)
+    {
+        return summary.Streak == "-"
+            ? $"{summary.Wins}-{summary.Losses}"
+            : $"{summary.Wins}-{summary.Losses} ({summary.Streak})";
+    }
+
+    private static string BuildNextGameLabel(ScheduleImportDto? nextGame)
+    {
+        if (nextGame == null)
+        {
+            return "Schedule complete - no remaining franchise games.";
+        }
+
+        var venueLabel = string.IsNullOrWhiteSpace(nextGame.Venue)
+            ? string.Empty
+            : $" | {nextGame.Venue}";
+        return $"{nextGame.AwayTeamName} at {nextGame.HomeTeamName} on {nextGame.Date:ddd, MMM d}{venueLabel}";
+    }
+
+    private static string BuildSelectedTeamResultLabel(MatchState finalState, string selectedTeamName)
+    {
+        if (string.IsNullOrWhiteSpace(selectedTeamName))
+        {
+            return string.Empty;
+        }
+
+        MatchTeamState? selectedTeam = null;
+        MatchTeamState? opponent = null;
+
+        if (string.Equals(finalState.AwayTeam.Name, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+        {
+            selectedTeam = finalState.AwayTeam;
+            opponent = finalState.HomeTeam;
+        }
+        else if (string.Equals(finalState.HomeTeam.Name, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+        {
+            selectedTeam = finalState.HomeTeam;
+            opponent = finalState.AwayTeam;
+        }
+
+        if (selectedTeam == null || opponent == null)
+        {
+            return string.Empty;
+        }
+
+        var resultLabel = selectedTeam.Runs > opponent.Runs
+            ? "Win"
+            : selectedTeam.Runs < opponent.Runs
+                ? "Loss"
+                : "Tie";
+        var locationLabel = ReferenceEquals(selectedTeam, finalState.HomeTeam) ? "vs" : "at";
+        return $"{resultLabel}: {selectedTeam.Name} {selectedTeam.Runs}-{opponent.Runs} {locationLabel} {opponent.Name}";
     }
 
     public LiveMatchSaveState? GetLiveMatchState()
@@ -2359,9 +2704,12 @@ public sealed class FranchiseSession
         SelectedTeam = null;
         PendingLiveMatchMode = LiveMatchMode.QuickMatch;
         _saveState.CurrentLiveMatch = null;
+        _saveState.LastCompletedLiveMatch = null;
         _saveState.CurrentFranchiseDate = DateTime.Today;
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
+        _saveState.CompletedGameBoxScores.Clear();
+        _saveState.CurrentViewedBoxScoreGameKey = null;
         _saveState.PlayerAssignments.Clear();
 
         if (removedTeamState || removedSelection)
@@ -2380,6 +2728,7 @@ public sealed class FranchiseSession
         _saveState.SelectedTeamName = null;
         _saveState.CurrentLiveMatch = null;
         _saveState.QuickMatchLiveMatch = null;
+        _saveState.LastCompletedLiveMatch = null;
         _saveState.PlayerRatings.Clear();
         _saveState.PlayerSeasonStats.Clear();
         _saveState.PlayerRecentGameStats.Clear();
@@ -2388,6 +2737,8 @@ public sealed class FranchiseSession
         _saveState.PlayerAssignments.Clear();
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
+        _saveState.CompletedGameBoxScores.Clear();
+        _saveState.CurrentViewedBoxScoreGameKey = null;
         _saveState.CurrentFranchiseDate = DateTime.Today;
         _saveState.Teams.Clear();
         SelectedTeam = null;
@@ -3844,6 +4195,11 @@ public sealed class FranchiseSession
 
         batterStats.RunsBattedIn += Math.Max(0, result.RunsScored);
 
+        foreach (var scoringPlayerId in result.ScoringPlayerIds.Distinct())
+        {
+            GetPlayerSeasonStats(scoringPlayerId).RunsScored++;
+        }
+
         switch (result.Code)
         {
             case "Double":
@@ -3950,6 +4306,7 @@ public sealed class FranchiseSession
                 EarnedRuns = Math.Max(0, currentStats.EarnedRuns - previousTotals.EarnedRuns),
                 Wins = Math.Max(0, currentStats.Wins - previousTotals.Wins),
                 Losses = Math.Max(0, currentStats.Losses - previousTotals.Losses),
+                RunsScored = Math.Max(0, currentStats.RunsScored - previousTotals.RunsScored),
                 AtBats = Math.Max(0, currentStats.AtBats - previousTotals.AtBats),
                 Hits = Math.Max(0, currentStats.Hits - previousTotals.Hits),
                 Doubles = Math.Max(0, currentStats.Doubles - previousTotals.Doubles),
@@ -3960,7 +4317,7 @@ public sealed class FranchiseSession
                 PitcherStrikeouts = Math.Max(0, currentStats.StrikeoutsPitched - previousTotals.PitcherStrikeouts)
             };
 
-            if (recentGameLine.GamesPlayed > 0 || recentGameLine.InningsPitchedOuts > 0 || recentGameLine.Hits > 0 || recentGameLine.HomeRuns > 0 || recentGameLine.Wins > 0 || recentGameLine.Losses > 0)
+            if (recentGameLine.GamesPlayed > 0 || recentGameLine.InningsPitchedOuts > 0 || recentGameLine.RunsScored > 0 || recentGameLine.Hits > 0 || recentGameLine.HomeRuns > 0 || recentGameLine.Wins > 0 || recentGameLine.Losses > 0)
             {
                 if (!_saveState.PlayerRecentGameStats.TryGetValue(player.Id, out var log))
                 {
@@ -3984,6 +4341,7 @@ public sealed class FranchiseSession
                 EarnedRuns = currentStats.EarnedRuns,
                 Wins = currentStats.Wins,
                 Losses = currentStats.Losses,
+                RunsScored = currentStats.RunsScored,
                 AtBats = currentStats.AtBats,
                 Hits = currentStats.Hits,
                 Doubles = currentStats.Doubles,
@@ -4481,16 +4839,16 @@ public sealed class FranchiseSession
         return $"{game.Date:yyyyMMdd}|{game.HomeTeamName}|{game.AwayTeamName}|{game.GameNumber ?? 1}";
     }
 
-    public void FinalizeFranchiseScheduledGame(MatchState finalState)
+    public ScheduleImportDto? FinalizeFranchiseScheduledGame(MatchState finalState)
     {
-        FinalizeFranchiseScheduledGame(finalState, preferredGame: null, advanceDateAfterGame: true);
+        return FinalizeFranchiseScheduledGame(finalState, preferredGame: null, advanceDateAfterGame: true);
     }
 
-    private void FinalizeFranchiseScheduledGame(MatchState finalState, ScheduleImportDto? preferredGame, bool advanceDateAfterGame)
+    private ScheduleImportDto? FinalizeFranchiseScheduledGame(MatchState finalState, ScheduleImportDto? preferredGame, bool advanceDateAfterGame)
     {
         if (SelectedTeam == null)
         {
-            return;
+            return null;
         }
 
         var gameToMark = preferredGame;
@@ -4515,7 +4873,7 @@ public sealed class FranchiseSession
 
         if (gameToMark == null)
         {
-            return;
+            return null;
         }
 
         var key = BuildScheduleGameKey(gameToMark);
@@ -4533,6 +4891,8 @@ public sealed class FranchiseSession
             SimulateRemainingLeagueGamesForDate(gameToMark.Date.Date);
             AdvanceFranchiseDateToNextUnplayedGame();
         }
+
+        return gameToMark;
     }
 
     private bool EnsurePlayerRatingsGenerated()

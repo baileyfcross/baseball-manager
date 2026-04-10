@@ -150,6 +150,7 @@ public sealed class AtBatResolver
             OutsRecorded = 0,
             BatterId = state.CurrentBatter.Id,
             PitcherId = state.CurrentPitcher.Id,
+            ScoringPlayerIds = [],
             BallX = state.Field.BallX,
             BallY = state.Field.BallY,
             Fielder = state.Field.HighlightedFielder,
@@ -177,6 +178,7 @@ public sealed class AtBatResolver
         runsScored = baserunningResult.RunsScored;
         baserunningText = baserunningResult.AdditionalDescription;
         offense.Runs += runsScored;
+        state.RecordRunsForCurrentHalf(runsScored);
 
         state.Field.BallX = outcome.BallX;
         state.Field.BallY = outcome.BallY;
@@ -216,6 +218,7 @@ public sealed class AtBatResolver
             OutsRecorded = outcome.IsOut ? 1 : 0,
             BatterId = outcome.BatterId,
             PitcherId = state.CurrentPitcher.Id,
+            ScoringPlayerIds = baserunningResult.ScoringPlayerIds.ToList(),
             BallX = outcome.BallX,
             BallY = outcome.BallY,
             Fielder = outcome.Fielder,

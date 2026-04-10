@@ -18,6 +18,7 @@ public sealed class MatchState
     {
         AwayTeam = awayTeam;
         HomeTeam = homeTeam;
+        EnsureInningTracked(1);
         LatestEvent = new ResultEvent
         {
             Code = "READY",
@@ -36,6 +37,14 @@ public sealed class MatchState
     public BaserunnerState Baserunners { get; } = new();
 
     public FieldState Field { get; } = new();
+
+    public List<int> AwayRunsByInning { get; } = [];
+
+    public List<int> HomeRunsByInning { get; } = [];
+
+    public int AwayErrors { get; set; }
+
+    public int HomeErrors { get; set; }
 
     public ResultEvent LatestEvent { get; set; }
 
@@ -65,5 +74,31 @@ public sealed class MatchState
     public string GetRunnerName(Guid? runnerId)
     {
         return GetPlayer(runnerId)?.FullName ?? string.Empty;
+    }
+
+    public void RecordRunsForCurrentHalf(int runsScored)
+    {
+        if (runsScored <= 0)
+        {
+            return;
+        }
+
+        EnsureInningTracked(Inning.Number);
+        var targetLine = Inning.IsTopHalf ? AwayRunsByInning : HomeRunsByInning;
+        targetLine[Inning.Number - 1] += runsScored;
+    }
+
+    public void EnsureInningTracked(int inningNumber)
+    {
+        var targetInning = Math.Max(1, inningNumber);
+        while (AwayRunsByInning.Count < targetInning)
+        {
+            AwayRunsByInning.Add(0);
+        }
+
+        while (HomeRunsByInning.Count < targetInning)
+        {
+            HomeRunsByInning.Add(0);
+        }
     }
 }

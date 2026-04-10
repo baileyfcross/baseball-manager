@@ -39,7 +39,7 @@ public sealed class FranchiseHubScreen : GameScreen
 
     private void InitializeButtons()
     {
-        _buttons.Add(new ButtonControl { Label = "Live Match", OnClick = () => StartLiveMatch() });
+        _buttons.Add(new ButtonControl { Label = "Game Day", OnClick = () => StartLiveMatch() });
         _buttons.Add(new ButtonControl { Label = "Sim Day", OnClick = () => SimDay() });
         _buttons.Add(new ButtonControl { Label = "Sim Next Game", OnClick = () => SimNextGame() });
         _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
@@ -146,10 +146,17 @@ public sealed class FranchiseHubScreen : GameScreen
     public override void OnEnter()
     {
         _ignoreClicksUntilRelease = true;
-        if (string.IsNullOrEmpty(_statusMessage))
+
+        var latestSummary = _franchiseSession.GetLastCompletedLiveMatchSummary();
+        if (latestSummary?.WasFranchiseMatch == true && !string.IsNullOrWhiteSpace(latestSummary.SelectedTeamResultLabel))
         {
-            _statusMessage = "Use Sim Day to move one calendar day at a time with coach feedback from practices, or Sim Next Game to jump ahead.";
+            _statusMessage = string.IsNullOrWhiteSpace(latestSummary.NextGameLabel)
+                ? latestSummary.SelectedTeamResultLabel
+                : $"{latestSummary.SelectedTeamResultLabel}. Next up: {latestSummary.NextGameLabel}";
+            return;
         }
+
+        _statusMessage = BuildDefaultStatusMessage();
     }
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
@@ -180,8 +187,16 @@ public sealed class FranchiseHubScreen : GameScreen
 
     private void StartLiveMatch()
     {
+        var nextGame = _franchiseSession.GetNextScheduledGame();
+        if (nextGame == null)
+        {
+            _statusMessage = "No remaining scheduled franchise game is available to play live.";
+            return;
+        }
+
         _startMatchUseCase.Execute();
         _franchiseSession.PrepareFranchiseMatch();
+        _statusMessage = $"Game Day: {nextGame.AwayTeamName} at {nextGame.HomeTeamName} on {nextGame.Date:ddd, MMM d}.";
         _screenManager.TransitionTo(nameof(GameDayScreen));
     }
 
@@ -195,6 +210,20 @@ public sealed class FranchiseHubScreen : GameScreen
     {
         _franchiseSession.SimulateNextScheduledGame(out var message);
         _statusMessage = message;
+    }
+
+    private string BuildDefaultStatusMessage()
+    {
+        var nextGame = _franchiseSession.GetNextScheduledGame();
+        if (nextGame == null)
+        {
+            return "No remaining scheduled games are on the calendar. Use Schedule / Training or roster management to review the completed season state.";
+        }
+
+        var venueLabel = string.IsNullOrWhiteSpace(nextGame.Venue)
+            ? string.Empty
+            : $" at {nextGame.Venue}";
+        return $"Next up: {nextGame.AwayTeamName} at {nextGame.HomeTeamName} on {nextGame.Date:ddd, MMM d}{venueLabel}. Open Game Day to review probable starters or use Sim Day / Sim Next Game to advance.";
     }
 
     private static IEnumerable<string> WrapText(string text, int maxCharacters)

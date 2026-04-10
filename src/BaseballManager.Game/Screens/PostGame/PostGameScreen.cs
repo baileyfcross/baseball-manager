@@ -18,8 +18,8 @@ public sealed class PostGameScreen : GameScreen
     private KeyboardState _previousKeyboardState = default;
     private bool _ignoreClicksUntilRelease = true;
 
-    private readonly Rectangle _boxScoreButtonBounds = new(160, 314, 220, 48);
-    private readonly Rectangle _continueButtonBounds = new(160, 372, 220, 44);
+    private readonly Rectangle _boxScoreButtonBounds = new(160, 484, 220, 48);
+    private readonly Rectangle _continueButtonBounds = new(392, 484, 260, 44);
 
     public PostGameScreen(ScreenManager screenManager, FranchiseSession franchiseSession)
     {
@@ -60,13 +60,7 @@ public sealed class PostGameScreen : GameScreen
             }
         }
 
-        if (IsNewKeyPress(currentKeyboardState, Keys.Enter))
-        {
-            _screenManager.TransitionTo(nameof(BoxScoreScreen));
-            return;
-        }
-
-        if (IsNewKeyPress(currentKeyboardState, Keys.Escape))
+        if (IsNewKeyPress(currentKeyboardState, Keys.Enter) || IsNewKeyPress(currentKeyboardState, Keys.Escape))
         {
             ContinueFlow();
             return;
@@ -80,9 +74,10 @@ public sealed class PostGameScreen : GameScreen
     {
         var summary = _franchiseSession.GetLastCompletedLiveMatchSummary();
         var viewport = uiRenderer.Viewport;
-        var panelBounds = new Rectangle(140, 110, Math.Max(700, viewport.Width - 280), Math.Max(340, viewport.Height - 220));
+        var panelBounds = new Rectangle(140, 110, Math.Max(820, viewport.Width - 280), Math.Max(400, viewport.Height - 220));
         var isBoxScoreHovered = _boxScoreButtonBounds.Contains(Mouse.GetState().Position);
         var isContinueHovered = _continueButtonBounds.Contains(Mouse.GetState().Position);
+        var continueLabel = summary?.WasFranchiseMatch == true ? "Return To Franchise Hub" : "Return To Main Menu";
 
         uiRenderer.DrawText("Post Game", new Vector2(160, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawButton(string.Empty, panelBounds, new Color(35, 28, 24), Color.Transparent);
@@ -96,15 +91,35 @@ public sealed class PostGameScreen : GameScreen
             var resultHeader = summary.WinningTeamName == "Tie"
                 ? "Final: Tie Game"
                 : $"Final: {summary.WinningTeamName} Win";
+            var venueLabel = string.IsNullOrWhiteSpace(summary.Venue) ? "Venue TBD" : summary.Venue;
 
             uiRenderer.DrawTextInBounds(resultHeader, new Rectangle(160, 146, panelBounds.Width - 40, 28), Color.Gold, uiRenderer.UiMediumFont);
             uiRenderer.DrawTextInBounds($"{summary.AwayAbbreviation} {summary.AwayRuns} - {summary.HomeAbbreviation} {summary.HomeRuns}", new Rectangle(160, 180, panelBounds.Width - 40, 30), Color.White, uiRenderer.UiMediumFont);
-            uiRenderer.DrawTextInBounds($"Completed: {summary.CompletedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}   Inning: {(summary.EndedInTopHalf ? "Top" : "Bottom")} {summary.FinalInningNumber}", new Rectangle(160, 216, panelBounds.Width - 40, 22), Color.White, uiRenderer.UiSmallFont);
-            uiRenderer.DrawWrappedTextInBounds(summary.FinalPlayDescription, new Rectangle(160, 252, panelBounds.Width - 40, 48), Color.White, uiRenderer.UiSmallFont, 2);
+            uiRenderer.DrawTextInBounds($"Completed: {summary.CompletedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}   Venue: {venueLabel}", new Rectangle(160, 216, panelBounds.Width - 40, 22), Color.White, uiRenderer.UiSmallFont);
+
+            if (!string.IsNullOrWhiteSpace(summary.SelectedTeamResultLabel))
+            {
+                uiRenderer.DrawTextInBounds(summary.SelectedTeamResultLabel, new Rectangle(160, 248, panelBounds.Width - 40, 22), Color.LightGreen, uiRenderer.UiSmallFont);
+            }
+
+            if (summary.WasFranchiseMatch)
+            {
+                if (summary.FranchiseDateAfterGame != default)
+                {
+                    uiRenderer.DrawTextInBounds($"Franchise Date: {summary.FranchiseDateAfterGame:yyyy-MM-dd}", new Rectangle(160, 278, panelBounds.Width - 40, 22), Color.White, uiRenderer.UiSmallFont);
+                }
+
+                var nextMatchupLabel = string.IsNullOrWhiteSpace(summary.NextGameLabel)
+                    ? "Next matchup: return to the Franchise Hub to continue the season."
+                    : $"Next matchup: {summary.NextGameLabel}";
+                uiRenderer.DrawWrappedTextInBounds(nextMatchupLabel, new Rectangle(160, 306, panelBounds.Width - 40, 42), Color.White, uiRenderer.UiSmallFont, 2);
+            }
+
+            uiRenderer.DrawWrappedTextInBounds(summary.FinalPlayDescription, new Rectangle(160, 360, panelBounds.Width - 40, 64), Color.White, uiRenderer.UiSmallFont, 3);
         }
 
         uiRenderer.DrawButton("View Box Score", _boxScoreButtonBounds, isBoxScoreHovered ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
-        uiRenderer.DrawButton("Continue", _continueButtonBounds, isContinueHovered ? Color.DarkSlateGray : Color.SlateGray, Color.White);
+        uiRenderer.DrawButton(continueLabel, _continueButtonBounds, isContinueHovered ? Color.DarkSlateGray : Color.SlateGray, Color.White);
     }
 
     private void ContinueFlow()

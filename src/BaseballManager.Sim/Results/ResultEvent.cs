@@ -28,6 +28,8 @@ public sealed class ResultEvent
 
     public Guid PitcherId { get; init; }
 
+    public List<Guid> ScoringPlayerIds { get; init; } = [];
+
     public float BallX { get; init; } = 0.5f;
 
     public float BallY { get; init; } = 0.42f;

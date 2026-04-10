@@ -13,6 +13,10 @@ public sealed class FranchiseSaveState
 
     public Dictionary<string, CompletedScheduleGameResult> CompletedScheduleGameResults { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    public Dictionary<string, CompletedGameBoxScoreState> CompletedGameBoxScores { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public string? CurrentViewedBoxScoreGameKey { get; set; }
+
     public DisplaySettingsState DisplaySettings { get; set; } = new();
 
     public Dictionary<Guid, PlayerHiddenRatingsState> PlayerRatings { get; set; } = new();
@@ -62,6 +66,16 @@ public sealed class CompletedLiveMatchSummaryState
 
     public string HomeStartingPitcherName { get; set; } = string.Empty;
 
+    public DateTime ScheduledDate { get; set; }
+
+    public int GameNumber { get; set; } = 1;
+
+    public string Venue { get; set; } = string.Empty;
+
+    public string AwayRecord { get; set; } = string.Empty;
+
+    public string HomeRecord { get; set; } = string.Empty;
+
     public int FinalInningNumber { get; set; }
 
     public bool EndedInTopHalf { get; set; }
@@ -72,9 +86,76 @@ public sealed class CompletedLiveMatchSummaryState
 
     public string WinningTeamName { get; set; } = string.Empty;
 
+    public string SelectedTeamName { get; set; } = string.Empty;
+
+    public string SelectedTeamResultLabel { get; set; } = string.Empty;
+
+    public string NextGameLabel { get; set; } = string.Empty;
+
+    public DateTime FranchiseDateAfterGame { get; set; }
+
     public string FinalPlayDescription { get; set; } = string.Empty;
 
     public DateTime CompletedAtUtc { get; set; } = DateTime.UtcNow;
+}
+
+public sealed class CompletedGameBoxScoreState
+{
+    public string GameKey { get; set; } = string.Empty;
+
+    public CompletedLiveMatchSummaryState Summary { get; set; } = new();
+
+    public List<int> AwayRunsByInning { get; set; } = new();
+
+    public List<int> HomeRunsByInning { get; set; } = new();
+
+    public int AwayErrors { get; set; }
+
+    public int HomeErrors { get; set; }
+
+    public List<CompletedPitchingLineState> AwayPitchingLines { get; set; } = new();
+
+    public List<CompletedPitchingLineState> HomePitchingLines { get; set; } = new();
+
+    public List<CompletedPlayerHighlightState> NotablePlayers { get; set; } = new();
+}
+
+public sealed class CompletedPitchingLineState
+{
+    public string TeamAbbreviation { get; set; } = string.Empty;
+
+    public string PitcherName { get; set; } = string.Empty;
+
+    public bool IsStartingPitcher { get; set; }
+
+    public int PitchCount { get; set; }
+
+    public int InningsPitchedOuts { get; set; }
+
+    public int EarnedRuns { get; set; }
+
+    public int Strikeouts { get; set; }
+}
+
+public sealed class CompletedPlayerHighlightState
+{
+    public string TeamAbbreviation { get; set; } = string.Empty;
+
+    public string PlayerName { get; set; } = string.Empty;
+
+    public string PrimaryPosition { get; set; } = string.Empty;
+
+    public int RunsScored { get; set; }
+
+    public int Hits { get; set; }
+
+    public int HomeRuns { get; set; }
+
+    public int Walks { get; set; }
+
+    public int Strikeouts { get; set; }
+
+    public string SummaryLine { get; set; } = string.Empty;
 }
 
 public sealed class TeamFranchiseState
@@ -381,6 +462,8 @@ public sealed class PlayerRecentGameStatState
 
     public int Losses { get; set; }
 
+    public int RunsScored { get; set; }
+
     public int AtBats { get; set; }
 
     public int Hits { get; set; }
@@ -412,6 +495,8 @@ public sealed class PlayerRecentTotalsState
 
     public int Losses { get; set; }
 
+    public int RunsScored { get; set; }
+
     public int AtBats { get; set; }
 
     public int Hits { get; set; }
@@ -434,6 +519,8 @@ public sealed class PlayerSeasonStatsState
     public int GamesPlayed { get; set; }
 
     public int PlateAppearances { get; set; }
+
+    public int RunsScored { get; set; }
 
     public int AtBats { get; set; }
 

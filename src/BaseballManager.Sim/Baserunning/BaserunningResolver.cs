@@ -3,7 +3,7 @@ using BaseballManager.Sim.Engine;
 
 namespace BaseballManager.Sim.Baserunning;
 
-public readonly record struct BaserunningResult(int RunsScored, string AdditionalDescription);
+public readonly record struct BaserunningResult(int RunsScored, string AdditionalDescription, IReadOnlyList<Guid> ScoringPlayerIds);
 
 public sealed class BaserunningResolver
 {
@@ -18,7 +18,7 @@ public sealed class BaserunningResolver
             "HomeRun" => ProcessHomeRun(state, outcome),
             "Groundout" => ProcessGroundout(state, outcome),
             "Flyout" => ProcessFlyout(state, outcome, random),
-            _ => new BaserunningResult(0, string.Empty)
+            _ => new BaserunningResult(0, string.Empty, [])
         };
     }
 
@@ -29,6 +29,7 @@ public sealed class BaserunningResolver
         var third = state.Baserunners.ThirdBaseRunnerId;
         var runs = 0;
         var note = string.Empty;
+        var scoringPlayers = new List<Guid>();
 
         if (first.HasValue)
         {
@@ -37,6 +38,7 @@ public sealed class BaserunningResolver
                 if (third.HasValue)
                 {
                     runs++;
+                    scoringPlayers.Add(third.Value);
                     note = $"{GetRunnerName(state, third)} scores on the bases-loaded walk.";
                 }
 
@@ -50,7 +52,7 @@ public sealed class BaserunningResolver
         state.Baserunners.FirstBaseRunnerId = first;
         state.Baserunners.SecondBaseRunnerId = second;
         state.Baserunners.ThirdBaseRunnerId = third;
-        return new BaserunningResult(runs, note);
+        return new BaserunningResult(runs, note, scoringPlayers);
     }
 
     private static BaserunningResult ProcessSingle(MatchState state, PlateAppearanceOutcome outcome, Random random)
@@ -64,10 +66,12 @@ public sealed class BaserunningResolver
         Guid? newThird = null;
         var runs = 0;
         var notes = new List<string>();
+        var scoringPlayers = new List<Guid>();
 
         if (third.HasValue)
         {
             runs++;
+            scoringPlayers.Add(third.Value);
             notes.Add($"{GetRunnerName(state, third)} scores.");
         }
 
@@ -77,6 +81,7 @@ public sealed class BaserunningResolver
             if (random.NextDouble() < scoreChance)
             {
                 runs++;
+                scoringPlayers.Add(second.Value);
                 notes.Add($"{GetRunnerName(state, second)} scores from second.");
             }
             else
@@ -101,7 +106,7 @@ public sealed class BaserunningResolver
         state.Baserunners.FirstBaseRunnerId = newFirst;
         state.Baserunners.SecondBaseRunnerId = newSecond;
         state.Baserunners.ThirdBaseRunnerId = newThird;
-        return new BaserunningResult(runs, string.Join(" ", notes));
+        return new BaserunningResult(runs, string.Join(" ", notes), scoringPlayers);
     }
 
     private static BaserunningResult ProcessDouble(MatchState state, PlateAppearanceOutcome outcome, Random random)
@@ -113,16 +118,19 @@ public sealed class BaserunningResolver
         Guid? newThird = null;
         var runs = 0;
         var notes = new List<string>();
+        var scoringPlayers = new List<Guid>();
 
         if (third.HasValue)
         {
             runs++;
+            scoringPlayers.Add(third.Value);
             notes.Add($"{GetRunnerName(state, third)} scores.");
         }
 
         if (second.HasValue)
         {
             runs++;
+            scoringPlayers.Add(second.Value);
             notes.Add($"{GetRunnerName(state, second)} scores easily.");
         }
 
@@ -132,6 +140,7 @@ public sealed class BaserunningResolver
             if (random.NextDouble() < scoreChance)
             {
                 runs++;
+                scoringPlayers.Add(first.Value);
                 notes.Add($"{GetRunnerName(state, first)} comes all the way around to score.");
             }
             else
@@ -143,51 +152,55 @@ public sealed class BaserunningResolver
         state.Baserunners.FirstBaseRunnerId = null;
         state.Baserunners.SecondBaseRunnerId = outcome.BatterId;
         state.Baserunners.ThirdBaseRunnerId = newThird;
-        return new BaserunningResult(runs, string.Join(" ", notes));
+        return new BaserunningResult(runs, string.Join(" ", notes), scoringPlayers);
     }
 
     private static BaserunningResult ProcessTriple(MatchState state, PlateAppearanceOutcome outcome)
     {
         var runs = 0;
         var notes = new List<string>();
+        var scoringPlayers = new List<Guid>();
 
         foreach (var runner in new[] { state.Baserunners.FirstBaseRunnerId, state.Baserunners.SecondBaseRunnerId, state.Baserunners.ThirdBaseRunnerId })
         {
             if (runner.HasValue)
             {
                 runs++;
+                scoringPlayers.Add(runner.Value);
                 notes.Add($"{GetRunnerName(state, runner)} scores.");
             }
         }
 
         state.Baserunners.Clear();
         state.Baserunners.ThirdBaseRunnerId = outcome.BatterId;
-        return new BaserunningResult(runs, string.Join(" ", notes));
+        return new BaserunningResult(runs, string.Join(" ", notes), scoringPlayers);
     }
 
     private static BaserunningResult ProcessHomeRun(MatchState state, PlateAppearanceOutcome outcome)
     {
         var runs = 1;
         var notes = new List<string>();
+        var scoringPlayers = new List<Guid> { outcome.BatterId };
 
         foreach (var runner in new[] { state.Baserunners.FirstBaseRunnerId, state.Baserunners.SecondBaseRunnerId, state.Baserunners.ThirdBaseRunnerId })
         {
             if (runner.HasValue)
             {
                 runs++;
+                scoringPlayers.Add(runner.Value);
                 notes.Add($"{GetRunnerName(state, runner)} scores.");
             }
         }
 
         state.Baserunners.Clear();
-        return new BaserunningResult(runs, string.Join(" ", notes));
+        return new BaserunningResult(runs, string.Join(" ", notes), scoringPlayers);
     }
 
     private static BaserunningResult ProcessGroundout(MatchState state, PlateAppearanceOutcome outcome)
     {
         if (outcome.OutsBeforePlay >= 2)
         {
-            return new BaserunningResult(0, string.Empty);
+            return new BaserunningResult(0, string.Empty, []);
         }
 
         var notes = new List<string>();
@@ -205,7 +218,7 @@ public sealed class BaserunningResolver
             notes.Add($"{GetRunnerName(state, state.Baserunners.SecondBaseRunnerId)} advances to second.");
         }
 
-        return new BaserunningResult(0, string.Join(" ", notes));
+        return new BaserunningResult(0, string.Join(" ", notes), []);
     }
 
     private static BaserunningResult ProcessFlyout(MatchState state, PlateAppearanceOutcome outcome, Random random)
@@ -217,11 +230,11 @@ public sealed class BaserunningResolver
             {
                 var scoringRunner = state.Baserunners.ThirdBaseRunnerId;
                 state.Baserunners.ThirdBaseRunnerId = null;
-                return new BaserunningResult(1, $"{GetRunnerName(state, scoringRunner)} tags from third and scores.");
+                return new BaserunningResult(1, $"{GetRunnerName(state, scoringRunner)} tags from third and scores.", scoringRunner.HasValue ? [scoringRunner.Value] : []);
             }
         }
 
-        return new BaserunningResult(0, string.Empty);
+        return new BaserunningResult(0, string.Empty, []);
     }
 
     private static int GetRunnerSpeed(MatchState state, Guid? runnerId)

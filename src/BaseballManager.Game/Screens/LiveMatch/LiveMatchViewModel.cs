@@ -14,6 +14,18 @@ public sealed class LiveMatchViewModel
 
     public int HomeScore { get; init; }
 
+    public int AwayHits { get; init; }
+
+    public int HomeHits { get; init; }
+
+    public int AwayErrors { get; init; }
+
+    public int HomeErrors { get; init; }
+
+    public IReadOnlyList<int> AwayRunsByInning { get; init; } = [];
+
+    public IReadOnlyList<int> HomeRunsByInning { get; init; } = [];
+
     public int InningNumber { get; init; } = 1;
 
     public bool IsTopHalf { get; init; } = true;

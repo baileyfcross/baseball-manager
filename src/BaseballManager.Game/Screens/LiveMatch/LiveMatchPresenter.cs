@@ -241,6 +241,12 @@ public sealed class LiveMatchPresenter
             HomeAbbreviation = state.HomeTeam.Abbreviation,
             AwayScore = state.AwayTeam.Runs,
             HomeScore = state.HomeTeam.Runs,
+            AwayHits = state.AwayTeam.Hits,
+            HomeHits = state.HomeTeam.Hits,
+            AwayErrors = state.AwayErrors,
+            HomeErrors = state.HomeErrors,
+            AwayRunsByInning = state.AwayRunsByInning.ToList(),
+            HomeRunsByInning = state.HomeRunsByInning.ToList(),
             InningNumber = state.Inning.Number,
             IsTopHalf = state.Inning.IsTopHalf,
             Balls = state.Count.Balls,
@@ -310,9 +316,9 @@ public sealed class LiveMatchPresenter
             _franchiseSession.ApplyPerformanceDevelopment(batter, pitcher, defensiveTeam, result);
             if (result.IsGameOver)
             {
-                _franchiseSession.CaptureCompletedLiveMatch(_engine.CurrentState, _mode);
                 _franchiseSession.RecordCompletedGame(_engine.CurrentState);
-                _franchiseSession.FinalizeFranchiseScheduledGame(_engine.CurrentState);
+                var completedScheduledGame = _franchiseSession.FinalizeFranchiseScheduledGame(_engine.CurrentState);
+                _franchiseSession.CaptureCompletedLiveMatch(_engine.CurrentState, _mode, completedScheduledGame);
             }
         }
         else if (result.IsGameOver)

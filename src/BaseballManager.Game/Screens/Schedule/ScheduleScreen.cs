@@ -1,7 +1,10 @@
+using BaseballManager.Contracts.ImportDtos;
 using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
+using BaseballManager.Game.Screens.GameDay;
+using BaseballManager.Game.Screens.PostGame;
 using BaseballManager.Game.UI.Controls;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -10,6 +13,7 @@ namespace BaseballManager.Game.Screens.Schedule;
 
 public sealed class ScheduleScreen : GameScreen
 {
+    private readonly ScreenManager _screenManager;
     private readonly ImportedLeagueData _leagueData;
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
@@ -20,6 +24,8 @@ public sealed class ScheduleScreen : GameScreen
     private readonly ButtonControl _simSeasonButton;
     private readonly ButtonControl _confirmSimSeasonButton;
     private readonly ButtonControl _cancelSimSeasonButton;
+    private readonly ButtonControl _playNextGameButton;
+    private readonly ButtonControl _viewBoxScoreButton;
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
     private bool _showSeasonSimConfirmation;
@@ -28,7 +34,7 @@ public sealed class ScheduleScreen : GameScreen
     private DateTime _selectedDate;
     private DateTime _selectionAnchorDate;
     private readonly HashSet<DateTime> _selectedDates = new();
-    private string _statusMessage = "Off-days now include team practices and recovery sessions. Use Sim Season to fast-forward to the regular-season finish.";
+    private string _statusMessage = "Off-days now include team practices and recovery sessions. Select the next game day to enter Game Day or use Sim Season to fast-forward to the regular-season finish.";
 
     private const int LayoutMargin = 48;
     private const int CalendarTop = 188;
@@ -36,6 +42,7 @@ public sealed class ScheduleScreen : GameScreen
 
     public ScheduleScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
+        _screenManager = screenManager;
         _leagueData = leagueData;
         _franchiseSession = franchiseSession;
         _backButton = new ButtonControl
@@ -78,6 +85,16 @@ public sealed class ScheduleScreen : GameScreen
             Label = "Cancel",
             OnClick = CancelSeasonSim
         };
+        _playNextGameButton = new ButtonControl
+        {
+            Label = "Play Next Game",
+            OnClick = OpenSelectedGame
+        };
+        _viewBoxScoreButton = new ButtonControl
+        {
+            Label = "View Box Score",
+            OnClick = OpenSelectedCompletedGameBoxScore
+        };
     }
 
     public override void OnEnter()
@@ -90,6 +107,7 @@ public sealed class ScheduleScreen : GameScreen
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
         var currentMouseState = inputManager.MouseState;
+        var teamGames = GetScheduleRows();
 
         if (_ignoreClicksUntilRelease)
         {
@@ -144,6 +162,14 @@ public sealed class ScheduleScreen : GameScreen
             else if (GetSimSeasonButtonBounds().Contains(mousePosition))
             {
                 _simSeasonButton.Click();
+            }
+            else if (CanOpenSelectedGame(teamGames) && GetPlayNextGameButtonBounds().Contains(mousePosition))
+            {
+                _playNextGameButton.Click();
+            }
+            else if (CanViewSelectedCompletedGameBoxScore() && GetPlayNextGameButtonBounds().Contains(mousePosition))
+            {
+                _viewBoxScoreButton.Click();
             }
             else if (TrySelectCalendarDay(mousePosition))
             {
@@ -295,6 +321,83 @@ public sealed class ScheduleScreen : GameScreen
         _statusMessage = "Season sim canceled.";
     }
 
+    private bool CanOpenSelectedGame(IReadOnlyList<ScheduleDisplayRow> teamGames)
+    {
+        if (_selectedDates.Count != 1)
+        {
+            return false;
+        }
+
+        var nextGame = _franchiseSession.GetNextScheduledGame();
+        if (nextGame == null || nextGame.Date.Date != _selectedDate.Date)
+        {
+            return false;
+        }
+
+        return GetGamesForDate(_selectedDate.Date, teamGames).Any(game => game.Score == "-");
+    }
+
+    private bool CanViewSelectedCompletedGameBoxScore()
+    {
+        return GetSelectedCompletedGame() != null;
+    }
+
+    private ScheduleImportDto? GetSelectedCompletedGame()
+    {
+        if (_franchiseSession.SelectedTeam == null || _selectedDates.Count != 1)
+        {
+            return null;
+        }
+
+        return _leagueData.Schedule
+            .Where(game =>
+                game.Date.Date == _selectedDate.Date &&
+                (string.Equals(game.HomeTeamName, _franchiseSession.SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(game.AwayTeamName, _franchiseSession.SelectedTeam.Name, StringComparison.OrdinalIgnoreCase)) &&
+                _franchiseSession.IsScheduledGameCompleted(game) &&
+                _franchiseSession.HasCompletedGameBoxScore(game))
+            .OrderByDescending(game => game.GameNumber ?? 1)
+            .FirstOrDefault();
+    }
+
+    private void OpenSelectedGame()
+    {
+        var nextGame = _franchiseSession.GetNextScheduledGame();
+        if (nextGame == null)
+        {
+            _statusMessage = "No scheduled game is currently available to enter.";
+            return;
+        }
+
+        if (nextGame.Date.Date != _selectedDate.Date)
+        {
+            _statusMessage = $"The next playable franchise game is on {nextGame.Date:ddd, MMM d}. Select that date to enter Game Day.";
+            return;
+        }
+
+        _franchiseSession.PrepareFranchiseMatch();
+        _statusMessage = $"Entering Game Day for {nextGame.AwayTeamName} at {nextGame.HomeTeamName}.";
+        _screenManager.TransitionTo(nameof(GameDayScreen));
+    }
+
+    private void OpenSelectedCompletedGameBoxScore()
+    {
+        var completedGame = GetSelectedCompletedGame();
+        if (completedGame == null)
+        {
+            return;
+        }
+
+        if (!_franchiseSession.OpenCompletedGameBoxScore(completedGame))
+        {
+            _statusMessage = "A finished game was selected, but no saved box score is available yet.";
+            return;
+        }
+
+        _statusMessage = $"Opening box score for {completedGame.AwayTeamName} at {completedGame.HomeTeamName}.";
+        _screenManager.TransitionTo(nameof(BoxScoreScreen));
+    }
+
     private void SyncCalendarToFranchiseDate()
     {
         var franchiseDate = _franchiseSession.GetCurrentFranchiseDate().Date;
@@ -338,6 +441,7 @@ public sealed class ScheduleScreen : GameScreen
                 return false;
             }
 
+            var wasAlreadySelected = !extendSelection && _selectedDates.Count == 1 && _selectedDates.Contains(selectedDate);
             _selectedDate = selectedDate;
             if (selectedDate.Month != _visibleMonth.Month || selectedDate.Year != _visibleMonth.Year)
             {
@@ -351,6 +455,11 @@ public sealed class ScheduleScreen : GameScreen
             else
             {
                 ResetSelectionToSingleDay(selectedDate);
+            }
+
+            if (wasAlreadySelected)
+            {
+                OpenSelectedCompletedGameBoxScore();
             }
 
             return true;
@@ -439,8 +548,24 @@ public sealed class ScheduleScreen : GameScreen
         uiRenderer.DrawTextInBounds(isSelectedPracticeDay ? $"Plan for This Day: {practiceFocusLabel}" : $"Default Plan: {practiceFocusLabel}", new Rectangle(rightPanelX, panelBounds.Y + 8, rightPanelWidth, 18), Color.White, uiRenderer.UiSmallFont);
 
         var lines = BuildSelectedDayLines(teamGames);
+        var canOpenGame = CanOpenSelectedGame(teamGames);
+        var canViewBoxScore = CanViewSelectedCompletedGameBoxScore();
         uiRenderer.DrawWrappedTextInBounds(string.Join(" ", lines.Take(2)), new Rectangle(panelBounds.X + 14, panelBounds.Y + 32, leftPanelWidth - 26, panelBounds.Height - 42), Color.White, uiRenderer.UiSmallFont, 3);
-        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(rightPanelX, panelBounds.Y + 32, rightPanelWidth, panelBounds.Height - 42), Color.White, uiRenderer.UiSmallFont, 3);
+
+        var showActionButton = canOpenGame || canViewBoxScore;
+        var statusHeight = showActionButton ? panelBounds.Height - 78 : panelBounds.Height - 42;
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(rightPanelX, panelBounds.Y + 32, rightPanelWidth, statusHeight), Color.White, uiRenderer.UiSmallFont, 3);
+
+        if (showActionButton)
+        {
+            var playBounds = GetPlayNextGameButtonBounds();
+            var isHovered = playBounds.Contains(Mouse.GetState().Position);
+            var buttonLabel = canOpenGame ? _playNextGameButton.Label : _viewBoxScoreButton.Label;
+            var background = canOpenGame
+                ? (isHovered ? Color.DarkOliveGreen : Color.OliveDrab)
+                : (isHovered ? Color.DarkSlateBlue : Color.SlateBlue);
+            uiRenderer.DrawButton(buttonLabel, playBounds, background, Color.White);
+        }
     }
 
     private List<string> BuildSelectedDayLines(IReadOnlyList<ScheduleDisplayRow> teamGames)
@@ -799,6 +924,16 @@ public sealed class ScheduleScreen : GameScreen
     {
         var top = CalendarTop + (GetCellHeight() * 6) + (CalendarGap * 5) + 18;
         return new Rectangle(LayoutMargin, top, Math.Max(620, _viewport.X - (LayoutMargin * 2)), GetSelectedDayPanelHeight());
+    }
+
+    private Rectangle GetPlayNextGameButtonBounds()
+    {
+        var panelBounds = GetSelectedDayPanelBounds();
+        var leftPanelWidth = (int)Math.Floor(panelBounds.Width * 0.56f);
+        var rightPanelX = panelBounds.X + leftPanelWidth + 18;
+        var rightPanelWidth = panelBounds.Right - rightPanelX - 14;
+        var buttonWidth = Math.Min(220, rightPanelWidth);
+        return new Rectangle(rightPanelX, panelBounds.Bottom - 40, buttonWidth, 30);
     }
 
     private Rectangle GetDayCellBounds(int index)

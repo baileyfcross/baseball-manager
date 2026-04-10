@@ -145,7 +145,7 @@ public sealed class LiveMatchScreen : GameScreen
 
                 if (_presenter.ViewModel.IsGameOver)
                 {
-                    _screenManager.TransitionTo(nameof(PostGameScreen));
+                    _screenManager.TransitionTo(nameof(BoxScoreScreen));
                     return;
                 }
             }
@@ -216,6 +216,13 @@ public sealed class LiveMatchScreen : GameScreen
 
     private void ReturnToPreviousScreen()
     {
+        if (_presenter.ViewModel.IsGameOver)
+        {
+            _screenManager.TransitionTo(nameof(BoxScoreScreen));
+            return;
+        }
+
+        _franchiseSession.SetPreferLiveBoxScore(false);
         var screenName = _franchiseSession.PendingLiveMatchMode == LiveMatchMode.QuickMatch
             ? nameof(MainMenuScreen)
             : nameof(FranchiseHubScreen);
