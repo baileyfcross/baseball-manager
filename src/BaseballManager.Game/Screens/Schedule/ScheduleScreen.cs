@@ -349,7 +349,7 @@ public sealed class ScheduleScreen : GameScreen
             return null;
         }
 
-        return _leagueData.Schedule
+        return _franchiseSession.GetSelectedTeamSeasonSchedule()
             .Where(game =>
                 game.Date.Date == _selectedDate.Date &&
                 (string.Equals(game.HomeTeamName, _franchiseSession.SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
@@ -952,7 +952,7 @@ public sealed class ScheduleScreen : GameScreen
             return new List<ScheduleDisplayRow>();
         }
 
-        return _leagueData.Schedule
+        return _franchiseSession.GetSelectedTeamSeasonSchedule()
             .Where(game => string.Equals(game.HomeTeamName, _franchiseSession.SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
                            string.Equals(game.AwayTeamName, _franchiseSession.SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
             .OrderBy(game => game.Date)

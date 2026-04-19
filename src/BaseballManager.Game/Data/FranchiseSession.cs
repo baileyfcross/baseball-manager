@@ -11,6 +11,7 @@ namespace BaseballManager.Game.Data;
 public sealed class FranchiseSession
 {
     private const int MaxRosterSize = 40;
+    private const string FreeAgentTeamName = "Free Agents";
 
     private enum PracticeDevelopmentAttribute
     {
@@ -42,6 +43,7 @@ public sealed class FranchiseSession
     private readonly SetBudgetAllocationUseCase _setBudgetAllocationUseCase = new();
     private readonly SignPlayerContractUseCase _signPlayerContractUseCase = new();
     private readonly ReleasePlayerUseCase _releasePlayerUseCase = new();
+    private readonly OffseasonContractEvaluator _offseasonContractEvaluator = new();
     private readonly ManagerAi _managerAi = new();
     private readonly HireCoachUseCase _hireCoachUseCase = new();
     private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
@@ -54,13 +56,16 @@ public sealed class FranchiseSession
         _saveState = _stateStore.Load();
         _saveState.PlayerRatings ??= new Dictionary<Guid, PlayerHiddenRatingsState>();
         _saveState.PlayerSeasonStats ??= new Dictionary<Guid, PlayerSeasonStatsState>();
+        _saveState.PreviousSeasonStats ??= new Dictionary<Guid, PlayerSeasonStatsState>();
         _saveState.PlayerRecentGameStats ??= new Dictionary<Guid, List<PlayerRecentGameStatState>>();
         _saveState.PlayerRecentTrackingTotals ??= new Dictionary<Guid, PlayerRecentTotalsState>();
         _saveState.PlayerHealth ??= new Dictionary<Guid, PlayerHealthState>();
+        _saveState.PlayerAges ??= new Dictionary<Guid, int>();
         _saveState.PlayerAssignments ??= new Dictionary<Guid, string>();
         _saveState.CompletedScheduleGameKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _saveState.CompletedScheduleGameResults ??= new Dictionary<string, CompletedScheduleGameResult>(StringComparer.OrdinalIgnoreCase);
         _saveState.CompletedGameBoxScores ??= new Dictionary<string, CompletedGameBoxScoreState>(StringComparer.OrdinalIgnoreCase);
+        SyncPlayerAgesFromSave();
 
         if (!string.IsNullOrWhiteSpace(_saveState.SelectedTeamName))
         {
@@ -76,8 +81,9 @@ public sealed class FranchiseSession
         }
 
         EnsureFranchiseDateInitialized();
+        EnsureSeasonYearInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsurePlayerAgesGenerated() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
         {
             Save();
         }
@@ -317,6 +323,55 @@ public sealed class FranchiseSession
         return _saveState.CurrentFranchiseDate.Date;
     }
 
+    public int GetCurrentSeasonYear()
+    {
+        EnsureSeasonYearInitialized();
+        return _saveState.CurrentSeasonYear;
+    }
+
+    public bool CanAdvanceToNextSeason()
+    {
+        if (SelectedTeam == null)
+        {
+            return false;
+        }
+
+        var activeSchedule = GetActiveSchedule();
+        if (activeSchedule.Count == 0)
+        {
+            return true;
+        }
+
+        var seasonEndDate = activeSchedule.Max(game => game.Date.Date);
+        return !activeSchedule.Any(game => !IsScheduledGameCompleted(game)) && GetCurrentFranchiseDate().Date > seasonEndDate;
+    }
+
+    public OffseasonSummaryState? GetLastOffseasonSummary()
+    {
+        return _saveState.LastOffseasonSummary;
+    }
+
+    public bool AdvanceToNextSeason(out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before advancing to the next season.";
+            return false;
+        }
+
+        if (!CanAdvanceToNextSeason())
+        {
+            statusMessage = "Finish the current regular season before moving into the offseason.";
+            return false;
+        }
+
+        RunOffseasonSimulation(out var offseasonSummary);
+        _saveState.LastOffseasonSummary = offseasonSummary;
+        Save();
+        statusMessage = offseasonSummary.Overview;
+        return true;
+    }
+
     public DateTime GetSeasonCalendarStartDate()
     {
         var seasonYear = GetSeasonScheduleYear();
@@ -338,6 +393,11 @@ public sealed class FranchiseSession
         }
 
         return seasonSchedule[^1].Date.Date;
+    }
+
+    public IReadOnlyList<ScheduleImportDto> GetSelectedTeamSeasonSchedule()
+    {
+        return GetSeasonSchedule();
     }
 
     public bool IsScheduledGameCompleted(ScheduleImportDto game)
@@ -380,9 +440,12 @@ public sealed class FranchiseSession
         SelectedTeam = team;
         PendingLiveMatchMode = LiveMatchMode.Franchise;
         _saveState.SelectedTeamName = team.Name;
+        _saveState.CurrentSeasonYear = 0;
         _saveState.CurrentFranchiseDate = default;
+        _saveState.LastOffseasonSummary = null;
         MigrateLegacyFranchiseMatchIfNeeded(team.Name);
         EnsureFranchiseDateInitialized();
+        EnsureSeasonYearInitialized();
         _stateStore.Save(_saveState);
     }
 
@@ -432,6 +495,11 @@ public sealed class FranchiseSession
 
     public PlayerSeasonStatsState GetLastSeasonStats(Guid playerId, string fullName, string primaryPosition, string secondaryPosition, int age)
     {
+        if (_saveState.PreviousSeasonStats.TryGetValue(playerId, out var previousSeasonStats))
+        {
+            return previousSeasonStats;
+        }
+
         if (_lastSeasonStatsCache.TryGetValue(playerId, out var stats))
         {
             return stats;
@@ -1596,7 +1664,7 @@ public sealed class FranchiseSession
             return GetCurrentFranchiseDate().Year;
         }
 
-        var teamSchedule = _leagueData.Schedule
+        var teamSchedule = GetActiveSchedule()
             .Where(game =>
                 string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
@@ -1770,7 +1838,7 @@ public sealed class FranchiseSession
 
     private List<ScheduleImportDto> GetRemainingScheduledGamesForDate(DateTime date)
     {
-        return _leagueData.Schedule
+        return GetActiveSchedule()
             .Where(game =>
                 !IsScheduledGameCompleted(game) &&
                 game.Date.Date == date.Date)
@@ -1779,9 +1847,33 @@ public sealed class FranchiseSession
             .ToList();
     }
 
+    private List<ScheduleImportDto> GetActiveSchedule()
+    {
+        EnsureSeasonYearInitialized();
+        var yearOffset = _saveState.CurrentSeasonYear - GetBaseScheduleYear();
+        return _leagueData.Schedule
+            .Select(game => new ScheduleImportDto
+            {
+                Date = game.Date.AddYears(yearOffset),
+                HomeTeamName = game.HomeTeamName,
+                AwayTeamName = game.AwayTeamName,
+                GameNumber = game.GameNumber,
+                Venue = game.Venue
+            })
+            .OrderBy(game => game.Date)
+            .ThenBy(game => game.GameNumber ?? 1)
+            .ThenBy(game => game.HomeTeamName)
+            .ToList();
+    }
+
     public bool SimulateCurrentDay(out string statusMessage)
     {
         return SimulateCurrentDayInternal(saveAfterAdvance: true, out statusMessage);
+    }
+
+    public bool CanSimulateCurrentDay()
+    {
+        return SelectedTeam != null && !CanAdvanceToNextSeason();
     }
 
     public bool SimulateToEndOfSeason(out string statusMessage)
@@ -1861,11 +1953,300 @@ public sealed class FranchiseSession
         return true;
     }
 
+    private void RunOffseasonSimulation(out OffseasonSummaryState offseasonSummary)
+    {
+        var completedSeasonYear = GetCurrentSeasonYear();
+        var selectedTeamName = SelectedTeam?.Name ?? string.Empty;
+        offseasonSummary = new OffseasonSummaryState
+        {
+            CompletedSeasonYear = completedSeasonYear,
+            NewSeasonYear = completedSeasonYear + 1
+        };
+
+        _saveState.PreviousSeasonStats = CloneSeasonStatsMap(_saveState.PlayerSeasonStats);
+
+        var expiringContracts = ExpirePlayerContracts();
+        offseasonSummary.ExpiringContracts = expiringContracts.Count;
+        ExpireCoachContracts();
+
+        offseasonSummary.ExtensionsCompleted = RunExtensionNegotiations(
+            selectedTeamName,
+            offseasonSummary.SelectedTeamContractDecisions,
+            out var extensionOffers);
+        offseasonSummary.ExtensionOffers = extensionOffers;
+
+        var unsignedFreeAgents = new HashSet<Guid>();
+
+        foreach (var expiringContract in expiringContracts
+                     .OrderBy(contract => contract.TeamName)
+                     .ThenBy(contract => contract.Player.FullName))
+        {
+            var evaluation = EvaluateContractForTeam(expiringContract.Player, expiringContract.TeamName, expiringContract.AnnualSalary);
+            offseasonSummary.LeagueOfferCount++;
+
+            if (evaluation.Accepted)
+            {
+                SignPlayerToTeam(expiringContract.Player, expiringContract.TeamName, evaluation.AgreedAnnualSalary, evaluation.AgreedYears);
+                AddTransferRecord(expiringContract.TeamName, $"Re-signed {expiringContract.Player.FullName} for {GetBudgetDisplay(evaluation.AgreedAnnualSalary)} over {evaluation.AgreedYears} year(s).");
+                offseasonSummary.FreeAgentsSigned++;
+
+                if (string.Equals(expiringContract.TeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+                {
+                    offseasonSummary.SelectedTeamContractDecisions.Add(BuildContractDecision(expiringContract.Player.FullName, expiringContract.TeamName, "Re-signed", evaluation));
+                }
+
+                continue;
+            }
+
+            _saveState.PlayerAssignments[expiringContract.Player.PlayerId] = FreeAgentTeamName;
+            unsignedFreeAgents.Add(expiringContract.Player.PlayerId);
+
+            if (string.Equals(expiringContract.TeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+            {
+                offseasonSummary.SelectedTeamContractDecisions.Add(BuildContractDecision(expiringContract.Player.FullName, expiringContract.TeamName, "Walked to free agency", evaluation));
+            }
+        }
+
+        var leagueOfferCount = offseasonSummary.LeagueOfferCount;
+        offseasonSummary.FreeAgentsSigned += RunFreeAgency(unsignedFreeAgents, selectedTeamName, offseasonSummary.SelectedTeamContractDecisions, ref leagueOfferCount);
+        offseasonSummary.LeagueOfferCount = leagueOfferCount;
+        offseasonSummary.TradesCompleted = RunOffseasonTrades(selectedTeamName, offseasonSummary.SelectedTeamTradeDecisions, offseasonSummary.LeagueNotes);
+
+        AdvanceSeasonBoundary(completedSeasonYear + 1);
+        var selectedTeamSummary = offseasonSummary.SelectedTeamContractDecisions.Count == 0 && offseasonSummary.SelectedTeamTradeDecisions.Count == 0
+            ? "Your club stood pat through the offseason."
+            : $"Your club logged {offseasonSummary.SelectedTeamContractDecisions.Count} contract decision(s) and {offseasonSummary.SelectedTeamTradeDecisions.Count} trade move(s).";
+        offseasonSummary.Overview = $"Advanced from {completedSeasonYear} to {offseasonSummary.NewSeasonYear}. {offseasonSummary.ExpiringContracts} contract(s) expired, {offseasonSummary.ExtensionOffers} extension offer(s) went out with {offseasonSummary.ExtensionsCompleted} completed, {offseasonSummary.FreeAgentsSigned} free-agent signing(s) were completed, and {offseasonSummary.TradesCompleted} trade(s) landed across the league. {selectedTeamSummary}";
+    }
+
+    private List<ExpiringPlayerContract> ExpirePlayerContracts()
+    {
+        var expiringContracts = new List<ExpiringPlayerContract>();
+
+        foreach (var team in _leagueData.Teams)
+        {
+            var economy = GetOrCreateTeamState(team.Name).Economy;
+            var activeContracts = new List<BaseballManager.Core.Economy.Contract>();
+            foreach (var contract in economy.PlayerContracts)
+            {
+                contract.YearsRemaining = Math.Max(0, contract.YearsRemaining - 1);
+                if (contract.YearsRemaining > 0)
+                {
+                    activeContracts.Add(contract);
+                    continue;
+                }
+
+                var player = FindPlayerImport(contract.SubjectId);
+                if (player != null)
+                {
+                    expiringContracts.Add(new ExpiringPlayerContract(team.Name, player, contract.AnnualSalary));
+                }
+            }
+
+            economy.PlayerContracts = activeContracts;
+            economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(economy);
+        }
+
+        return expiringContracts;
+    }
+
+    private void ExpireCoachContracts()
+    {
+        foreach (var team in _leagueData.Teams)
+        {
+            var economy = GetOrCreateTeamState(team.Name).Economy;
+            foreach (var contract in economy.CoachContracts)
+            {
+                contract.YearsRemaining = Math.Max(0, contract.YearsRemaining - 1);
+            }
+
+            economy.CoachContracts.RemoveAll(contract => contract.YearsRemaining <= 0);
+            economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(economy);
+        }
+    }
+
+    private int RunFreeAgency(HashSet<Guid> freeAgentIds, string selectedTeamName, List<OffseasonContractDecisionState> selectedTeamDecisions, ref int leagueOfferCount)
+    {
+        var signings = 0;
+        var freeAgents = freeAgentIds
+            .Select(FindPlayerImport)
+            .Where(player => player != null)
+            .Select(player => player!)
+            .OrderByDescending(GetOffseasonMarketScore)
+            .ThenBy(player => player.FullName)
+            .ToList();
+
+        foreach (var player in freeAgents)
+        {
+            FreeAgentOfferChoice? bestOffer = null;
+
+            foreach (var team in _leagueData.Teams)
+            {
+                if (GetTeamRosterCount(team.Name) >= MaxRosterSize)
+                {
+                    continue;
+                }
+
+                var evaluation = EvaluateContractForTeam(player, team.Name, EstimatePlayerSalary(player));
+                leagueOfferCount++;
+                if (!evaluation.Accepted)
+                {
+                    continue;
+                }
+
+                var score = evaluation.AgreedAnnualSalary + (evaluation.AgreedYears * 250_000m) + (GetTeamNeedScore(team.Name, player.PrimaryPosition) * 100_000m);
+                if (bestOffer == null || score > bestOffer.Value.Score)
+                {
+                    bestOffer = new FreeAgentOfferChoice(team.Name, evaluation, score);
+                }
+            }
+
+            if (bestOffer == null)
+            {
+                _saveState.PlayerAssignments[player.PlayerId] = FreeAgentTeamName;
+                continue;
+            }
+
+            var acceptedOffer = bestOffer.Value;
+            SignPlayerToTeam(player, acceptedOffer.TeamName, acceptedOffer.Evaluation.AgreedAnnualSalary, acceptedOffer.Evaluation.AgreedYears);
+            AddTransferRecord(acceptedOffer.TeamName, $"Signed free agent {player.FullName} for {GetBudgetDisplay(acceptedOffer.Evaluation.AgreedAnnualSalary)} over {acceptedOffer.Evaluation.AgreedYears} year(s).");
+            signings++;
+
+            if (string.Equals(acceptedOffer.TeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+            {
+                selectedTeamDecisions.Add(BuildContractDecision(player.FullName, acceptedOffer.TeamName, "Signed free agent", acceptedOffer.Evaluation));
+            }
+        }
+
+        return signings;
+    }
+
+    private int RunExtensionNegotiations(string selectedTeamName, List<OffseasonContractDecisionState> selectedTeamDecisions, out int extensionOffers)
+    {
+        extensionOffers = 0;
+        var completedExtensions = 0;
+
+        foreach (var team in _leagueData.Teams)
+        {
+            var economy = GetOrCreateTeamState(team.Name).Economy;
+            foreach (var contract in economy.PlayerContracts
+                         .Where(contract => contract.YearsRemaining == 1)
+                         .OrderByDescending(contract => contract.AnnualSalary)
+                         .ToList())
+            {
+                var player = FindPlayerImport(contract.SubjectId);
+                if (player == null)
+                {
+                    continue;
+                }
+
+                extensionOffers++;
+                var evaluation = EvaluateContractForTeam(player, team.Name, contract.AnnualSalary);
+                var wantsExtension = evaluation.PlayerExpectation.Years >= 2 || evaluation.PlayerExpectation.AnnualSalary >= contract.AnnualSalary * 1.05m;
+                if (!wantsExtension)
+                {
+                    continue;
+                }
+
+                var agreedYears = Math.Max(contract.YearsRemaining + 1, evaluation.AgreedYears + 1);
+                var canAffordExtension = GetTransferBudget(team.Name) >= Math.Max(0m, evaluation.TeamExpectation.AnnualSalary - contract.AnnualSalary);
+                if (evaluation.Accepted && canAffordExtension)
+                {
+                    _signPlayerContractUseCase.Execute(economy, player.PlayerId, player.FullName, evaluation.AgreedAnnualSalary, agreedYears, GetCurrentFranchiseDate());
+                    AddTransferRecord(team.Name, $"Extended {player.FullName} for {GetBudgetDisplay(evaluation.AgreedAnnualSalary)} with {agreedYears} year(s) remaining.");
+                    completedExtensions++;
+
+                    if (string.Equals(team.Name, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        selectedTeamDecisions.Add(BuildContractDecision(player.FullName, team.Name, "Extended", evaluation));
+                    }
+                }
+                else if (string.Equals(team.Name, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+                {
+                    selectedTeamDecisions.Add(BuildContractDecision(player.FullName, team.Name, "Extension talks stalled", evaluation));
+                }
+            }
+        }
+
+        return completedExtensions;
+    }
+
+    private int RunOffseasonTrades(string selectedTeamName, List<OffseasonTradeDecisionState> selectedTeamTradeDecisions, List<string> leagueNotes)
+    {
+        var tradeCount = 0;
+        var lockedTeams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var buyingTeam in _leagueData.Teams.OrderBy(team => team.Name))
+        {
+            if (lockedTeams.Contains(buyingTeam.Name))
+            {
+                continue;
+            }
+
+            if (!TryExecuteOffseasonTrade(buyingTeam.Name, lockedTeams, out var tradeOutcome))
+            {
+                continue;
+            }
+
+            tradeCount++;
+            leagueNotes.Add(tradeOutcome.Description);
+            if (string.Equals(tradeOutcome.FromTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(tradeOutcome.ToTeamName, selectedTeamName, StringComparison.OrdinalIgnoreCase))
+            {
+                selectedTeamTradeDecisions.Add(new OffseasonTradeDecisionState
+                {
+                    TeamName = selectedTeamName,
+                    Description = tradeOutcome.Description
+                });
+            }
+        }
+
+        return tradeCount;
+    }
+
+    private void AdvanceSeasonBoundary(int newSeasonYear)
+    {
+        ApplyOffseasonAging();
+        ResetHealthForNewSeason();
+        _saveState.CurrentSeasonYear = newSeasonYear;
+        _saveState.CurrentFranchiseDate = GetFranchiseStartDate().Date;
+        _saveState.CompletedScheduleGameKeys.Clear();
+        _saveState.CompletedScheduleGameResults.Clear();
+        _saveState.CompletedGameBoxScores.Clear();
+        _saveState.CurrentViewedBoxScoreGameKey = null;
+        _saveState.LastCompletedLiveMatch = null;
+        _saveState.CurrentLiveMatch = null;
+        _saveState.QuickMatchLiveMatch = null;
+        _saveState.PlayerSeasonStats = new Dictionary<Guid, PlayerSeasonStatsState>();
+        _saveState.PlayerRecentGameStats = new Dictionary<Guid, List<PlayerRecentGameStatState>>();
+        _saveState.PlayerRecentTrackingTotals = new Dictionary<Guid, PlayerRecentTotalsState>();
+        _lastSeasonStatsCache.Clear();
+
+        foreach (var team in _leagueData.Teams)
+        {
+            var teamState = GetOrCreateTeamState(team.Name);
+            teamState.CurrentLiveMatch = null;
+            teamState.TrainingReports.Clear();
+            InitializeLineupSlots(teamState, team.Name);
+            InitializeRotationSlots(teamState, team.Name);
+            EnsureTeamEconomyInitialized(teamState, team.Name);
+        }
+
+        EnsurePlayerSeasonStatsGenerated();
+        EnsureRecentGameTrackingGenerated();
+    }
+
     private bool SimulateCurrentDayInternal(bool saveAfterAdvance, out string statusMessage)
     {
         if (SelectedTeam == null)
         {
             statusMessage = "Select a team before simulating the day.";
+            return false;
+        }
+
+        if (CanAdvanceToNextSeason())
+        {
+            statusMessage = $"The {GetCurrentSeasonYear()} regular season is complete. Use Next Season to move into the offseason.";
             return false;
         }
 
@@ -2513,7 +2894,7 @@ public sealed class FranchiseSession
 
     private ScheduleImportDto? ResolveCompletedScheduledGame(MatchState finalState)
     {
-        return _leagueData.Schedule
+        return GetActiveSchedule()
             .Where(game =>
                 string.Equals(game.AwayTeamName, finalState.AwayTeam.Name, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(game.HomeTeamName, finalState.HomeTeam.Name, StringComparison.OrdinalIgnoreCase) &&
@@ -2705,6 +3086,8 @@ public sealed class FranchiseSession
         PendingLiveMatchMode = LiveMatchMode.QuickMatch;
         _saveState.CurrentLiveMatch = null;
         _saveState.LastCompletedLiveMatch = null;
+        _saveState.LastOffseasonSummary = null;
+        _saveState.CurrentSeasonYear = 0;
         _saveState.CurrentFranchiseDate = DateTime.Today;
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
@@ -2729,11 +3112,15 @@ public sealed class FranchiseSession
         _saveState.CurrentLiveMatch = null;
         _saveState.QuickMatchLiveMatch = null;
         _saveState.LastCompletedLiveMatch = null;
+        _saveState.LastOffseasonSummary = null;
+        _saveState.CurrentSeasonYear = 0;
         _saveState.PlayerRatings.Clear();
         _saveState.PlayerSeasonStats.Clear();
+        _saveState.PreviousSeasonStats.Clear();
         _saveState.PlayerRecentGameStats.Clear();
         _saveState.PlayerRecentTrackingTotals.Clear();
         _saveState.PlayerHealth.Clear();
+        _saveState.PlayerAges.Clear();
         _saveState.PlayerAssignments.Clear();
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
@@ -4374,11 +4761,60 @@ public sealed class FranchiseSession
         _saveState.CurrentFranchiseDate = GetFranchiseStartDate().Date;
     }
 
+    private void EnsureSeasonYearInitialized()
+    {
+        if (_saveState.CurrentSeasonYear > 0)
+        {
+            return;
+        }
+
+        _saveState.CurrentSeasonYear = GetBaseScheduleYear();
+    }
+
+    private void SyncPlayerAgesFromSave()
+    {
+        foreach (var player in _leagueData.Players)
+        {
+            if (_saveState.PlayerAges.TryGetValue(player.PlayerId, out var savedAge) && savedAge > 0)
+            {
+                player.Age = savedAge;
+            }
+        }
+    }
+
+    private bool EnsurePlayerAgesGenerated()
+    {
+        var hasChanges = false;
+
+        foreach (var player in _leagueData.Players)
+        {
+            if (_saveState.PlayerAges.TryGetValue(player.PlayerId, out var savedAge) && savedAge > 0)
+            {
+                if (player.Age != savedAge)
+                {
+                    player.Age = savedAge;
+                }
+
+                continue;
+            }
+
+            _saveState.PlayerAges[player.PlayerId] = player.Age;
+            hasChanges = true;
+        }
+
+        return hasChanges;
+    }
+
+    private int GetBaseScheduleYear()
+    {
+        return _leagueData.Schedule.FirstOrDefault()?.Date.Year ?? DateTime.Today.Year;
+    }
+
     private List<ScheduleImportDto> GetSeasonSchedule()
     {
         var query = SelectedTeam == null
-            ? _leagueData.Schedule.AsEnumerable()
-            : _leagueData.Schedule.Where(game =>
+            ? GetActiveSchedule().AsEnumerable()
+            : GetActiveSchedule().Where(game =>
                 string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase));
 
@@ -4390,7 +4826,8 @@ public sealed class FranchiseSession
 
     private int GetSeasonScheduleYear()
     {
-        return GetSeasonSchedule().FirstOrDefault()?.Date.Year ?? DateTime.Today.Year;
+        EnsureSeasonYearInitialized();
+        return _saveState.CurrentSeasonYear;
     }
 
     private DateTime GetFranchiseStartDate()
@@ -4409,7 +4846,8 @@ public sealed class FranchiseSession
         var teamName = SelectedTeam.Name;
         var today = _saveState.CurrentFranchiseDate.Date;
 
-        var next = _leagueData.Schedule
+        var activeSchedule = GetActiveSchedule();
+        var next = activeSchedule
             .Where(game =>
                 (string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase)) &&
@@ -4424,7 +4862,7 @@ public sealed class FranchiseSession
             return next;
         }
 
-        return _leagueData.Schedule
+        return activeSchedule
             .Where(game =>
                 (string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase)) &&
@@ -4861,7 +5299,7 @@ public sealed class FranchiseSession
             !string.Equals(gameToMark.AwayTeamName, finalState.AwayTeam.Name, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(gameToMark.HomeTeamName, finalState.HomeTeam.Name, StringComparison.OrdinalIgnoreCase))
         {
-            gameToMark = _leagueData.Schedule
+            gameToMark = GetActiveSchedule()
                 .Where(game =>
                     !IsScheduledGameCompleted(game) &&
                     string.Equals(game.AwayTeamName, finalState.AwayTeam.Name, StringComparison.OrdinalIgnoreCase) &&
@@ -5218,7 +5656,7 @@ public sealed class FranchiseSession
             return false;
         }
 
-        var teamGames = _leagueData.Schedule
+        var teamGames = GetActiveSchedule()
             .Where(game =>
                 string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase))
@@ -5701,7 +6139,7 @@ public sealed class FranchiseSession
             return 0;
         }
 
-        var completedGames = _leagueData.Schedule.Count(game =>
+        var completedGames = GetActiveSchedule().Count(game =>
             IsScheduledGameCompleted(game) &&
             (string.Equals(game.HomeTeamName, teamName, StringComparison.OrdinalIgnoreCase) ||
              string.Equals(game.AwayTeamName, teamName, StringComparison.OrdinalIgnoreCase)));
@@ -5831,7 +6269,7 @@ public sealed class FranchiseSession
             return;
         }
 
-        var teamSchedule = _leagueData.Schedule
+        var teamSchedule = GetActiveSchedule()
             .Where(game =>
                 string.Equals(game.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(game.AwayTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
@@ -5942,6 +6380,273 @@ public sealed class FranchiseSession
         toEconomy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(toEconomy);
     }
 
+    private OffseasonContractEvaluation EvaluateContractForTeam(PlayerImportDto player, string teamName, decimal currentAnnualSalary)
+    {
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var currentStats = _saveState.PreviousSeasonStats.TryGetValue(player.PlayerId, out var previousSeasonStats)
+            ? previousSeasonStats
+            : GetPlayerSeasonStats(player.PlayerId);
+
+        return _offseasonContractEvaluator.Evaluate(new OffseasonContractContext(
+            player.PrimaryPosition is "SP" or "RP",
+            player.Age,
+            ratings.OverallRating,
+            GetTeamNeedScore(teamName, player.PrimaryPosition),
+            GetTransferBudget(teamName),
+            currentAnnualSalary,
+            BuildPerformanceSnapshot(currentStats)));
+    }
+
+    private static OffseasonPerformanceSnapshot BuildPerformanceSnapshot(PlayerSeasonStatsState stats)
+    {
+        return new OffseasonPerformanceSnapshot(
+            stats.PlateAppearances,
+            stats.AtBats,
+            stats.Hits,
+            stats.Doubles,
+            stats.Triples,
+            stats.HomeRuns,
+            stats.Walks,
+            stats.RunsScored,
+            stats.RunsBattedIn,
+            stats.InningsPitchedOuts,
+            stats.EarnedRuns,
+            stats.StrikeoutsPitched,
+            stats.Wins,
+            stats.Losses);
+    }
+
+    private static OffseasonContractDecisionState BuildContractDecision(string playerName, string teamName, string outcome, OffseasonContractEvaluation evaluation)
+    {
+        return new OffseasonContractDecisionState
+        {
+            PlayerName = playerName,
+            TeamName = teamName,
+            Outcome = outcome,
+            PlayerExpectedSalary = evaluation.PlayerExpectation.AnnualSalary,
+            PlayerExpectedYears = evaluation.PlayerExpectation.Years,
+            TeamExpectedSalary = evaluation.TeamExpectation.AnnualSalary,
+            TeamExpectedYears = evaluation.TeamExpectation.Years,
+            AgreedSalary = evaluation.AgreedAnnualSalary,
+            AgreedYears = evaluation.AgreedYears
+        };
+    }
+
+    private void SignPlayerToTeam(PlayerImportDto player, string teamName, decimal annualSalary, int years)
+    {
+        _saveState.PlayerAssignments[player.PlayerId] = teamName;
+        var teamState = GetOrCreateTeamState(teamName);
+        _signPlayerContractUseCase.Execute(teamState.Economy, player.PlayerId, player.FullName, annualSalary, years, GetCurrentFranchiseDate());
+        InitializeLineupSlots(teamState, teamName);
+        InitializeRotationSlots(teamState, teamName);
+    }
+
+    private decimal GetTransferBudget(string teamName)
+    {
+        if (string.IsNullOrWhiteSpace(teamName))
+        {
+            return 0m;
+        }
+
+        var economy = GetOrCreateTeamState(teamName).Economy;
+        return Math.Max(0m, decimal.Round(economy.CashOnHand - (economy.PlayerPayroll + economy.CoachPayroll), 2));
+    }
+
+    private decimal GetOffseasonMarketScore(PlayerImportDto player)
+    {
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var stats = _saveState.PreviousSeasonStats.TryGetValue(player.PlayerId, out var previous) ? previous : GetPlayerSeasonStats(player.PlayerId);
+        var evaluation = _offseasonContractEvaluator.Evaluate(new OffseasonContractContext(
+            player.PrimaryPosition is "SP" or "RP",
+            player.Age,
+            ratings.OverallRating,
+            2,
+            30_000_000m,
+            EstimatePlayerSalary(player),
+            BuildPerformanceSnapshot(stats)));
+
+        return evaluation.AgreedAnnualSalary + (ratings.OverallRating * 100_000m);
+    }
+
+    private bool TryExecuteOffseasonTrade(string teamName, HashSet<string> lockedTeams, out OffseasonTradeOutcome tradeOutcome)
+    {
+        tradeOutcome = default;
+        var neededPosition = GetMostNeededPosition(teamName);
+        if (string.IsNullOrWhiteSpace(neededPosition))
+        {
+            return false;
+        }
+
+        var buyingRoster = GetTeamRoster(teamName);
+        foreach (var tradePartner in _leagueData.Teams.OrderBy(team => team.Name))
+        {
+            if (string.Equals(tradePartner.Name, teamName, StringComparison.OrdinalIgnoreCase) || lockedTeams.Contains(tradePartner.Name))
+            {
+                continue;
+            }
+
+            var partnerRoster = GetTeamRoster(tradePartner.Name);
+            var target = partnerRoster
+                .Where(player => string.Equals(NormalizeRosterPosition(player.PrimaryPosition), neededPosition, StringComparison.OrdinalIgnoreCase) && GetTeamPositionSurplus(tradePartner.Name, player.PrimaryPosition) > 0)
+                .OrderByDescending(GetRosterPlayerOverall)
+                .FirstOrDefault();
+            if (target == null)
+            {
+                continue;
+            }
+
+            var outgoing = buyingRoster
+                .Where(player =>
+                    player.PlayerId != target.PlayerId &&
+                    GetTeamPositionSurplus(teamName, player.PrimaryPosition) > 0 &&
+                    GetTeamNeedScore(tradePartner.Name, player.PrimaryPosition) >= 1)
+                .OrderBy(player => Math.Abs(GetRosterPlayerOverall(player) - GetRosterPlayerOverall(target)))
+                .ThenByDescending(GetRosterPlayerOverall)
+                .FirstOrDefault();
+            outgoing ??= buyingRoster
+                .Where(player =>
+                    player.PlayerId != target.PlayerId &&
+                    GetTeamPositionSurplus(teamName, player.PrimaryPosition) >= 0)
+                .OrderBy(player => Math.Abs(GetRosterPlayerOverall(player) - GetRosterPlayerOverall(target)))
+                .ThenBy(player => player.Age)
+                .FirstOrDefault();
+            if (outgoing == null)
+            {
+                continue;
+            }
+
+            if (Math.Abs(GetRosterPlayerOverall(target) - GetRosterPlayerOverall(outgoing)) > 20)
+            {
+                continue;
+            }
+
+            _saveState.PlayerAssignments[target.PlayerId] = teamName;
+            _saveState.PlayerAssignments[outgoing.PlayerId] = tradePartner.Name;
+
+            var buyerEconomy = GetOrCreateTeamState(teamName).Economy;
+            var partnerEconomy = GetOrCreateTeamState(tradePartner.Name).Economy;
+            MovePlayerContract(target.PlayerId, partnerEconomy, buyerEconomy, target.PlayerName);
+            MovePlayerContract(outgoing.PlayerId, buyerEconomy, partnerEconomy, outgoing.PlayerName);
+
+            InitializeLineupSlots(GetOrCreateTeamState(teamName), teamName);
+            InitializeRotationSlots(GetOrCreateTeamState(teamName), teamName);
+            InitializeLineupSlots(GetOrCreateTeamState(tradePartner.Name), tradePartner.Name);
+            InitializeRotationSlots(GetOrCreateTeamState(tradePartner.Name), tradePartner.Name);
+
+            var description = $"{teamName} swapped {outgoing.PlayerName} for {target.PlayerName} with {tradePartner.Name}.";
+            AddTransferRecord(teamName, $"Offseason trade: acquired {target.PlayerName} from {tradePartner.Name} for {outgoing.PlayerName}.");
+            AddTransferRecord(tradePartner.Name, $"Offseason trade: sent {target.PlayerName} to {teamName} for {outgoing.PlayerName}.");
+            lockedTeams.Add(teamName);
+            lockedTeams.Add(tradePartner.Name);
+            tradeOutcome = new OffseasonTradeOutcome(teamName, tradePartner.Name, description);
+            return true;
+        }
+
+        return false;
+    }
+
+    private string GetMostNeededPosition(string teamName)
+    {
+        var positions = new[] { "C", "1B", "2B", "3B", "SS", "OF", "SP", "RP" };
+        return positions
+            .Select(position => new
+            {
+                Position = position,
+                Need = GetTeamNeedScore(teamName, position),
+                Quality = GetTeamAverageOverallAtPosition(teamName, position)
+            })
+            .OrderByDescending(entry => entry.Need)
+            .ThenBy(entry => entry.Quality)
+            .Select(entry => entry.Position)
+            .FirstOrDefault() ?? string.Empty;
+    }
+
+    private int GetTeamPositionSurplus(string teamName, string position)
+    {
+        var normalizedPosition = NormalizeRosterPosition(position);
+        var countAtPosition = GetTeamRoster(teamName).Count(player => string.Equals(NormalizeRosterPosition(player.PrimaryPosition), normalizedPosition, StringComparison.OrdinalIgnoreCase));
+        return countAtPosition - GetTargetDepth(normalizedPosition);
+    }
+
+    private int GetTeamNeedScore(string teamName, string position)
+    {
+        var normalizedPosition = NormalizeRosterPosition(position);
+        var countAtPosition = GetTeamRoster(teamName).Count(player => string.Equals(NormalizeRosterPosition(player.PrimaryPosition), normalizedPosition, StringComparison.OrdinalIgnoreCase));
+        return Math.Clamp(GetTargetDepth(normalizedPosition) - countAtPosition + 2, 0, 4);
+    }
+
+    private int GetTeamAverageOverallAtPosition(string teamName, string position)
+    {
+        var players = GetTeamRoster(teamName)
+            .Where(player => string.Equals(NormalizeRosterPosition(player.PrimaryPosition), NormalizeRosterPosition(position), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (players.Count == 0)
+        {
+            return 0;
+        }
+
+        return (int)Math.Round(players.Average(GetRosterPlayerOverall), MidpointRounding.AwayFromZero);
+    }
+
+    private int GetRosterPlayerOverall(FranchiseRosterEntry player)
+    {
+        return GetPlayerRatings(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age).OverallRating;
+    }
+
+    private void ApplyOffseasonAging()
+    {
+        foreach (var player in _leagueData.Players)
+        {
+            player.Age = Math.Clamp(player.Age + 1, 17, 45);
+            _saveState.PlayerAges[player.PlayerId] = player.Age;
+        }
+    }
+
+    private void ResetHealthForNewSeason()
+    {
+        foreach (var health in _saveState.PlayerHealth.Values)
+        {
+            health.Fatigue = 0;
+            health.PitchCountToday = 0;
+            health.LastPitchCount = 0;
+            health.DaysUntilAvailable = 0;
+            health.InjuryDaysRemaining = 0;
+            health.InjuryDescription = string.Empty;
+        }
+    }
+
+    private static Dictionary<Guid, PlayerSeasonStatsState> CloneSeasonStatsMap(Dictionary<Guid, PlayerSeasonStatsState> source)
+    {
+        return source.ToDictionary(entry => entry.Key, entry => CloneSeasonStats(entry.Value));
+    }
+
+    private static PlayerSeasonStatsState CloneSeasonStats(PlayerSeasonStatsState stats)
+    {
+        return new PlayerSeasonStatsState
+        {
+            GamesPlayed = stats.GamesPlayed,
+            PlateAppearances = stats.PlateAppearances,
+            RunsScored = stats.RunsScored,
+            AtBats = stats.AtBats,
+            Hits = stats.Hits,
+            Doubles = stats.Doubles,
+            Triples = stats.Triples,
+            HomeRuns = stats.HomeRuns,
+            RunsBattedIn = stats.RunsBattedIn,
+            Walks = stats.Walks,
+            Strikeouts = stats.Strikeouts,
+            GamesPitched = stats.GamesPitched,
+            InningsPitchedOuts = stats.InningsPitchedOuts,
+            HitsAllowed = stats.HitsAllowed,
+            RunsAllowed = stats.RunsAllowed,
+            EarnedRuns = stats.EarnedRuns,
+            WalksAllowed = stats.WalksAllowed,
+            StrikeoutsPitched = stats.StrikeoutsPitched,
+            Wins = stats.Wins,
+            Losses = stats.Losses
+        };
+    }
+
     private void ApplyTradeFanInterestShift(TeamEconomy economy, PlayerImportDto incomingPlayer, PlayerImportDto outgoingPlayer)
     {
         var incomingOverall = GetPlayerRatings(incomingPlayer.PlayerId, incomingPlayer.FullName, incomingPlayer.PrimaryPosition, incomingPlayer.SecondaryPosition, incomingPlayer.Age).OverallRating;
@@ -5999,6 +6704,12 @@ public sealed class FranchiseSession
     {
         _stateStore.Save(_saveState);
     }
+
+    private readonly record struct ExpiringPlayerContract(string TeamName, PlayerImportDto Player, decimal AnnualSalary);
+
+    private readonly record struct FreeAgentOfferChoice(string TeamName, OffseasonContractEvaluation Evaluation, decimal Score);
+
+    private readonly record struct OffseasonTradeOutcome(string ToTeamName, string FromTeamName, string Description);
 
     private readonly record struct PracticeSessionInfo(TeamPracticeFocus Focus, bool IsLightWorkout, bool IsSpringTraining);
 

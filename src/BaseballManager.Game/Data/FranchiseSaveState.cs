@@ -7,6 +7,8 @@ public sealed class FranchiseSaveState
 {
     public string? SelectedTeamName { get; set; }
 
+    public int CurrentSeasonYear { get; set; }
+
     public DateTime CurrentFranchiseDate { get; set; }
 
     public HashSet<string> CompletedScheduleGameKeys { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -23,11 +25,15 @@ public sealed class FranchiseSaveState
 
     public Dictionary<Guid, PlayerSeasonStatsState> PlayerSeasonStats { get; set; } = new();
 
+    public Dictionary<Guid, PlayerSeasonStatsState> PreviousSeasonStats { get; set; } = new();
+
     public Dictionary<Guid, List<PlayerRecentGameStatState>> PlayerRecentGameStats { get; set; } = new();
 
     public Dictionary<Guid, PlayerRecentTotalsState> PlayerRecentTrackingTotals { get; set; } = new();
 
     public Dictionary<Guid, PlayerHealthState> PlayerHealth { get; set; } = new();
+
+    public Dictionary<Guid, int> PlayerAges { get; set; } = new();
 
     public Dictionary<Guid, string> PlayerAssignments { get; set; } = new();
 
@@ -37,7 +43,64 @@ public sealed class FranchiseSaveState
 
     public CompletedLiveMatchSummaryState? LastCompletedLiveMatch { get; set; }
 
+    public OffseasonSummaryState? LastOffseasonSummary { get; set; }
+
     public Dictionary<string, TeamFranchiseState> Teams { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class OffseasonSummaryState
+{
+    public int CompletedSeasonYear { get; set; }
+
+    public int NewSeasonYear { get; set; }
+
+    public int ExpiringContracts { get; set; }
+
+    public int ExtensionOffers { get; set; }
+
+    public int ExtensionsCompleted { get; set; }
+
+    public int FreeAgentsSigned { get; set; }
+
+    public int TradesCompleted { get; set; }
+
+    public int LeagueOfferCount { get; set; }
+
+    public string Overview { get; set; } = string.Empty;
+
+    public List<string> LeagueNotes { get; set; } = new();
+
+    public List<OffseasonContractDecisionState> SelectedTeamContractDecisions { get; set; } = new();
+
+    public List<OffseasonTradeDecisionState> SelectedTeamTradeDecisions { get; set; } = new();
+}
+
+public sealed class OffseasonContractDecisionState
+{
+    public string PlayerName { get; set; } = string.Empty;
+
+    public string TeamName { get; set; } = string.Empty;
+
+    public string Outcome { get; set; } = string.Empty;
+
+    public decimal PlayerExpectedSalary { get; set; }
+
+    public int PlayerExpectedYears { get; set; }
+
+    public decimal TeamExpectedSalary { get; set; }
+
+    public int TeamExpectedYears { get; set; }
+
+    public decimal AgreedSalary { get; set; }
+
+    public int AgreedYears { get; set; }
+}
+
+public sealed class OffseasonTradeDecisionState
+{
+    public string TeamName { get; set; } = string.Empty;
+
+    public string Description { get; set; } = string.Empty;
 }
 
 public sealed class CompletedLiveMatchSummaryState

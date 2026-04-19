@@ -42,7 +42,8 @@ public sealed class FinancesScreen : GameScreen
     {
         _ignoreClicksUntilRelease = true;
         _selectedHistoryIndex = 0;
-        _statusMessage = "Budget choices shape scouting accuracy, player development, and recovery over the full season.";
+        var offseasonSummary = _franchiseSession.GetLastOffseasonSummary();
+        _statusMessage = offseasonSummary?.Overview ?? "Budget choices shape scouting accuracy, player development, and recovery over the full season.";
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -86,7 +87,7 @@ public sealed class FinancesScreen : GameScreen
         var mousePosition = Mouse.GetState().Position;
 
         uiRenderer.DrawText("Team Finances", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawTextInBounds($"{_franchiseSession.SelectedTeamName} | Market: {economy.MarketSize} | Fan Interest: {economy.FanInterest}/100", new Rectangle(168, 82, Math.Max(420, _viewport.X - 220), 20), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"{_franchiseSession.SelectedTeamName} | Season: {_franchiseSession.GetCurrentSeasonYear()} | Market: {economy.MarketSize} | Fan Interest: {economy.FanInterest}/100", new Rectangle(168, 82, Math.Max(420, _viewport.X - 220), 20), Color.Gold, uiRenderer.UiSmallFont);
         uiRenderer.DrawWrappedTextInBounds("Revenue rises with wins and turnout. Monthly budget choices now feed into scouting, development, and medical quality.", new Rectangle(48, 112, Math.Max(620, _viewport.X - 96), 40), Color.White, uiRenderer.UiSmallFont, 2);
 
         var summaryBounds = GetSummaryPanelBounds();

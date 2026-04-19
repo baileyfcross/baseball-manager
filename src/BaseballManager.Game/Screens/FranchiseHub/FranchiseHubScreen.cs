@@ -42,6 +42,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _buttons.Add(new ButtonControl { Label = "Game Day", OnClick = () => StartLiveMatch() });
         _buttons.Add(new ButtonControl { Label = "Sim Day", OnClick = () => SimDay() });
         _buttons.Add(new ButtonControl { Label = "Sim Next Game", OnClick = () => SimNextGame() });
+        _buttons.Add(new ButtonControl { Label = "Next Season", OnClick = () => AdvanceToNextSeason() });
         _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
         _buttons.Add(new ButtonControl { Label = "Training Reports", OnClick = () => _screenManager.TransitionTo(nameof(TrainingReportsScreen)) });
         _buttons.Add(new ButtonControl { Label = "Standings", OnClick = () => _screenManager.TransitionTo(nameof(StandingsScreen)) });
@@ -133,7 +134,7 @@ public sealed class FranchiseHubScreen : GameScreen
             var mousePos = currentMouseState.Position;
             for (int i = 0; i < _buttons.Count; i++)
             {
-                if (GetButtonBounds(i, _viewport.X, _viewport.Y).Contains(mousePos))
+                if (GetButtonBounds(i, _viewport.X, _viewport.Y).Contains(mousePos) && IsButtonEnabled(_buttons[i]))
                 {
                     _buttons[i].Click();
                 }
@@ -173,10 +174,14 @@ public sealed class FranchiseHubScreen : GameScreen
         {
             var button = _buttons[i];
             var bounds = GetButtonBounds(i, _viewport.X, _viewport.Y);
+            var isEnabled = IsButtonEnabled(button);
             var isHovered = bounds.Contains(Mouse.GetState().Position);
-            var bgColor = isHovered ? Color.DarkGray : Color.Gray;
+            var bgColor = !isEnabled
+                ? new Color(76, 76, 76)
+                : isHovered ? Color.DarkGray : Color.Gray;
+            var textColor = isEnabled ? Color.White : new Color(188, 188, 188);
 
-            uiRenderer.DrawButton(button.Label, bounds, bgColor, Color.White);
+            uiRenderer.DrawButton(button.Label, bounds, bgColor, textColor);
         }
 
         var statusBounds = new Rectangle(68, _viewport.Y - 138, Math.Max(520, _viewport.X - 136), 102);
@@ -212,18 +217,38 @@ public sealed class FranchiseHubScreen : GameScreen
         _statusMessage = message;
     }
 
+    private void AdvanceToNextSeason()
+    {
+        _franchiseSession.AdvanceToNextSeason(out var message);
+        _statusMessage = message;
+    }
+
+    private bool IsButtonEnabled(ButtonControl button)
+    {
+        return button.Label switch
+        {
+            "Game Day" => _franchiseSession.HasPendingScheduledGame(),
+            "Sim Day" => _franchiseSession.CanSimulateCurrentDay(),
+            "Sim Next Game" => _franchiseSession.HasPendingScheduledGame(),
+            "Next Season" => _franchiseSession.CanAdvanceToNextSeason(),
+            _ => true
+        };
+    }
+
     private string BuildDefaultStatusMessage()
     {
         var nextGame = _franchiseSession.GetNextScheduledGame();
         if (nextGame == null)
         {
-            return "No remaining scheduled games are on the calendar. Use Schedule / Training or roster management to review the completed season state.";
+            return _franchiseSession.CanAdvanceToNextSeason()
+                ? $"The {_franchiseSession.GetCurrentSeasonYear()} regular season is complete. Use Next Season to run league-wide offseason deals, contract offers, and year rollover."
+                : "No remaining scheduled games are on the calendar. Use Schedule / Training or roster management to review the completed season state.";
         }
 
         var venueLabel = string.IsNullOrWhiteSpace(nextGame.Venue)
             ? string.Empty
             : $" at {nextGame.Venue}";
-        return $"Next up: {nextGame.AwayTeamName} at {nextGame.HomeTeamName} on {nextGame.Date:ddd, MMM d}{venueLabel}. Open Game Day to review probable starters or use Sim Day / Sim Next Game to advance.";
+        return $"{_franchiseSession.GetCurrentSeasonYear()} season. Next up: {nextGame.AwayTeamName} at {nextGame.HomeTeamName} on {nextGame.Date:ddd, MMM d}{venueLabel}. Open Game Day to review probable starters or use Sim Day / Sim Next Game to advance.";
     }
 
     private static IEnumerable<string> WrapText(string text, int maxCharacters)
