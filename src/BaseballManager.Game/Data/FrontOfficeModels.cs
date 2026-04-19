@@ -124,6 +124,25 @@ public sealed record OrganizationRosterPlayerView(
     int? LineupSlot,
     int? RotationSlot);
 
+public enum OrganizationRosterCompositionMode
+{
+    FirstTeam,
+    Depth,
+    Affiliate
+}
+
+public sealed record OrganizationRosterCompositionBucketView(
+    string Label,
+    int Count,
+    int? TargetCount);
+
+public sealed record OrganizationRosterCompositionView(
+    string Title,
+    string Summary,
+    int TotalCount,
+    int? TargetCount,
+    IReadOnlyList<OrganizationRosterCompositionBucketView> Buckets);
+
 public sealed record DraftBoardView(
     bool HasActiveDraft,
     bool IsComplete,
@@ -152,6 +171,28 @@ public sealed record TrainingReportView(
     string FocusLabel,
     string Summary,
     IReadOnlyList<string> CoachNotes);
+
+public sealed record DraftClassHistoryPlayerView(
+    Guid PlayerId,
+    string PlayerName,
+    string PrimaryPosition,
+    string SecondaryPosition,
+    int Age,
+    int OverallRating,
+    int PotentialRating,
+    string Source,
+    string AssignmentLabel,
+    bool IsOnFortyMan);
+
+public sealed record DraftClassHistoryView(
+    int SeasonYear,
+    string Title,
+    string Summary,
+    int TotalPlayers,
+    int FortyManCount,
+    int AffiliateCount,
+    int OrganizationCount,
+    IReadOnlyList<DraftClassHistoryPlayerView> Players);
 
 public sealed record RecentPlayerStatsView(
     int SampleGames,

@@ -20,9 +20,9 @@ public sealed class DraftScreen : GameScreen
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
     private readonly ButtonControl _startDraftButton;
-    private readonly ButtonControl _advancePickButton;
-    private readonly ButtonControl _autoPickButton;
-    private readonly ButtonControl _autoDraftButton;
+    private readonly ButtonControl _nextPickButton;
+    private readonly ButtonControl _simRoundButton;
+    private readonly ButtonControl _simDraftButton;
     private readonly ButtonControl _makePickButton;
     private readonly ButtonControl _sortButton;
     private readonly ButtonControl _previousPageButton;
@@ -41,9 +41,9 @@ public sealed class DraftScreen : GameScreen
         _franchiseSession = franchiseSession;
         _backButton = new ButtonControl { Label = "Back", OnClick = () => _screenManager.TransitionTo(nameof(FranchiseHubScreen)) };
         _startDraftButton = new ButtonControl { Label = "Start Draft", OnClick = StartDraft };
-        _autoPickButton = new ButtonControl { Label = "Auto Round Pick", OnClick = AutoPick };
-        _advancePickButton = new ButtonControl { Label = "Auto Round Pick", OnClick = AutoPick };
-        _autoDraftButton = new ButtonControl { Label = "Auto Complete", OnClick = AutoDraft };
+        _nextPickButton = new ButtonControl { Label = "Next Pick", OnClick = AdvanceToNextUserPick };
+        _simRoundButton = new ButtonControl { Label = "Sim Round", OnClick = SimRound };
+        _simDraftButton = new ButtonControl { Label = "Sim Draft", OnClick = SimDraft };
         _makePickButton = new ButtonControl { Label = "Draft Player", OnClick = MakePick };
         _sortButton = new ButtonControl { Label = "Sort: Report", OnClick = CycleSortMode };
         _previousPageButton = new ButtonControl { Label = "Prev", OnClick = () => _pageIndex = Math.Max(0, _pageIndex - 1) };
@@ -56,11 +56,11 @@ public sealed class DraftScreen : GameScreen
         _selectedIndex = 0;
         _pageIndex = 0;
         _statusMessage = _franchiseSession.HasActiveDraft()
-            ? "Review the scout reports, use Auto Round Pick for your current selection, Draft Player to make picks yourself, or Auto Complete if you want to finish the draft manually with one click."
-            : _franchiseSession.GetDraftOrganizationPlayers().Count > 0
-                ? "Review your drafted class here. Use the roster menu to manage 40-man and affiliate assignments before moving on to next season."
+            ? "Review the board, draft manually when you are on the clock, or use Next Pick, Sim Round, and Sim Draft to fast-forward the room."
             : _franchiseSession.CanStartDraft()
                 ? "The season is complete. Start the draft to build your next prospect class."
+            : _franchiseSession.GetDraftOrganizationPlayers().Count > 0
+                ? "Review your drafted classes here. Use the roster menu to manage 40-man and affiliate assignments, then return to this screen when a new draft opens."
                 : _franchiseSession.GetNextSeasonBlockerMessage();
     }
 
@@ -87,17 +87,21 @@ public sealed class DraftScreen : GameScreen
             {
                 _backButton.Click();
             }
-            else if (GetStartDraftButtonBounds().Contains(mousePosition) && hasActiveDraft)
-            {
-                _autoDraftButton.Click();
-            }
-            else if (GetStartDraftButtonBounds().Contains(mousePosition) && !_franchiseSession.HasActiveDraft() && !hasOrganizationPlayers)
+            else if (GetStartDraftButtonBounds().Contains(mousePosition) && !hasActiveDraft && _franchiseSession.CanStartDraft())
             {
                 _startDraftButton.Click();
             }
-            else if (GetAdvancePickButtonBounds().Contains(mousePosition) && _franchiseSession.HasActiveDraft())
+            else if (GetNextPickButtonBounds().Contains(mousePosition) && hasActiveDraft)
             {
-                _autoPickButton.Click();
+                _nextPickButton.Click();
+            }
+            else if (GetSimRoundButtonBounds().Contains(mousePosition) && hasActiveDraft)
+            {
+                _simRoundButton.Click();
+            }
+            else if (GetSimDraftButtonBounds().Contains(mousePosition) && hasActiveDraft)
+            {
+                _simDraftButton.Click();
             }
             else if (GetMakePickButtonBounds().Contains(mousePosition) && _franchiseSession.HasActiveDraft())
             {
@@ -295,24 +299,35 @@ public sealed class DraftScreen : GameScreen
         uiRenderer.DrawButton(_backButton.Label, GetBackButtonBounds(), GetBackButtonBounds().Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
 
         var canStartDraft = !board.HasActiveDraft && _franchiseSession.CanStartDraft();
-        var canAutoDraft = board.HasActiveDraft && !board.IsComplete;
+        var canSimDraft = board.HasActiveDraft && !board.IsComplete;
         var organizationPlayers = GetSortedOrganizationPlayers(_franchiseSession.GetDraftOrganizationPlayers());
-        var showDraftComplete = !board.HasActiveDraft && organizationPlayers.Count > 0;
+        var showDraftComplete = !board.HasActiveDraft && !canStartDraft && organizationPlayers.Count > 0;
         uiRenderer.DrawButton(
-            board.HasActiveDraft ? _autoDraftButton.Label : (showDraftComplete ? "Draft Complete" : _startDraftButton.Label),
+            showDraftComplete ? "Draft Complete" : _startDraftButton.Label,
             GetStartDraftButtonBounds(),
-            (canStartDraft || canAutoDraft) && GetStartDraftButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : ((canStartDraft || canAutoDraft) ? Color.SlateBlue : new Color(76, 76, 76)),
-            (canStartDraft || canAutoDraft) ? Color.White : new Color(188, 188, 188));
+            canStartDraft && GetStartDraftButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canStartDraft ? Color.SlateBlue : new Color(76, 76, 76)),
+            canStartDraft ? Color.White : new Color(188, 188, 188));
 
         var userOnClock = board.HasActiveDraft && string.Equals(board.CurrentTeamName, _franchiseSession.SelectedTeamName, StringComparison.OrdinalIgnoreCase) && !board.IsComplete;
-        var canAutoPick = board.HasActiveDraft && userOnClock && board.AvailableProspects.Count > 0;
+        var canNextPick = board.HasActiveDraft && !userOnClock && board.AvailableProspects.Count > 0;
+        var canSimRound = board.HasActiveDraft && board.AvailableProspects.Count > 0;
         var canDraft = board.HasActiveDraft && userOnClock && board.AvailableProspects.Count > 0;
 
         uiRenderer.DrawButton(
-            _advancePickButton.Label,
-            GetAdvancePickButtonBounds(),
-            canAutoPick && GetAdvancePickButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canAutoPick ? Color.SlateBlue : new Color(76, 76, 76)),
-            canAutoPick ? Color.White : new Color(188, 188, 188));
+            _nextPickButton.Label,
+            GetNextPickButtonBounds(),
+            canNextPick && GetNextPickButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canNextPick ? Color.SlateBlue : new Color(76, 76, 76)),
+            canNextPick ? Color.White : new Color(188, 188, 188));
+        uiRenderer.DrawButton(
+            _simRoundButton.Label,
+            GetSimRoundButtonBounds(),
+            canSimRound && GetSimRoundButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canSimRound ? Color.SlateBlue : new Color(76, 76, 76)),
+            canSimRound ? Color.White : new Color(188, 188, 188));
+        uiRenderer.DrawButton(
+            _simDraftButton.Label,
+            GetSimDraftButtonBounds(),
+            canSimDraft && GetSimDraftButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canSimDraft ? Color.SlateBlue : new Color(76, 76, 76)),
+            canSimDraft ? Color.White : new Color(188, 188, 188));
         uiRenderer.DrawButton(_makePickButton.Label, GetMakePickButtonBounds(), canDraft && GetMakePickButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : (canDraft ? Color.OliveDrab : new Color(76, 76, 76)), canDraft ? Color.White : new Color(188, 188, 188));
         var canSort = board.HasActiveDraft || organizationPlayers.Count > 0;
         uiRenderer.DrawButton(GetSortLabel(), GetSortButtonBounds(), canSort && GetSortButtonBounds().Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
@@ -369,15 +384,21 @@ public sealed class DraftScreen : GameScreen
         _statusMessage = message;
     }
 
-    private void AutoDraft()
+    private void SimDraft()
     {
         _franchiseSession.AutoDraft(out var message);
         _statusMessage = message;
     }
 
-    private void AutoPick()
+    private void AdvanceToNextUserPick()
     {
-        _franchiseSession.AutoDraftPick(out var message);
+        _franchiseSession.AdvanceDraftToNextUserPick(out var message);
+        _statusMessage = message;
+    }
+
+    private void SimRound()
+    {
+        _franchiseSession.SimDraftRound(out var message);
         _statusMessage = message;
     }
 
@@ -452,13 +473,17 @@ public sealed class DraftScreen : GameScreen
 
     private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
-    private Rectangle GetStartDraftButtonBounds() => new(48, _viewport.Y - 58, 160, 34);
+    private Rectangle GetStartDraftButtonBounds() => new(48, _viewport.Y - 58, 120, 34);
 
-    private Rectangle GetAdvancePickButtonBounds() => new(220, _viewport.Y - 58, 170, 34);
+    private Rectangle GetNextPickButtonBounds() => new(180, _viewport.Y - 58, 120, 34);
 
-    private Rectangle GetMakePickButtonBounds() => new(402, _viewport.Y - 58, 170, 34);
+    private Rectangle GetSimRoundButtonBounds() => new(312, _viewport.Y - 58, 120, 34);
 
-    private Rectangle GetSortButtonBounds() => new(584, _viewport.Y - 58, 140, 34);
+    private Rectangle GetSimDraftButtonBounds() => new(444, _viewport.Y - 58, 120, 34);
+
+    private Rectangle GetMakePickButtonBounds() => new(576, _viewport.Y - 58, 120, 34);
+
+    private Rectangle GetSortButtonBounds() => new(708, _viewport.Y - 58, 110, 34);
 
     private Rectangle GetProspectPanelBounds() => new(48, 168, Math.Max(640, _viewport.X - 420), Math.Max(360, _viewport.Y - 250));
 

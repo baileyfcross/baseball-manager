@@ -13,12 +13,22 @@ namespace BaseballManager.Game.Data;
 public sealed class FranchiseSession
 {
     private const int MaxRosterSize = 40;
+    private const int FirstTeamRosterSize = 26;
     private const string FreeAgentTeamName = "Free Agents";
     private const int DefaultDraftRounds = 5;
     private const string PendingRosterAssignment = "Pending";
     private const string MajorLeagueRosterAssignment = "40-Man Roster";
     private const string ReserveRosterAssignment = "Organization Roster";
     private const string AffiliateRosterAssignment = "Affiliate";
+
+    private enum RosterCompositionBucket
+    {
+        Pitchers,
+        Catchers,
+        Infielders,
+        Outfielders,
+        Utility
+    }
 
     private enum PracticeDevelopmentAttribute
     {
@@ -519,8 +529,10 @@ public sealed class FranchiseSession
         }
 
         var teamName = SelectedTeam.Name;
+        var currentSeasonYear = GetCurrentSeasonYear();
         return _saveState.CreatedPlayers.Values
             .Where(player => string.Equals(player.TeamName, teamName, StringComparison.OrdinalIgnoreCase))
+            .Where(player => player.DraftSeasonYear == currentSeasonYear)
             .OrderByDescending(player => player.RequiresRosterDecision)
             .ThenByDescending(player => player.DraftSeasonYear)
             .ThenByDescending(player => player.DraftOverallRating)
@@ -541,6 +553,61 @@ public sealed class FranchiseSession
                 player.MinorLeagueOptionsRemaining,
                 player.DraftOverallRating,
                 player.PotentialRating))
+            .ToList();
+    }
+
+    public IReadOnlyList<DraftClassHistoryView> GetRecentDraftClasses(int maxClasses = 5)
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamName = SelectedTeam.Name;
+        return _saveState.CreatedPlayers.Values
+            .Where(player => string.Equals(player.TeamName, teamName, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(player => player.DraftSeasonYear)
+            .OrderByDescending(group => group.Key)
+            .Take(Math.Max(1, maxClasses))
+            .Select(group =>
+            {
+                var players = group
+                    .OrderByDescending(player => player.DraftOverallRating)
+                    .ThenByDescending(player => player.PotentialRating)
+                    .ThenBy(player => player.FullName)
+                    .Select(player =>
+                    {
+                        var assignmentLabel = GetRosterAssignmentLabel(player);
+                        var isOnFortyMan = string.Equals(player.RosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase);
+                        return new DraftClassHistoryPlayerView(
+                            player.PlayerId,
+                            player.FullName,
+                            player.PrimaryPosition,
+                            player.SecondaryPosition,
+                            player.Age,
+                            player.DraftOverallRating,
+                            player.PotentialRating,
+                            player.Source,
+                            assignmentLabel,
+                            isOnFortyMan);
+                    })
+                    .ToList();
+
+                var fortyManCount = players.Count(player => player.IsOnFortyMan);
+                var affiliateCount = players.Count(player => player.AssignmentLabel.Contains("Affiliate", StringComparison.OrdinalIgnoreCase));
+                var organizationCount = players.Count(player => string.Equals(player.AssignmentLabel, ReserveRosterAssignment, StringComparison.OrdinalIgnoreCase));
+                var summary = $"{players.Count} signed player(s): {fortyManCount} on 40-man, {organizationCount} in organization depth, {affiliateCount} on the affiliate roster.";
+
+                return new DraftClassHistoryView(
+                    group.Key,
+                    $"{group.Key} Draft Class",
+                    summary,
+                    players.Count,
+                    fortyManCount,
+                    affiliateCount,
+                    organizationCount,
+                    players);
+            })
             .ToList();
     }
 
@@ -573,6 +640,49 @@ public sealed class FranchiseSession
     public int GetSelectedTeam40ManCount()
     {
         return SelectedTeam == null ? 0 : GetTeamFortyManCount(SelectedTeam.Name);
+    }
+
+    public OrganizationRosterCompositionView GetSelectedTeamRosterComposition(OrganizationRosterCompositionMode mode)
+    {
+        var title = mode switch
+        {
+            OrganizationRosterCompositionMode.Depth => "Depth",
+            OrganizationRosterCompositionMode.Affiliate => "Affiliate",
+            _ => "First Team"
+        };
+
+        if (SelectedTeam == null)
+        {
+            return CreateEmptyRosterComposition(
+                title,
+                mode == OrganizationRosterCompositionMode.FirstTeam
+                    ? "Structured around the MLB-style 26-man mix."
+                    : "No team is selected.",
+                mode == OrganizationRosterCompositionMode.FirstTeam ? FirstTeamRosterSize : null);
+        }
+
+        var organizationPlayers = GetSelectedTeamOrganizationRoster();
+        var firstTeamPlayers = SelectFirstTeamPlayers(organizationPlayers);
+        var firstTeamPlayerIds = firstTeamPlayers.Select(player => player.PlayerId).ToHashSet();
+
+        return mode switch
+        {
+            OrganizationRosterCompositionMode.Depth => BuildRosterComposition(
+                "Depth",
+                "40-man extras and organization depth outside the current 26-man mix.",
+                organizationPlayers.Where(player => !firstTeamPlayerIds.Contains(player.PlayerId) && !IsAffiliateRosterAssignment(player.PlayerId)).ToList(),
+                null),
+            OrganizationRosterCompositionMode.Affiliate => BuildRosterComposition(
+                "Affiliate",
+                $"Players currently assigned to the {SelectedTeam.Name} affiliate.",
+                organizationPlayers.Where(player => IsAffiliateRosterAssignment(player.PlayerId)).ToList(),
+                null),
+            _ => BuildRosterComposition(
+                "First Team",
+                "Structured like the MLB 26-man split: 13 pitchers, 2 catchers, 6 infielders, 5 outfielders.",
+                firstTeamPlayers,
+                FirstTeamRosterSize)
+        };
     }
 
     public IReadOnlyList<OrganizationRosterPlayerView> GetSelectedTeamOrganizationRoster()
@@ -627,6 +737,178 @@ public sealed class FranchiseSession
             .ThenBy(player => player.PrimaryPosition)
             .ThenBy(player => player.PlayerName)
             .ToList();
+    }
+
+    private OrganizationRosterCompositionView CreateEmptyRosterComposition(string title, string summary, int? targetCount)
+    {
+        return new OrganizationRosterCompositionView(
+            title,
+            summary,
+            0,
+            targetCount,
+            BuildRosterCompositionBuckets([], targetCount));
+    }
+
+    private OrganizationRosterCompositionView BuildRosterComposition(string title, string summary, IReadOnlyList<OrganizationRosterPlayerView> players, int? targetCount)
+    {
+        return new OrganizationRosterCompositionView(
+            title,
+            summary,
+            players.Count,
+            targetCount,
+            BuildRosterCompositionBuckets(players, targetCount));
+    }
+
+    private IReadOnlyList<OrganizationRosterCompositionBucketView> BuildRosterCompositionBuckets(IReadOnlyList<OrganizationRosterPlayerView> players, int? targetCount)
+    {
+        var playersByBucket = players
+            .GroupBy(GetRosterCompositionBucket)
+            .ToDictionary(group => group.Key, group => group.Count());
+
+        var buckets = new List<OrganizationRosterCompositionBucketView>
+        {
+            CreateRosterCompositionBucket(RosterCompositionBucket.Pitchers, "Pitchers", playersByBucket, targetCount == FirstTeamRosterSize ? 13 : null),
+            CreateRosterCompositionBucket(RosterCompositionBucket.Catchers, "Catchers", playersByBucket, targetCount == FirstTeamRosterSize ? 2 : null),
+            CreateRosterCompositionBucket(RosterCompositionBucket.Infielders, "Infielders", playersByBucket, targetCount == FirstTeamRosterSize ? 6 : null),
+            CreateRosterCompositionBucket(RosterCompositionBucket.Outfielders, "Outfielders", playersByBucket, targetCount == FirstTeamRosterSize ? 5 : null)
+        };
+
+        var utilityCount = playersByBucket.GetValueOrDefault(RosterCompositionBucket.Utility);
+        if (utilityCount > 0 || players.Count == 0)
+        {
+            buckets.Add(new OrganizationRosterCompositionBucketView("Utility", utilityCount, null));
+        }
+
+        return buckets;
+    }
+
+    private static OrganizationRosterCompositionBucketView CreateRosterCompositionBucket(
+        RosterCompositionBucket bucket,
+        string label,
+        IReadOnlyDictionary<RosterCompositionBucket, int> playersByBucket,
+        int? targetCount)
+    {
+        return new OrganizationRosterCompositionBucketView(label, playersByBucket.GetValueOrDefault(bucket), targetCount);
+    }
+
+    private List<OrganizationRosterPlayerView> SelectFirstTeamPlayers(IReadOnlyList<OrganizationRosterPlayerView> organizationPlayers)
+    {
+        var availablePlayers = organizationPlayers
+            .Where(player => player.IsOnFortyMan)
+            .OrderBy(GetFirstTeamPriority)
+            .ThenBy(player => player.PrimaryPosition)
+            .ThenBy(player => player.PlayerName)
+            .ToList();
+
+        var selectedPlayers = new List<OrganizationRosterPlayerView>();
+        var selectedPlayerIds = new HashSet<Guid>();
+
+        AddRosterCompositionPlayers(selectedPlayers, selectedPlayerIds, availablePlayers.Where(player => IsPitcherPosition(player.PrimaryPosition)), 13);
+        AddRosterCompositionPlayers(selectedPlayers, selectedPlayerIds, availablePlayers.Where(IsCatcher), 2);
+        AddRosterCompositionPlayers(selectedPlayers, selectedPlayerIds, availablePlayers.Where(IsInfielder), 6);
+        AddRosterCompositionPlayers(selectedPlayers, selectedPlayerIds, availablePlayers.Where(IsOutfielder), 5);
+        AddRosterCompositionPlayers(selectedPlayers, selectedPlayerIds, availablePlayers, FirstTeamRosterSize - selectedPlayers.Count);
+
+        return selectedPlayers;
+    }
+
+    private static void AddRosterCompositionPlayers(
+        List<OrganizationRosterPlayerView> selectedPlayers,
+        HashSet<Guid> selectedPlayerIds,
+        IEnumerable<OrganizationRosterPlayerView> candidates,
+        int playerCount)
+    {
+        if (playerCount <= 0)
+        {
+            return;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (selectedPlayers.Count >= FirstTeamRosterSize || playerCount <= 0 || !selectedPlayerIds.Add(candidate.PlayerId))
+            {
+                continue;
+            }
+
+            selectedPlayers.Add(candidate);
+            playerCount--;
+        }
+    }
+
+    private static int GetFirstTeamPriority(OrganizationRosterPlayerView player)
+    {
+        if (player.RotationSlot.HasValue)
+        {
+            return 0;
+        }
+
+        if (player.LineupSlot.HasValue)
+        {
+            return 1;
+        }
+
+        return player.IsOnFortyMan ? 2 : 3;
+    }
+
+    private static RosterCompositionBucket GetRosterCompositionBucket(OrganizationRosterPlayerView player)
+    {
+        if (IsPitcherPosition(player.PrimaryPosition))
+        {
+            return RosterCompositionBucket.Pitchers;
+        }
+
+        if (IsCatcher(player))
+        {
+            return RosterCompositionBucket.Catchers;
+        }
+
+        if (IsInfielder(player))
+        {
+            return RosterCompositionBucket.Infielders;
+        }
+
+        if (IsOutfielder(player))
+        {
+            return RosterCompositionBucket.Outfielders;
+        }
+
+        return RosterCompositionBucket.Utility;
+    }
+
+    private static bool IsCatcher(OrganizationRosterPlayerView player)
+    {
+        return HasPosition(player, "C");
+    }
+
+    private static bool IsInfielder(OrganizationRosterPlayerView player)
+    {
+        return HasAnyPosition(player, ["1B", "2B", "3B", "SS", "IF"]);
+    }
+
+    private static bool IsOutfielder(OrganizationRosterPlayerView player)
+    {
+        return HasAnyPosition(player, ["LF", "CF", "RF", "OF"]);
+    }
+
+    private static bool HasAnyPosition(OrganizationRosterPlayerView player, IReadOnlyList<string> positions)
+    {
+        return positions.Any(position => HasPosition(player, position));
+    }
+
+    private static bool HasPosition(OrganizationRosterPlayerView player, string position)
+    {
+        return string.Equals(player.PrimaryPosition, position, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(player.SecondaryPosition, position, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsPitcherPosition(string position)
+    {
+        return position is "SP" or "RP";
+    }
+
+    private bool IsAffiliateRosterAssignment(Guid playerId)
+    {
+        return string.Equals(GetPlayerRosterAssignment(playerId), AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase);
     }
 
     public bool IsSelectedTeam40ManFull()
@@ -977,11 +1259,66 @@ public sealed class FranchiseSession
 
         try
         {
-            var teamContext = BuildDraftCpuTeamContext(userTeamName);
-            var prospect = _draftCpuPicker.SelectProspect(draftState, teamContext);
-            var pick = draftState.MakePick(userTeamName, prospect.PlayerId, isUserPick: true);
+            var pick = MakeAutoUserDraftPick(draftState, userTeamName);
             ApplyDraftPick(pick);
             return FinalizeDraftProgress(draftState, $"{pick.TeamName} auto-picked {pick.PlayerName} ({pick.PrimaryPosition}).", out statusMessage);
+        }
+        catch (Exception exception)
+        {
+            statusMessage = exception.Message;
+            return false;
+        }
+    }
+
+    public bool SimDraftRound(out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before simming a round.";
+            return false;
+        }
+
+        var draftState = LoadDraftState();
+        if (draftState == null)
+        {
+            statusMessage = "There is no active draft to sim.";
+            return false;
+        }
+
+        var userTeamName = SelectedTeam.Name;
+        var startingRound = draftState.CurrentRound;
+        var userSelections = new List<string>();
+        var picksSimmed = 0;
+
+        try
+        {
+            while (!draftState.IsComplete && draftState.CurrentRound == startingRound)
+            {
+                if (draftState.IsTeamOnClock(userTeamName))
+                {
+                    var pick = MakeAutoUserDraftPick(draftState, userTeamName);
+                    ApplyDraftPick(pick);
+                    userSelections.Add($"{pick.PlayerName} ({pick.PrimaryPosition})");
+                }
+                else
+                {
+                    var result = _advanceDraftUseCase.Execute(draftState, userTeamName, BuildDraftCpuTeamContext);
+                    if (result.PickMade == null)
+                    {
+                        statusMessage = string.IsNullOrWhiteSpace(result.Message) ? "Round sim stopped unexpectedly." : result.Message;
+                        return false;
+                    }
+
+                    ApplyDraftPick(result.PickMade);
+                }
+
+                picksSimmed++;
+            }
+
+            var summary = userSelections.Count == 0
+                ? $"Simmed Round {startingRound}: {picksSimmed} pick(s)."
+                : $"Simmed Round {startingRound}: {picksSimmed} pick(s). {userTeamName} selected {string.Join(", ", userSelections)}.";
+            return FinalizeDraftProgress(draftState, summary, out statusMessage);
         }
         catch (Exception exception)
         {
@@ -1015,9 +1352,7 @@ public sealed class FranchiseSession
             {
                 if (draftState.IsTeamOnClock(userTeamName))
                 {
-                    var teamContext = BuildDraftCpuTeamContext(userTeamName);
-                    var prospect = _draftCpuPicker.SelectProspect(draftState, teamContext);
-                    var pick = draftState.MakePick(userTeamName, prospect.PlayerId, isUserPick: true);
+                    var pick = MakeAutoUserDraftPick(draftState, userTeamName);
                     ApplyDraftPick(pick);
                     userSelections.Add($"{pick.PlayerName} ({pick.PrimaryPosition})");
                     lastMessage = $"{pick.TeamName} auto-drafted {pick.PlayerName} ({pick.PrimaryPosition}).";
@@ -1045,6 +1380,13 @@ public sealed class FranchiseSession
             statusMessage = exception.Message;
             return false;
         }
+    }
+
+    private DraftPick MakeAutoUserDraftPick(DraftState draftState, string userTeamName)
+    {
+        var teamContext = BuildDraftCpuTeamContext(userTeamName);
+        var prospect = _draftCpuPicker.SelectProspect(draftState, teamContext);
+        return draftState.MakePick(userTeamName, prospect.PlayerId, isUserPick: true);
     }
 
     public bool IsScheduledGameCompleted(ScheduleImportDto game)

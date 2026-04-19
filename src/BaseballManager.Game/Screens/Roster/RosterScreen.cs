@@ -10,6 +10,12 @@ namespace BaseballManager.Game.Screens.Roster;
 
 public sealed class RosterScreen : GameScreen
 {
+    private enum DetailPanelMode
+    {
+        Player,
+        Counts
+    }
+
     private enum RosterFilterMode
     {
         All,
@@ -31,6 +37,8 @@ public sealed class RosterScreen : GameScreen
     private readonly ButtonControl _backButton;
     private readonly ButtonControl _filterButton;
     private readonly ButtonControl _sortButton;
+    private readonly ButtonControl _detailModeButton;
+    private readonly ButtonControl _compositionModeButton;
     private readonly ButtonControl _assign40ManButton;
     private readonly ButtonControl _assignAffiliateButton;
     private readonly ButtonControl _removeFromFortyManButton;
@@ -42,9 +50,11 @@ public sealed class RosterScreen : GameScreen
     private Point _viewport = new(1280, 720);
     private Guid? _selectedPlayerId;
     private int _pageIndex;
+    private DetailPanelMode _detailPanelMode = DetailPanelMode.Player;
+    private OrganizationRosterCompositionMode _compositionMode = OrganizationRosterCompositionMode.FirstTeam;
     private RosterFilterMode _filterMode = RosterFilterMode.All;
     private RosterSortMode _sortMode = RosterSortMode.Status;
-    private string _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or release them outright from this screen.";
+    private string _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or switch to Counts to review the 26-man and affiliate mix.";
 
     public RosterScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -53,6 +63,8 @@ public sealed class RosterScreen : GameScreen
         _backButton = new ButtonControl { Label = "Back", OnClick = () => _screenManager.TransitionTo(nameof(FranchiseHubScreen)) };
         _filterButton = new ButtonControl { Label = "Filter: All", OnClick = CycleFilter };
         _sortButton = new ButtonControl { Label = "Sort: Status", OnClick = CycleSort };
+        _detailModeButton = new ButtonControl { Label = "View: Player", OnClick = ToggleDetailPanelMode };
+        _compositionModeButton = new ButtonControl { Label = "Scope: First Team", OnClick = CycleCompositionMode };
         _assign40ManButton = new ButtonControl { Label = "Add To 40-Man", OnClick = AssignToFortyMan };
         _assignAffiliateButton = new ButtonControl { Label = "Send To Affiliate", OnClick = AssignToAffiliate };
         _removeFromFortyManButton = new ButtonControl { Label = "Remove From 40-Man", OnClick = RemoveFromFortyMan };
@@ -65,10 +77,12 @@ public sealed class RosterScreen : GameScreen
     {
         _ignoreClicksUntilRelease = true;
         _pageIndex = 0;
+        _detailPanelMode = DetailPanelMode.Player;
+        _compositionMode = OrganizationRosterCompositionMode.FirstTeam;
         _filterMode = RosterFilterMode.All;
         _sortMode = RosterSortMode.Status;
         _selectedPlayerId = null;
-        _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or release them outright from this screen.";
+        _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or switch to Counts to review the 26-man and affiliate mix.";
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -102,6 +116,14 @@ public sealed class RosterScreen : GameScreen
             else if (GetSortButtonBounds().Contains(mousePosition))
             {
                 _sortButton.Click();
+            }
+            else if (GetDetailModeBounds().Contains(mousePosition))
+            {
+                _detailModeButton.Click();
+            }
+            else if (GetCompositionModeBounds().Contains(mousePosition))
+            {
+                _compositionModeButton.Click();
             }
             else if (GetAssign40ManBounds().Contains(mousePosition))
             {
@@ -151,6 +173,8 @@ public sealed class RosterScreen : GameScreen
 
         _filterButton.Label = $"Filter: {GetFilterLabel(_filterMode)}";
         _sortButton.Label = $"Sort: {GetSortLabel(_sortMode)}";
+        _detailModeButton.Label = _detailPanelMode == DetailPanelMode.Player ? "View: Player" : "View: Counts";
+        _compositionModeButton.Label = $"Scope: {GetCompositionModeLabel(_compositionMode)}";
 
         uiRenderer.DrawText("Roster", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, 360, 22), Color.Gold, uiRenderer.UiSmallFont);
@@ -161,17 +185,29 @@ public sealed class RosterScreen : GameScreen
         uiRenderer.DrawButton(string.Empty, listBounds, new Color(38, 48, 56), Color.White);
         uiRenderer.DrawButton(string.Empty, detailBounds, new Color(38, 48, 56), Color.White);
         uiRenderer.DrawTextInBounds("Organization Roster", new Rectangle(listBounds.X + 12, listBounds.Y + 8, listBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds("Player Details", new Rectangle(detailBounds.X + 12, detailBounds.Y + 8, detailBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds(_detailPanelMode == DetailPanelMode.Player ? "Player Details" : "Roster Counts", new Rectangle(detailBounds.X + 12, detailBounds.Y + 8, detailBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
+        DrawDetailPanelButtons(uiRenderer, mousePosition);
 
         if (players.Count == 0)
         {
             uiRenderer.DrawWrappedTextInBounds("No roster players match the current filter.", new Rectangle(listBounds.X + 12, listBounds.Y + 40, listBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
-            uiRenderer.DrawWrappedTextInBounds("Change the filter or return after adding players to the organization.", new Rectangle(detailBounds.X + 12, detailBounds.Y + 40, detailBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
+            if (_detailPanelMode == DetailPanelMode.Counts)
+            {
+                DrawRosterComposition(uiRenderer, _franchiseSession.GetSelectedTeamRosterComposition(_compositionMode));
+            }
+            else
+            {
+                uiRenderer.DrawWrappedTextInBounds("Change the filter or return after adding players to the organization.", new Rectangle(detailBounds.X + 12, detailBounds.Y + 40, detailBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
+            }
         }
         else
         {
             DrawPlayerList(uiRenderer, players, mousePosition);
-            if (selectedPlayer != null)
+            if (_detailPanelMode == DetailPanelMode.Counts)
+            {
+                DrawRosterComposition(uiRenderer, _franchiseSession.GetSelectedTeamRosterComposition(_compositionMode));
+            }
+            else if (selectedPlayer != null)
             {
                 DrawPlayerDetail(uiRenderer, selectedPlayer, contractsByPlayerId);
             }
@@ -250,6 +286,38 @@ public sealed class RosterScreen : GameScreen
 
         uiRenderer.DrawTextInBounds("Scout Note", new Rectangle(content.X, content.Y + 462, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
         uiRenderer.DrawWrappedTextInBounds(scoutNote, new Rectangle(content.X, content.Y + 484, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+    }
+
+    private void DrawRosterComposition(UiRenderer uiRenderer, OrganizationRosterCompositionView composition)
+    {
+        var bounds = GetDetailPanelBounds();
+        var content = new Rectangle(bounds.X + 12, bounds.Y + 72, bounds.Width - 24, bounds.Height - 84);
+        uiRenderer.DrawTextInBounds(composition.Title, new Rectangle(content.X, content.Y, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(composition.Summary, new Rectangle(content.X, content.Y + 22, content.Width, 54), Color.Gold, uiRenderer.UiSmallFont, 3);
+
+        var totalLabel = composition.TargetCount.HasValue
+            ? $"Total: {composition.TotalCount}/{composition.TargetCount.Value}"
+            : $"Total: {composition.TotalCount}";
+        uiRenderer.DrawTextInBounds(totalLabel, new Rectangle(content.X, content.Y + 84, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+
+        for (var i = 0; i < composition.Buckets.Count; i++)
+        {
+            var bucket = composition.Buckets[i];
+            var valueLabel = bucket.TargetCount.HasValue
+                ? $"{bucket.Count}/{bucket.TargetCount.Value}"
+                : bucket.Count.ToString();
+            var rowBounds = new Rectangle(content.X, content.Y + 122 + (i * 28), content.Width, 18);
+            uiRenderer.DrawTextInBounds(bucket.Label, new Rectangle(rowBounds.X, rowBounds.Y, rowBounds.Width - 84, rowBounds.Height), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(valueLabel, new Rectangle(rowBounds.Right - 84, rowBounds.Y, 84, rowBounds.Height), Color.Gold, uiRenderer.UiSmallFont, centerHorizontally: true);
+        }
+    }
+
+    private void DrawDetailPanelButtons(UiRenderer uiRenderer, Point mousePosition)
+    {
+        var detailModeBounds = GetDetailModeBounds();
+        var compositionModeBounds = GetCompositionModeBounds();
+        uiRenderer.DrawButton(_detailModeButton.Label, detailModeBounds, detailModeBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
+        uiRenderer.DrawButton(_compositionModeButton.Label, compositionModeBounds, compositionModeBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
     }
 
     private void DrawButtons(UiRenderer uiRenderer, Point mousePosition, OrganizationRosterPlayerView? selectedPlayer)
@@ -359,6 +427,23 @@ public sealed class RosterScreen : GameScreen
             _ => RosterSortMode.Status
         };
         _pageIndex = 0;
+    }
+
+    private void ToggleDetailPanelMode()
+    {
+        _detailPanelMode = _detailPanelMode == DetailPanelMode.Player
+            ? DetailPanelMode.Counts
+            : DetailPanelMode.Player;
+    }
+
+    private void CycleCompositionMode()
+    {
+        _compositionMode = _compositionMode switch
+        {
+            OrganizationRosterCompositionMode.FirstTeam => OrganizationRosterCompositionMode.Depth,
+            OrganizationRosterCompositionMode.Depth => OrganizationRosterCompositionMode.Affiliate,
+            _ => OrganizationRosterCompositionMode.FirstTeam
+        };
     }
 
     private void AssignToFortyMan()
@@ -489,6 +574,16 @@ public sealed class RosterScreen : GameScreen
         };
     }
 
+    private static string GetCompositionModeLabel(OrganizationRosterCompositionMode mode)
+    {
+        return mode switch
+        {
+            OrganizationRosterCompositionMode.Depth => "Depth",
+            OrganizationRosterCompositionMode.Affiliate => "Affiliate",
+            _ => "First Team"
+        };
+    }
+
     private static bool IsPitcher(string position)
     {
         return position is "SP" or "RP";
@@ -528,6 +623,18 @@ public sealed class RosterScreen : GameScreen
     {
         var affiliateBounds = GetAssignAffiliateBounds();
         return new Rectangle(affiliateBounds.X - 152, affiliateBounds.Y, 140, 34);
+    }
+
+    private Rectangle GetDetailModeBounds()
+    {
+        var detailBounds = GetDetailPanelBounds();
+        return new Rectangle(detailBounds.X + 12, detailBounds.Y + 32, 116, 28);
+    }
+
+    private Rectangle GetCompositionModeBounds()
+    {
+        var detailModeBounds = GetDetailModeBounds();
+        return new Rectangle(detailModeBounds.Right + 10, detailModeBounds.Y, 148, detailModeBounds.Height);
     }
 
     private Rectangle GetListPanelBounds() => new(48, 168, Math.Max(560, _viewport.X - 540), Math.Max(360, _viewport.Y - 250));
