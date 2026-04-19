@@ -17,6 +17,7 @@ public sealed class FranchiseSession
     private const int DefaultDraftRounds = 5;
     private const string PendingRosterAssignment = "Pending";
     private const string MajorLeagueRosterAssignment = "40-Man Roster";
+    private const string ReserveRosterAssignment = "Organization Roster";
     private const string AffiliateRosterAssignment = "Affiliate";
 
     private enum PracticeDevelopmentAttribute
@@ -56,6 +57,7 @@ public sealed class FranchiseSession
     private readonly MakeUserDraftPickUseCase _makeUserDraftPickUseCase = new();
     private readonly AdvanceDraftUseCase _advanceDraftUseCase = new();
     private readonly FinishDraftUseCase _finishDraftUseCase = new();
+    private readonly DraftCpuPicker _draftCpuPicker = new();
     private readonly ManagerAi _managerAi = new();
     private readonly HireCoachUseCase _hireCoachUseCase = new();
     private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
@@ -96,7 +98,7 @@ public sealed class FranchiseSession
         EnsureFranchiseDateInitialized();
         EnsureSeasonYearInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsurePlayerAgesGenerated() || EnsureCreatedPlayerRosterAssignmentsGenerated() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsurePlayerRosterAssignmentsGenerated() || EnsurePlayerAgesGenerated() || EnsureCreatedPlayerRosterAssignmentsGenerated() || EnsureDraftCompletionStateConsistency() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
         {
             Save();
         }
@@ -358,7 +360,7 @@ public sealed class FranchiseSession
         }
 
         var seasonEndDate = activeSchedule.Max(game => game.Date.Date);
-        return !activeSchedule.Any(game => !IsScheduledGameCompleted(game)) && GetCurrentFranchiseDate().Date > seasonEndDate;
+        return !activeSchedule.Any(game => !IsScheduledGameCompleted(game)) && GetCurrentFranchiseDate().Date >= seasonEndDate;
     }
 
     public bool CanAdvanceToNextSeason()
@@ -375,17 +377,17 @@ public sealed class FranchiseSession
 
         if (_saveState.ActiveDraft != null)
         {
-            return "Finish the draft before moving into the offseason.";
+            return "Finish the draft before starting next season.";
         }
 
-        if (_saveState.LastCompletedDraftSeasonYear != GetCurrentSeasonYear())
+        if (!HasCompletedDraftForCurrentSeason())
         {
-            return "Run the draft before moving into the offseason.";
+            return "Run the draft before starting next season.";
         }
 
         if (HasPendingDraftRosterDecisions())
         {
-            return "Resolve your drafted players' 40-man or affiliate assignments before moving into the offseason.";
+            return "Resolve your drafted players' 40-man or affiliate assignments before starting next season.";
         }
 
         return string.Empty;
@@ -412,6 +414,7 @@ public sealed class FranchiseSession
 
         RunOffseasonSimulation(out var offseasonSummary);
         _saveState.LastOffseasonSummary = offseasonSummary;
+        StoreOffseasonReports(offseasonSummary);
         Save();
         statusMessage = offseasonSummary.Overview;
         return true;
@@ -450,7 +453,7 @@ public sealed class FranchiseSession
         return SelectedTeam != null
             && _saveState.ActiveDraft == null
             && IsRegularSeasonComplete()
-            && _saveState.LastCompletedDraftSeasonYear != GetCurrentSeasonYear();
+            && !HasCompletedDraftForCurrentSeason();
     }
 
     public bool HasActiveDraft()
@@ -515,8 +518,9 @@ public sealed class FranchiseSession
             return [];
         }
 
+        var teamName = SelectedTeam.Name;
         return _saveState.CreatedPlayers.Values
-            .Where(player => string.Equals(player.TeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+            .Where(player => string.Equals(player.TeamName, teamName, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(player => player.RequiresRosterDecision)
             .ThenByDescending(player => player.DraftSeasonYear)
             .ThenByDescending(player => player.DraftOverallRating)
@@ -547,7 +551,8 @@ public sealed class FranchiseSession
             return [];
         }
 
-        return GetSelectedTeamRoster()
+        return GetSelectedTeamOrganizationRoster()
+            .Where(player => player.IsOnFortyMan)
             .OrderBy(player => player.PlayerName)
             .Select(player =>
             {
@@ -567,43 +572,117 @@ public sealed class FranchiseSession
 
     public int GetSelectedTeam40ManCount()
     {
-        return SelectedTeam == null ? 0 : GetTeamRosterCount(SelectedTeam.Name);
+        return SelectedTeam == null ? 0 : GetTeamFortyManCount(SelectedTeam.Name);
+    }
+
+    public IReadOnlyList<OrganizationRosterPlayerView> GetSelectedTeamOrganizationRoster()
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        var teamName = SelectedTeam.Name;
+        var rostersByPlayerId = _leagueData.Rosters
+            .GroupBy(roster => roster.PlayerId)
+            .ToDictionary(group => group.Key, group => group.First());
+        var lineupMap = BuildSlotMap(BuildLineupSlots(teamName));
+        var rotationMap = BuildSlotMap(BuildRotationSlots(teamName));
+
+        return GetAllPlayers()
+            .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Select(player =>
+            {
+                rostersByPlayerId.TryGetValue(player.PlayerId, out var roster);
+                var playerName = roster?.PlayerName ?? player.FullName;
+                var primaryPosition = string.IsNullOrWhiteSpace(roster?.PrimaryPosition) ? player.PrimaryPosition : roster.PrimaryPosition;
+                var secondaryPosition = string.IsNullOrWhiteSpace(roster?.SecondaryPosition) ? player.SecondaryPosition : roster.SecondaryPosition;
+                var isDraftedPlayer = _saveState.CreatedPlayers.TryGetValue(player.PlayerId, out var createdPlayer);
+                var rosterAssignment = GetPlayerRosterAssignment(player.PlayerId);
+                var assignmentLabel = GetRosterAssignmentLabel(teamName, rosterAssignment);
+                var isOnFortyMan = string.Equals(rosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase);
+                var isOnActiveRoster = IsPlayerOnActiveTeamRoster(player.PlayerId);
+                var canAssignToFortyMan = !isOnFortyMan;
+                var canAssignToAffiliate = !string.Equals(rosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase);
+
+                return new OrganizationRosterPlayerView(
+                    player.PlayerId,
+                    playerName,
+                    primaryPosition,
+                    secondaryPosition,
+                    player.Age,
+                    assignmentLabel,
+                    isOnFortyMan,
+                    isDraftedPlayer,
+                    isDraftedPlayer ? createdPlayer!.MinorLeagueOptionsRemaining : 0,
+                    canAssignToFortyMan,
+                    canAssignToAffiliate,
+                        true,
+                    isOnActiveRoster && lineupMap.TryGetValue(player.PlayerId, out var lineupSlot) ? lineupSlot : null,
+                    isOnActiveRoster && rotationMap.TryGetValue(player.PlayerId, out var rotationSlot) ? rotationSlot : null);
+            })
+                    .OrderByDescending(player => player.AssignmentLabel == ReserveRosterAssignment)
+                    .ThenByDescending(player => player.AssignmentLabel == "Decision Needed")
+            .ThenByDescending(player => player.IsOnFortyMan)
+            .ThenBy(player => player.PrimaryPosition)
+            .ThenBy(player => player.PlayerName)
+            .ToList();
     }
 
     public bool IsSelectedTeam40ManFull()
     {
-        return SelectedTeam != null && GetTeamRosterCount(SelectedTeam.Name) >= MaxRosterSize;
+        return SelectedTeam != null && GetTeamFortyManCount(SelectedTeam.Name) >= MaxRosterSize;
     }
 
-    public bool AssignDraftPlayerTo40Man(Guid playerId, out string statusMessage)
+    public bool AssignSelectedTeamPlayerToFortyMan(Guid playerId, out string statusMessage)
     {
-        if (!TryGetSelectedTeamCreatedPlayer(playerId, out var createdPlayer, out statusMessage))
+        if (!TryGetSelectedTeamPlayer(playerId, out var player, out statusMessage))
         {
             return false;
         }
 
-        if (!string.Equals(createdPlayer.RosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
-            && GetTeamRosterCount(SelectedTeam!.Name) >= MaxRosterSize)
+        var currentAssignment = GetPlayerRosterAssignment(playerId);
+        if (string.Equals(currentAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase))
         {
-            statusMessage = $"The {SelectedTeam.Name} already have {MaxRosterSize} players on the 40-man roster. Open the 40-man list and remove a player to make space.";
+            statusMessage = $"{player.FullName} is already on the 40-man roster.";
             return false;
         }
 
-        createdPlayer.RosterAssignment = MajorLeagueRosterAssignment;
-        createdPlayer.RequiresRosterDecision = false;
+        if (GetTeamFortyManCount(SelectedTeam!.Name) >= MaxRosterSize)
+        {
+            statusMessage = $"The {SelectedTeam.Name} already have {MaxRosterSize} players on the 40-man roster. Move or release someone to make space.";
+            return false;
+        }
+
+        SetPlayerRosterAssignment(playerId, MajorLeagueRosterAssignment);
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
+        {
+            createdPlayer.RequiresRosterDecision = false;
+        }
+
+        RefreshRosterSlots(SelectedTeam.Name);
         Save();
-        statusMessage = $"{createdPlayer.FullName} is now on the 40-man roster.";
+        AddTransferRecord(SelectedTeam.Name, $"Added {player.FullName} to the 40-man roster.");
+        statusMessage = $"{player.FullName} is now on the 40-man roster.";
         return true;
     }
 
-    public bool AssignDraftPlayerToAffiliate(Guid playerId, out string statusMessage)
+    public bool AssignSelectedTeamPlayerToAffiliate(Guid playerId, out string statusMessage)
     {
-        if (!TryGetSelectedTeamCreatedPlayer(playerId, out var createdPlayer, out statusMessage))
+        if (!TryGetSelectedTeamPlayer(playerId, out var player, out statusMessage))
         {
             return false;
         }
 
-        if (string.Equals(createdPlayer.RosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
+        var currentAssignment = GetPlayerRosterAssignment(playerId);
+        if (string.Equals(currentAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = $"{player.FullName} is already on the affiliate roster.";
+            return false;
+        }
+
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer)
+            && string.Equals(currentAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
             && createdPlayer.LastOptionedSeasonYear != GetCurrentSeasonYear())
         {
             if (createdPlayer.MinorLeagueOptionsRemaining <= 0)
@@ -616,14 +695,37 @@ public sealed class FranchiseSession
             createdPlayer.LastOptionedSeasonYear = GetCurrentSeasonYear();
         }
 
-        createdPlayer.RosterAssignment = AffiliateRosterAssignment;
-        createdPlayer.RequiresRosterDecision = false;
+        SetPlayerRosterAssignment(playerId, AffiliateRosterAssignment);
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out createdPlayer))
+        {
+            createdPlayer.RequiresRosterDecision = false;
+        }
+
+        RefreshRosterSlots(SelectedTeam!.Name);
         Save();
-        statusMessage = $"{createdPlayer.FullName} was assigned to the {SelectedTeam!.Name} affiliate.";
+        AddTransferRecord(SelectedTeam.Name, $"Assigned {player.FullName} to the affiliate roster.");
+        statusMessage = string.Equals(currentAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
+            ? $"{player.FullName} was removed from the 40-man roster and assigned to the {SelectedTeam.Name} affiliate."
+            : $"{player.FullName} was assigned to the {SelectedTeam.Name} affiliate.";
         return true;
     }
 
+    public bool AssignDraftPlayerTo40Man(Guid playerId, out string statusMessage)
+    {
+        return AssignSelectedTeamPlayerToFortyMan(playerId, out statusMessage);
+    }
+
+    public bool AssignDraftPlayerToAffiliate(Guid playerId, out string statusMessage)
+    {
+        return AssignSelectedTeamPlayerToAffiliate(playerId, out statusMessage);
+    }
+
     public bool ReleaseSelectedTeam40ManPlayer(Guid playerId, out string statusMessage)
+    {
+        return ReleaseSelectedTeamPlayer(playerId, out statusMessage);
+    }
+
+    public bool RemoveSelectedTeamPlayerFromFortyMan(Guid playerId, out string statusMessage)
     {
         if (SelectedTeam == null)
         {
@@ -631,22 +733,49 @@ public sealed class FranchiseSession
             return false;
         }
 
-        var player = FindPlayerImport(playerId);
-        if (player == null || !string.Equals(GetAssignedTeamName(playerId, player.TeamName), SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+        if (!TryGetSelectedTeamPlayer(playerId, out var player, out statusMessage))
         {
-            statusMessage = "That player is not on your 40-man roster.";
             return false;
         }
 
-        if (!IsPlayerOnMajorLeagueRoster(playerId))
+        if (!string.Equals(GetPlayerRosterAssignment(playerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase))
         {
-            statusMessage = "That player is not currently occupying a 40-man roster spot.";
+            statusMessage = $"{player.FullName} is not currently on the 40-man roster.";
+            return false;
+        }
+
+        SetPlayerRosterAssignment(playerId, ReserveRosterAssignment);
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
+        {
+            createdPlayer.RequiresRosterDecision = false;
+        }
+
+        RefreshRosterSlots(SelectedTeam.Name);
+        Save();
+        AddTransferRecord(SelectedTeam.Name, $"Removed {player.FullName} from the 40-man roster.");
+        statusMessage = $"{player.FullName} was removed from the 40-man roster and remains with the organization.";
+        return true;
+    }
+
+    public bool ReleaseSelectedTeamPlayer(Guid playerId, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before managing the roster.";
+            return false;
+        }
+
+        var player = FindPlayerImport(playerId);
+        if (player == null || !string.Equals(GetAssignedTeamName(playerId, player.TeamName), SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "That player is not on your roster.";
             return false;
         }
 
         var teamState = GetOrCreateTeamState(SelectedTeam.Name);
         var releaseCost = _releasePlayerUseCase.Execute(teamState.Economy, playerId);
         _saveState.PlayerAssignments[playerId] = FreeAgentTeamName;
+        _saveState.PlayerRosterAssignments.Remove(playerId);
 
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
         {
@@ -655,14 +784,13 @@ public sealed class FranchiseSession
             createdPlayer.RosterAssignment = MajorLeagueRosterAssignment;
         }
 
-        InitializeLineupSlots(teamState, SelectedTeam.Name);
-        InitializeRotationSlots(teamState, SelectedTeam.Name);
-        AddTransferRecord(SelectedTeam.Name, $"Released {player.FullName} from the 40-man roster.");
+        RefreshRosterSlots(SelectedTeam.Name);
+        AddTransferRecord(SelectedTeam.Name, $"Released {player.FullName} from the roster.");
         Save();
 
         statusMessage = releaseCost > 0m
-            ? $"Released {player.FullName} and opened a 40-man spot. Buyout cost: {GetBudgetDisplay(releaseCost)}."
-            : $"Released {player.FullName} and opened a 40-man spot.";
+            ? $"Released {player.FullName}. Buyout cost: {GetBudgetDisplay(releaseCost)}."
+            : $"Released {player.FullName}.";
         return true;
     }
 
@@ -703,7 +831,7 @@ public sealed class FranchiseSession
             return false;
         }
 
-        if (_saveState.LastCompletedDraftSeasonYear == GetCurrentSeasonYear())
+        if (HasCompletedDraftForCurrentSeason())
         {
             statusMessage = "The current season draft has already been completed.";
             return false;
@@ -825,6 +953,100 @@ public sealed class FranchiseSession
         }
     }
 
+    public bool AutoDraftPick(out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before using auto pick.";
+            return false;
+        }
+
+        var draftState = LoadDraftState();
+        if (draftState == null)
+        {
+            statusMessage = "There is no active draft to auto pick.";
+            return false;
+        }
+
+        var userTeamName = SelectedTeam.Name;
+        if (!draftState.IsTeamOnClock(userTeamName))
+        {
+            statusMessage = $"The {userTeamName} are not on the clock.";
+            return false;
+        }
+
+        try
+        {
+            var teamContext = BuildDraftCpuTeamContext(userTeamName);
+            var prospect = _draftCpuPicker.SelectProspect(draftState, teamContext);
+            var pick = draftState.MakePick(userTeamName, prospect.PlayerId, isUserPick: true);
+            ApplyDraftPick(pick);
+            return FinalizeDraftProgress(draftState, $"{pick.TeamName} auto-picked {pick.PlayerName} ({pick.PrimaryPosition}).", out statusMessage);
+        }
+        catch (Exception exception)
+        {
+            statusMessage = exception.Message;
+            return false;
+        }
+    }
+
+    public bool AutoDraft(out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before using auto finish draft.";
+            return false;
+        }
+
+        var draftState = LoadDraftState();
+        if (draftState == null)
+        {
+            statusMessage = "There is no active draft to auto finish.";
+            return false;
+        }
+
+        var userTeamName = SelectedTeam.Name;
+        var userSelections = new List<string>();
+        var lastMessage = string.Empty;
+
+        try
+        {
+            while (!draftState.IsComplete)
+            {
+                if (draftState.IsTeamOnClock(userTeamName))
+                {
+                    var teamContext = BuildDraftCpuTeamContext(userTeamName);
+                    var prospect = _draftCpuPicker.SelectProspect(draftState, teamContext);
+                    var pick = draftState.MakePick(userTeamName, prospect.PlayerId, isUserPick: true);
+                    ApplyDraftPick(pick);
+                    userSelections.Add($"{pick.PlayerName} ({pick.PrimaryPosition})");
+                    lastMessage = $"{pick.TeamName} auto-drafted {pick.PlayerName} ({pick.PrimaryPosition}).";
+                    continue;
+                }
+
+                var result = _advanceDraftUseCase.Execute(draftState, userTeamName, BuildDraftCpuTeamContext);
+                if (result.PickMade == null)
+                {
+                    statusMessage = string.IsNullOrWhiteSpace(result.Message) ? "Auto finish draft stopped unexpectedly." : result.Message;
+                    return false;
+                }
+
+                ApplyDraftPick(result.PickMade);
+                lastMessage = result.Message;
+            }
+
+            var summary = userSelections.Count == 0
+                ? "Auto finish draft completed."
+                : $"Auto finish draft completed for {userTeamName}. Picks: {string.Join(", ", userSelections.Take(5))}{(userSelections.Count > 5 ? ", ..." : string.Empty)}.";
+            return FinalizeDraftProgress(draftState, string.IsNullOrWhiteSpace(lastMessage) ? summary : summary, out statusMessage);
+        }
+        catch (Exception exception)
+        {
+            statusMessage = exception.Message;
+            return false;
+        }
+    }
+
     public bool IsScheduledGameCompleted(ScheduleImportDto game)
     {
         return _saveState.CompletedScheduleGameKeys.Contains(BuildScheduleGameKey(game));
@@ -847,7 +1069,7 @@ public sealed class FranchiseSession
 
     public bool HasPendingScheduledGame()
     {
-        return GetNextScheduledGameForSelectedTeam() != null;
+        return !IsSeasonAdvanceBlockedByPendingDraftWork() && GetNextScheduledGameForSelectedTeam() != null;
     }
 
     public void SetPreferLiveBoxScore(bool preferLiveBoxScore)
@@ -2298,7 +2520,7 @@ public sealed class FranchiseSession
 
     public bool CanSimulateCurrentDay()
     {
-        return SelectedTeam != null && !IsRegularSeasonComplete();
+        return SelectedTeam != null && !IsRegularSeasonComplete() && !IsSeasonAdvanceBlockedByPendingDraftWork();
     }
 
     public bool SimulateToEndOfSeason(out string statusMessage)
@@ -2306,6 +2528,12 @@ public sealed class FranchiseSession
         if (SelectedTeam == null)
         {
             statusMessage = "Select a team before simulating the season.";
+            return false;
+        }
+
+        if (IsSeasonAdvanceBlockedByPendingDraftWork())
+        {
+            statusMessage = GetNextSeasonBlockerMessage();
             return false;
         }
 
@@ -2343,11 +2571,18 @@ public sealed class FranchiseSession
             }
 
             daysSimulated++;
+
+            if (GetCurrentFranchiseDate().Date == currentDate && IsSeasonAdvanceBlockedByPendingDraftWork())
+            {
+                break;
+            }
         }
 
         ClearLiveMatchState(LiveMatchMode.Franchise);
         Save();
-        statusMessage = $"Simmed from {startDate:MMM d} through season end: {daysSimulated} day(s), {selectedTeamGames} {selectedTeamName} game(s), {totalLeagueGames} league game(s), and {practiceDays} practice / recovery day(s).";
+        statusMessage = IsSeasonAdvanceBlockedByPendingDraftWork()
+            ? $"Simmed from {startDate:MMM d} through season end: {daysSimulated} day(s), {selectedTeamGames} {selectedTeamName} game(s), {totalLeagueGames} league game(s), and {practiceDays} practice / recovery day(s). {GetNextSeasonBlockerMessage()}"
+            : $"Simmed from {startDate:MMM d} through season end: {daysSimulated} day(s), {selectedTeamGames} {selectedTeamName} game(s), {totalLeagueGames} league game(s), and {practiceDays} practice / recovery day(s).";
         return true;
     }
 
@@ -2356,6 +2591,12 @@ public sealed class FranchiseSession
         if (SelectedTeam == null)
         {
             statusMessage = "Select a team before simulating games.";
+            return false;
+        }
+
+        if (IsSeasonAdvanceBlockedByPendingDraftWork())
+        {
+            statusMessage = GetNextSeasonBlockerMessage();
             return false;
         }
 
@@ -2669,6 +2910,12 @@ public sealed class FranchiseSession
             return false;
         }
 
+        if (IsSeasonAdvanceBlockedByPendingDraftWork())
+        {
+            statusMessage = GetNextSeasonBlockerMessage();
+            return false;
+        }
+
         if (IsRegularSeasonComplete())
         {
             statusMessage = $"The {GetCurrentSeasonYear()} regular season is complete. Use Next Season to move into the offseason.";
@@ -2703,7 +2950,12 @@ public sealed class FranchiseSession
         var hasPractice = TryGetPracticeSessionInfo(currentDate, out var practiceSession);
         var developmentResults = ApplyPracticeDevelopmentAcrossLeague(currentDate, SelectedTeam.Name);
 
-        AdvanceFranchiseDateTo(currentDate.AddDays(1));
+        var holdAtSeasonBoundary = ShouldHoldAtSeasonBoundaryForDraft(currentDate);
+        if (!holdAtSeasonBoundary)
+        {
+            AdvanceFranchiseDateTo(currentDate.AddDays(1));
+        }
+
         ClearLiveMatchState(LiveMatchMode.Franchise);
         if (saveAfterAdvance)
         {
@@ -2715,6 +2967,11 @@ public sealed class FranchiseSession
             statusMessage = otherGames.Count > 0
                 ? $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)} Around the league, {otherGames.Count} other game(s) were played."
                 : $"{currentDate:ddd, MMM d}: {string.Join(" ", gameSummaries)}";
+            if (holdAtSeasonBoundary)
+            {
+                statusMessage = $"{statusMessage} {GetNextSeasonBlockerMessage()}";
+            }
+
             return true;
         }
 
@@ -2724,12 +2981,22 @@ public sealed class FranchiseSession
             statusMessage = todaysGames.Count > 0
                 ? $"{practiceSummary} Around the league, {todaysGames.Count} game(s) were played."
                 : practiceSummary;
+            if (holdAtSeasonBoundary)
+            {
+                statusMessage = $"{statusMessage} {GetNextSeasonBlockerMessage()}";
+            }
+
             return true;
         }
 
         statusMessage = todaysGames.Count > 0
             ? $"Advanced through {currentDate:ddd, MMM d}. {todaysGames.Count} league game(s) were played."
             : $"Advanced through {currentDate:ddd, MMM d}. No game or full-team workout was on the calendar.";
+        if (holdAtSeasonBoundary)
+        {
+            statusMessage = $"{statusMessage} {GetNextSeasonBlockerMessage()}";
+        }
+
         return true;
     }
 
@@ -3595,7 +3862,7 @@ public sealed class FranchiseSession
 
         return GetAllPlayers()
             .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
-            .Where(player => IsPlayerOnMajorLeagueRoster(player.PlayerId))
+            .Where(player => IsPlayerOnActiveTeamRoster(player.PlayerId))
             .Select(player =>
             {
                 rostersByPlayerId.TryGetValue(player.PlayerId, out var roster);
@@ -3618,13 +3885,14 @@ public sealed class FranchiseSession
 
     private bool IsPlayerOnMajorLeagueRoster(Guid playerId)
     {
-        if (!_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
-        {
-            return true;
-        }
+        return string.Equals(GetPlayerRosterAssignment(playerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase);
+    }
 
-        return !string.Equals(createdPlayer.RosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(createdPlayer.RosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase);
+    private bool IsPlayerOnActiveTeamRoster(Guid playerId)
+    {
+        var rosterAssignment = GetPlayerRosterAssignment(playerId);
+        return !string.Equals(rosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(rosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase);
     }
 
     private List<Guid?> BuildLineupSlots(string teamName)
@@ -3679,8 +3947,46 @@ public sealed class FranchiseSession
     private bool HasRequiredDraftWorkRemaining()
     {
         return _saveState.ActiveDraft != null
-            || _saveState.LastCompletedDraftSeasonYear != GetCurrentSeasonYear()
+            || !HasCompletedDraftForCurrentSeason()
             || HasPendingDraftRosterDecisions();
+    }
+
+    private bool HasCompletedDraftForCurrentSeason()
+    {
+        var seasonYear = GetCurrentSeasonYear();
+        return _saveState.LastCompletedDraftSeasonYear == seasonYear && HasRecordedDraftResultsForSeason(seasonYear);
+    }
+
+    private bool HasRecordedDraftResultsForSeason(int seasonYear)
+    {
+        return _saveState.CreatedPlayers.Values.Any(player => player.DraftSeasonYear == seasonYear);
+    }
+
+    private bool IsSeasonAdvanceBlockedByPendingDraftWork()
+    {
+        if (SelectedTeam == null || !HasRequiredDraftWorkRemaining())
+        {
+            return false;
+        }
+
+        var currentDate = GetCurrentFranchiseDate().Date;
+        if (currentDate < GetSeasonCalendarEndDate().Date)
+        {
+            return false;
+        }
+
+        return GetRemainingScheduledGamesForDate(currentDate).Count == 0;
+    }
+
+    private bool ShouldHoldAtSeasonBoundaryForDraft(DateTime currentDate)
+    {
+        if (!HasRequiredDraftWorkRemaining())
+        {
+            return false;
+        }
+
+        return currentDate.Date >= GetSeasonCalendarEndDate().Date
+            && GetRemainingScheduledGamesForDate(currentDate.Date).Count == 0;
     }
 
     private bool HasPendingDraftRosterDecisions()
@@ -3716,14 +4022,76 @@ public sealed class FranchiseSession
         return true;
     }
 
-    private string GetRosterAssignmentLabel(FranchiseCreatedPlayerState createdPlayer)
+    private string GetPlayerRosterAssignment(Guid playerId)
     {
-        if (string.Equals(createdPlayer.RosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        if (_saveState.PlayerRosterAssignments.TryGetValue(playerId, out var rosterAssignment) && !string.IsNullOrWhiteSpace(rosterAssignment))
         {
-            return $"{createdPlayer.TeamName} Affiliate";
+            return rosterAssignment;
         }
 
-        if (string.Equals(createdPlayer.RosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer) && !string.IsNullOrWhiteSpace(createdPlayer.RosterAssignment))
+        {
+            return createdPlayer.RosterAssignment;
+        }
+
+        return MajorLeagueRosterAssignment;
+    }
+
+    private void SetPlayerRosterAssignment(Guid playerId, string rosterAssignment)
+    {
+        _saveState.PlayerRosterAssignments[playerId] = rosterAssignment;
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
+        {
+            createdPlayer.RosterAssignment = rosterAssignment;
+        }
+    }
+
+    private bool TryGetSelectedTeamPlayer(Guid playerId, out PlayerImportDto player, out string statusMessage)
+    {
+        player = new PlayerImportDto();
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before managing roster assignments.";
+            return false;
+        }
+
+        var resolvedPlayer = FindPlayerImport(playerId);
+        if (resolvedPlayer == null || !string.Equals(GetAssignedTeamName(playerId, resolvedPlayer.TeamName), SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "That player is not currently on your roster.";
+            return false;
+        }
+
+        player = resolvedPlayer;
+        statusMessage = string.Empty;
+        return true;
+    }
+
+    private void RefreshRosterSlots(string teamName)
+    {
+        var teamState = GetOrCreateTeamState(teamName);
+        InitializeLineupSlots(teamState, teamName);
+        InitializeRotationSlots(teamState, teamName);
+    }
+
+    private string GetRosterAssignmentLabel(FranchiseCreatedPlayerState createdPlayer)
+    {
+        return GetRosterAssignmentLabel(createdPlayer.TeamName, createdPlayer.RosterAssignment);
+    }
+
+    private string GetRosterAssignmentLabel(string teamName, string rosterAssignment)
+    {
+        if (string.Equals(rosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{teamName} Affiliate";
+        }
+
+        if (string.Equals(rosterAssignment, ReserveRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Organization Roster";
+        }
+
+        if (string.Equals(rosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase))
         {
             return "Decision Needed";
         }
@@ -3835,7 +4203,8 @@ public sealed class FranchiseSession
     {
         return new DraftCpuTeamContext(
             teamName,
-            GetTeamRoster(teamName)
+            GetAllPlayers()
+                .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
                 .Select(player => player.PrimaryPosition)
                 .ToList());
     }
@@ -3923,6 +4292,8 @@ public sealed class FranchiseSession
                 createdPlayer.RosterAssignment = pick.OverallRating >= 68 ? MajorLeagueRosterAssignment : AffiliateRosterAssignment;
                 createdPlayer.RequiresRosterDecision = false;
             }
+
+            _saveState.PlayerRosterAssignments[pick.PlayerId] = createdPlayer.RosterAssignment;
         }
 
         _saveState.PlayerAssignments[pick.PlayerId] = pick.TeamName;
@@ -4012,6 +4383,42 @@ public sealed class FranchiseSession
         return hasChanges;
     }
 
+    private bool EnsurePlayerRosterAssignmentsGenerated()
+    {
+        var hasChanges = false;
+
+        foreach (var player in _leagueData.Players)
+        {
+            if (_saveState.PlayerRosterAssignments.TryGetValue(player.PlayerId, out var rosterAssignment) && !string.IsNullOrWhiteSpace(rosterAssignment))
+            {
+                continue;
+            }
+
+            _saveState.PlayerRosterAssignments[player.PlayerId] = MajorLeagueRosterAssignment;
+            hasChanges = true;
+        }
+
+        foreach (var player in _saveState.CreatedPlayers.Values)
+        {
+            var resolvedAssignment = string.IsNullOrWhiteSpace(player.RosterAssignment)
+                ? (player.RequiresRosterDecision ? PendingRosterAssignment : MajorLeagueRosterAssignment)
+                : player.RosterAssignment;
+
+            if (!_saveState.PlayerRosterAssignments.TryGetValue(player.PlayerId, out var rosterAssignment) || string.IsNullOrWhiteSpace(rosterAssignment))
+            {
+                _saveState.PlayerRosterAssignments[player.PlayerId] = resolvedAssignment;
+                hasChanges = true;
+            }
+            else if (!string.Equals(player.RosterAssignment, rosterAssignment, StringComparison.OrdinalIgnoreCase))
+            {
+                player.RosterAssignment = rosterAssignment;
+                hasChanges = true;
+            }
+        }
+
+        return hasChanges;
+    }
+
     private bool EnsureCreatedPlayerRosterAssignmentsGenerated()
     {
         var hasChanges = false;
@@ -4034,10 +4441,33 @@ public sealed class FranchiseSession
             }
 
             player.RosterAssignment = MajorLeagueRosterAssignment;
+            _saveState.PlayerRosterAssignments[player.PlayerId] = MajorLeagueRosterAssignment;
             hasChanges = true;
         }
 
         return hasChanges;
+    }
+
+    private bool EnsureDraftCompletionStateConsistency()
+    {
+        var seasonYear = GetCurrentSeasonYear();
+        if (_saveState.ActiveDraft != null)
+        {
+            return false;
+        }
+
+        if (_saveState.LastCompletedDraftSeasonYear != seasonYear)
+        {
+            return false;
+        }
+
+        if (HasRecordedDraftResultsForSeason(seasonYear))
+        {
+            return false;
+        }
+
+        _saveState.LastCompletedDraftSeasonYear = seasonYear - 1;
+        return true;
     }
 
     private bool EnsureCoachingStaffGenerated()
@@ -4277,11 +4707,18 @@ public sealed class FranchiseSession
 
     private bool HasRosterRoom(string teamName, int incomingPlayers, int outgoingPlayers)
     {
-        var projectedCount = GetTeamRosterCount(teamName) + incomingPlayers - outgoingPlayers;
+        var projectedCount = GetTeamFortyManCount(teamName) + incomingPlayers - outgoingPlayers;
         return projectedCount <= MaxRosterSize;
     }
 
     private int GetTeamRosterCount(string teamName)
+    {
+        return GetAllPlayers().Count(player =>
+            string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase)
+            && IsPlayerOnActiveTeamRoster(player.PlayerId));
+    }
+
+    private int GetTeamFortyManCount(string teamName)
     {
         return _leagueData.Players.Count(player =>
             string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase)
@@ -4892,8 +5329,9 @@ public sealed class FranchiseSession
 
     private void SanitizeSlotsForCurrentRoster(List<Guid?> slots, string teamName)
     {
-        var validIds = _leagueData.Players
+        var validIds = GetAllPlayers()
             .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Where(player => IsPlayerOnActiveTeamRoster(player.PlayerId))
             .Select(player => player.PlayerId)
             .ToHashSet();
         var seen = new HashSet<Guid>();
@@ -5680,6 +6118,11 @@ public sealed class FranchiseSession
 
     private void AdvanceFranchiseDateToNextUnplayedGame()
     {
+        if (IsSeasonAdvanceBlockedByPendingDraftWork())
+        {
+            return;
+        }
+
         var currentDate = _saveState.CurrentFranchiseDate.Date;
         var nextGame = GetNextScheduledGameForSelectedTeam();
         var targetDate = nextGame?.Date.Date ?? currentDate.AddDays(1);
@@ -6527,24 +6970,158 @@ public sealed class FranchiseSession
             return;
         }
 
-        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
         var seasonYear = GetCurrentTrainingReportSeason();
         var coachNotes = GetPracticeReportCoachNotes(results);
 
-        teamState.TrainingReports.RemoveAll(report => report.SeasonYear != seasonYear || report.ReportDate.Date == practiceDate.Date);
-        teamState.TrainingReports.Add(new TrainingReportState
-        {
-            ReportDate = practiceDate.Date,
-            SeasonYear = seasonYear,
-            Title = BuildPracticeReportTitle(practiceDate, practiceSession),
-            FocusLabel = GetPracticeFocusLabel(practiceSession.Focus),
-            Summary = results.Count == 0
+        StoreTeamReport(
+            SelectedTeam.Name,
+            practiceDate.Date,
+            seasonYear,
+            BuildPracticeReportTitle(practiceDate, practiceSession),
+            GetPracticeFocusLabel(practiceSession.Focus),
+            results.Count == 0
                 ? coachNotes[0]
                 : $"{coachNotes.Count} staff update(s) were filed after the workout.",
-            CoachNotes = coachNotes
+            coachNotes,
+            replaceSameDayReport: true);
+    }
+
+    private void StoreOffseasonReports(OffseasonSummaryState offseasonSummary)
+    {
+        if (SelectedTeam == null)
+        {
+            return;
+        }
+
+        var reportDate = GetCurrentFranchiseDate().Date;
+        var seasonYear = offseasonSummary.NewSeasonYear;
+        var selectedTeamName = SelectedTeam.Name;
+
+        StoreTeamReport(
+            selectedTeamName,
+            reportDate,
+            seasonYear,
+            $"{offseasonSummary.CompletedSeasonYear}-{offseasonSummary.NewSeasonYear} Offseason Summary",
+            "Offseason",
+            offseasonSummary.Overview,
+            BuildOffseasonOverviewNotes(offseasonSummary));
+
+        var contractNotes = BuildOffseasonContractNotes(offseasonSummary);
+        if (contractNotes.Count > 0)
+        {
+            StoreTeamReport(
+                selectedTeamName,
+                reportDate,
+                seasonYear,
+                "Contract Activity Report",
+                "Contracts",
+                $"{offseasonSummary.ExtensionsCompleted} extension(s) and {offseasonSummary.FreeAgentsSigned} signing(s) shaped the market heading into {offseasonSummary.NewSeasonYear}.",
+                contractNotes);
+        }
+
+        var tradeNotes = BuildOffseasonTradeNotes(offseasonSummary);
+        if (tradeNotes.Count > 0)
+        {
+            StoreTeamReport(
+                selectedTeamName,
+                reportDate,
+                seasonYear,
+                "Trade Activity Report",
+                "Trades",
+                $"{offseasonSummary.TradesCompleted} trade(s) landed around the league during the offseason cycle.",
+                tradeNotes);
+        }
+    }
+
+    private List<string> BuildOffseasonOverviewNotes(OffseasonSummaryState offseasonSummary)
+    {
+        var notes = new List<string>
+        {
+            $"{offseasonSummary.ExpiringContracts} contract(s) expired across the league.",
+            $"{offseasonSummary.ExtensionOffers} extension offer(s) went out and {offseasonSummary.ExtensionsCompleted} were accepted.",
+            $"{offseasonSummary.FreeAgentsSigned} free-agent signing(s) were completed.",
+            $"{offseasonSummary.TradesCompleted} trade(s) were finalized across the league."
+        };
+
+        notes.AddRange(offseasonSummary.SelectedTeamContractDecisions
+            .Select(decision => $"{decision.PlayerName}: {decision.Outcome} ({decision.TeamName})."));
+        notes.AddRange(offseasonSummary.SelectedTeamTradeDecisions
+            .Select(decision => decision.Description));
+
+        if (notes.Count == 4)
+        {
+            notes.Add("Your club had a quiet offseason with no direct contract or trade moves logged.");
+        }
+
+        return notes;
+    }
+
+    private static List<string> BuildOffseasonContractNotes(OffseasonSummaryState offseasonSummary)
+    {
+        var notes = offseasonSummary.SelectedTeamContractDecisions
+            .Select(decision =>
+            {
+                var salary = decision.AgreedSalary > 0m
+                    ? decision.AgreedSalary
+                    : (decision.TeamExpectedSalary > 0m ? decision.TeamExpectedSalary : decision.PlayerExpectedSalary);
+                var years = decision.AgreedYears > 0
+                    ? decision.AgreedYears
+                    : (decision.TeamExpectedYears > 0 ? decision.TeamExpectedYears : decision.PlayerExpectedYears);
+                var salaryLabel = salary > 0m ? $" at {salary:C0}/yr" : string.Empty;
+                var termLabel = years > 0 ? $" for {years} year(s)" : string.Empty;
+                return $"{decision.PlayerName}: {decision.Outcome}{termLabel}{salaryLabel}.";
+            })
+            .ToList();
+
+        if (notes.Count == 0 && offseasonSummary.ExtensionOffers > 0)
+        {
+            notes.Add($"League front offices issued {offseasonSummary.ExtensionOffers} extension offer(s), but your club did not make a direct contract move.");
+        }
+
+        return notes;
+    }
+
+    private static List<string> BuildOffseasonTradeNotes(OffseasonSummaryState offseasonSummary)
+    {
+        var notes = offseasonSummary.SelectedTeamTradeDecisions
+            .Select(decision => decision.Description)
+            .ToList();
+
+        notes.AddRange(offseasonSummary.LeagueNotes.Take(6));
+        return notes;
+    }
+
+    private void StoreTeamReport(string teamName, DateTime reportDate, int seasonYear, string title, string focusLabel, string summary, IReadOnlyList<string> coachNotes, bool replaceSameDayReport = false)
+    {
+        var teamState = GetOrCreateTeamState(teamName);
+        teamState.TrainingReports ??= new List<TrainingReportState>();
+
+        if (replaceSameDayReport)
+        {
+            teamState.TrainingReports.RemoveAll(report => report.SeasonYear != seasonYear || report.ReportDate.Date == reportDate.Date);
+        }
+        else
+        {
+            teamState.TrainingReports.RemoveAll(report =>
+                report.SeasonYear == seasonYear &&
+                report.ReportDate.Date == reportDate.Date &&
+                string.Equals(report.Title, title, StringComparison.OrdinalIgnoreCase));
+        }
+
+        teamState.TrainingReports.Add(new TrainingReportState
+        {
+            ReportDate = reportDate.Date,
+            SeasonYear = seasonYear,
+            Title = title,
+            FocusLabel = focusLabel,
+            Summary = summary,
+            CoachNotes = coachNotes.ToList()
         });
+
         teamState.TrainingReports = teamState.TrainingReports
             .OrderByDescending(report => report.ReportDate)
+            .ThenBy(report => report.Title)
+            .Take(24)
             .ToList();
     }
 

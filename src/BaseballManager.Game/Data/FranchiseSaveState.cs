@@ -37,6 +37,8 @@ public sealed class FranchiseSaveState
 
     public Dictionary<Guid, string> PlayerAssignments { get; set; } = new();
 
+    public Dictionary<Guid, string> PlayerRosterAssignments { get; set; } = new();
+
     public Dictionary<Guid, FranchiseCreatedPlayerState> CreatedPlayers { get; set; } = new();
 
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }

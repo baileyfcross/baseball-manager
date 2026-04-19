@@ -108,6 +108,22 @@ public sealed record DraftFortyManPlayerView(
     bool IsDraftedPlayer,
     int MinorLeagueOptionsRemaining);
 
+public sealed record OrganizationRosterPlayerView(
+    Guid PlayerId,
+    string PlayerName,
+    string PrimaryPosition,
+    string SecondaryPosition,
+    int Age,
+    string AssignmentLabel,
+    bool IsOnFortyMan,
+    bool IsDraftedPlayer,
+    int MinorLeagueOptionsRemaining,
+    bool CanAssignToFortyMan,
+    bool CanAssignToAffiliate,
+    bool CanRelease,
+    int? LineupSlot,
+    int? RotationSlot);
+
 public sealed record DraftBoardView(
     bool HasActiveDraft,
     bool IsComplete,

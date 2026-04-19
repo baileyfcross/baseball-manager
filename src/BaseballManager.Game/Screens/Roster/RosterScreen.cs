@@ -4,113 +4,78 @@ using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
 using Microsoft.Xna.Framework;
-using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 
 namespace BaseballManager.Game.Screens.Roster;
 
 public sealed class RosterScreen : GameScreen
 {
+    private enum RosterFilterMode
+    {
+        All,
+        FortyMan,
+        Affiliate,
+        Hitters,
+        Pitchers
+    }
+
+    private enum RosterSortMode
+    {
+        Status,
+        Name,
+        Position
+    }
+
+    private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly ButtonControl _viewButton;
-    private readonly ButtonControl _hiddenMenuButton;
     private readonly ButtonControl _filterButton;
+    private readonly ButtonControl _sortButton;
+    private readonly ButtonControl _assign40ManButton;
+    private readonly ButtonControl _assignAffiliateButton;
+    private readonly ButtonControl _removeFromFortyManButton;
+    private readonly ButtonControl _releaseButton;
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
-    private RosterViewMode _viewMode;
-    private RosterFilterMode _filterMode;
-    private bool _showViewDropdown;
-    private bool _showFilterDropdown;
-    private bool _showTrainingGrowthMenu;
-    private int _pageIndex;
-    private string? _sortColumnStandard;
-    private string? _sortColumnSeasonStats;
-    private string? _sortColumnLastSeasonStats;
-    private string? _sortColumnScoutNotes;
-    private string? _sortColumnMedicalReport;
-    private string? _sortColumnHiddenRatings;
-    private string? _sortColumnTrainingGrowth;
-    private string? _sortColumnContracts;
-    private bool _sortAscending = true;
-    private readonly Dictionary<string, Rectangle> _headerHitBoxes = new();
     private Point _viewport = new(1280, 720);
-    private const int HeaderY = 160;
-    private const int HeaderHeight = 28;
-    private const int PageSize = 14;
+    private Guid? _selectedPlayerId;
+    private int _pageIndex;
+    private RosterFilterMode _filterMode = RosterFilterMode.All;
+    private RosterSortMode _sortMode = RosterSortMode.Status;
+    private string _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or release them outright from this screen.";
 
     public RosterScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
+        _screenManager = screenManager;
         _franchiseSession = franchiseSession;
-        _backButton = new ButtonControl
-        {
-            Label = "Back",
-            OnClick = () => screenManager.TransitionTo(nameof(FranchiseHubScreen))
-        };
-        _viewButton = new ButtonControl
-        {
-            Label = "View: Roster",
-            OnClick = () =>
-            {
-                _showViewDropdown = !_showViewDropdown;
-                if (_showViewDropdown)
-                {
-                    _showFilterDropdown = false;
-                }
-            }
-        };
-        _hiddenMenuButton = new ButtonControl
-        {
-            Label = "Training Growth: Off",
-            OnClick = () =>
-            {
-                _showTrainingGrowthMenu = !_showTrainingGrowthMenu;
-                _showViewDropdown = false;
-                _showFilterDropdown = false;
-                _pageIndex = 0;
-            }
-        };
-        _filterButton = new ButtonControl
-        {
-            Label = "Filter: All Players",
-            OnClick = () =>
-            {
-                _showFilterDropdown = !_showFilterDropdown;
-                if (_showFilterDropdown)
-                {
-                    _showViewDropdown = false;
-                }
-            }
-        };
-        _previousPageButton = new ButtonControl
-        {
-            Label = "Prev",
-            OnClick = () => _pageIndex = Math.Max(0, _pageIndex - 1)
-        };
-        _nextPageButton = new ButtonControl
-        {
-            Label = "Next",
-            OnClick = () => _pageIndex++
-        };
+        _backButton = new ButtonControl { Label = "Back", OnClick = () => _screenManager.TransitionTo(nameof(FranchiseHubScreen)) };
+        _filterButton = new ButtonControl { Label = "Filter: All", OnClick = CycleFilter };
+        _sortButton = new ButtonControl { Label = "Sort: Status", OnClick = CycleSort };
+        _assign40ManButton = new ButtonControl { Label = "Add To 40-Man", OnClick = AssignToFortyMan };
+        _assignAffiliateButton = new ButtonControl { Label = "Send To Affiliate", OnClick = AssignToAffiliate };
+        _removeFromFortyManButton = new ButtonControl { Label = "Remove From 40-Man", OnClick = RemoveFromFortyMan };
+        _releaseButton = new ButtonControl { Label = "Release", OnClick = ReleasePlayer };
+        _previousPageButton = new ButtonControl { Label = "Prev", OnClick = () => _pageIndex = Math.Max(0, _pageIndex - 1) };
+        _nextPageButton = new ButtonControl { Label = "Next", OnClick = () => _pageIndex++ };
     }
 
     public override void OnEnter()
     {
-        _pageIndex = 0;
-        _viewMode = RosterViewMode.Standard;
-        _filterMode = RosterFilterMode.All;
-        _showViewDropdown = false;
-        _showFilterDropdown = false;
-        _showTrainingGrowthMenu = false;
         _ignoreClicksUntilRelease = true;
-        _sortAscending = true;
+        _pageIndex = 0;
+        _filterMode = RosterFilterMode.All;
+        _sortMode = RosterSortMode.Status;
+        _selectedPlayerId = null;
+        _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or release them outright from this screen.";
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
         var currentMouseState = inputManager.MouseState;
+        var players = GetVisiblePlayers();
+        EnsureSelectionIsValid(players);
 
         if (_ignoreClicksUntilRelease)
         {
@@ -123,54 +88,52 @@ public sealed class RosterScreen : GameScreen
             return;
         }
 
-        if (_previousMouseState.LeftButton == ButtonState.Released &&
-            currentMouseState.LeftButton == ButtonState.Pressed)
+        if (_previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed)
         {
-            if (GetBackButtonBounds().Contains(currentMouseState.Position))
+            var mousePosition = currentMouseState.Position;
+            if (GetBackButtonBounds().Contains(mousePosition))
             {
                 _backButton.Click();
             }
-            else if (GetViewButtonBounds().Contains(currentMouseState.Position))
-            {
-                _viewButton.Click();
-            }
-            else if (GetFilterButtonBounds().Contains(currentMouseState.Position))
+            else if (GetFilterButtonBounds().Contains(mousePosition))
             {
                 _filterButton.Click();
             }
-            else if (GetHiddenMenuButtonBounds().Contains(currentMouseState.Position))
+            else if (GetSortButtonBounds().Contains(mousePosition))
             {
-                _hiddenMenuButton.Click();
+                _sortButton.Click();
             }
-            else if (_showViewDropdown)
+            else if (GetAssign40ManBounds().Contains(mousePosition))
             {
-                TrySelectViewOption(currentMouseState.Position);
+                _assign40ManButton.Click();
             }
-            else if (_showFilterDropdown)
+            else if (GetAssignAffiliateBounds().Contains(mousePosition))
             {
-                TrySelectFilterOption(currentMouseState.Position);
+                _assignAffiliateButton.Click();
             }
-            else if (GetPreviousPageBounds().Contains(currentMouseState.Position))
+            else if (GetRemoveFromFortyManBounds().Contains(mousePosition))
+            {
+                _removeFromFortyManButton.Click();
+            }
+            else if (GetReleaseButtonBounds().Contains(mousePosition))
+            {
+                _releaseButton.Click();
+            }
+            else if (GetPreviousPageBounds().Contains(mousePosition))
             {
                 _previousPageButton.Click();
             }
-            else if (GetNextPageBounds().Contains(currentMouseState.Position))
+            else if (GetNextPageBounds().Contains(mousePosition))
             {
-                var displayMode = _showTrainingGrowthMenu ? RosterViewMode.TrainingGrowth : _viewMode;
-                var teamPlayers = ApplySorting(ApplyRosterFilter(GetRosterRows()), displayMode);
-                var maxPage = Math.Max(0, (int)Math.Ceiling(teamPlayers.Count / (double)PageSize) - 1);
+                var maxPage = Math.Max(0, (int)Math.Ceiling(players.Count / (double)GetPageSize()) - 1);
                 if (_pageIndex < maxPage)
                 {
                     _nextPageButton.Click();
                 }
             }
-            else if (currentMouseState.Y >= GetHeaderY() && currentMouseState.Y < GetHeaderY() + HeaderHeight)
+            else
             {
-                var clickedColumn = GetClickedColumn(currentMouseState.X);
-                if (!string.IsNullOrEmpty(clickedColumn))
-                {
-                    HandleColumnSort(clickedColumn);
-                }
+                TrySelectPlayer(mousePosition, players);
             }
         }
 
@@ -180,958 +143,360 @@ public sealed class RosterScreen : GameScreen
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
-
-        var displayMode = _showTrainingGrowthMenu ? RosterViewMode.TrainingGrowth : _viewMode;
-
-        _viewButton.Label = _showViewDropdown
-            ? $"View: {GetViewLabel(_viewMode)} ^"
-            : $"View: {GetViewLabel(_viewMode)} v";
-        _hiddenMenuButton.Label = _showTrainingGrowthMenu ? "Training Growth: On" : "Training Growth: Off";
-        _filterButton.Label = _showFilterDropdown
-            ? $"Filter: {GetFilterLabel(_filterMode)} ^"
-            : $"Filter: {GetFilterLabel(_filterMode)} v";
-
-        var title = displayMode switch
-        {
-            RosterViewMode.SeasonStats => "Roster - Season Stats",
-            RosterViewMode.LastSeasonStats => "Roster - Last Season",
-            RosterViewMode.ScoutNotes => "Roster - Scout Notes",
-            RosterViewMode.MedicalReport => "Roster - Medical Report",
-            RosterViewMode.HiddenRatings => "Roster - Secret Attributes",
-            RosterViewMode.TrainingGrowth => "Roster - Training Growth",
-            RosterViewMode.Contracts => "Roster - Contracts",
-            _ => "Roster"
-        };
-
-        uiRenderer.DrawText(title, new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
-        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"Active Filter: {GetFilterDescription(_filterMode)}", new Rectangle(168, 110, Math.Max(420, _viewport.X - 220), 20), Color.White, uiRenderer.ScoreboardFont);
-        if (displayMode == RosterViewMode.TrainingGrowth)
-        {
-            var trainingWindowText = $"Training window: {_franchiseSession.GetSpringTrainingStartDate():MMM d, yyyy} -> {_franchiseSession.GetCurrentFranchiseDate():MMM d, yyyy}";
-            uiRenderer.DrawTextInBounds(trainingWindowText, new Rectangle(168, 132, Math.Max(520, _viewport.X - 220), 20), Color.Gold, uiRenderer.UiSmallFont);
-        }
-
-        var rosterRows = GetRosterRows();
-        var filteredRows = ApplyRosterFilter(rosterRows);
-        var sortedRows = ApplySorting(filteredRows, displayMode);
-
-        if (sortedRows.Count == 0)
-        {
-            uiRenderer.DrawText("No roster data found for the selected team with the current filter.", new Vector2(GetHeaderX(), GetHeaderY() + 20), Color.White);
-        }
-        else
-        {
-            var startIndex = _pageIndex * PageSize;
-            var visibleRows = sortedRows.Skip(startIndex).Take(PageSize).ToList();
-
-            switch (displayMode)
-            {
-                case RosterViewMode.SeasonStats:
-                    DrawSeasonStatsHeader(uiRenderer, RosterViewMode.SeasonStats);
-                    DrawSeasonStatsRows(uiRenderer, visibleRows, useLastSeasonStats: false);
-                    break;
-
-                case RosterViewMode.LastSeasonStats:
-                    DrawSeasonStatsHeader(uiRenderer, RosterViewMode.LastSeasonStats);
-                    DrawSeasonStatsRows(uiRenderer, visibleRows, useLastSeasonStats: true);
-                    break;
-
-                case RosterViewMode.ScoutNotes:
-                    DrawScoutNotesHeader(uiRenderer);
-                    for (var i = 0; i < visibleRows.Count; i++)
-                    {
-                        var row = visibleRows[i];
-                        var note = Truncate(_franchiseSession.GetQuickScoutNote(row.PlayerId), 70);
-                        var line = string.Format(
-                            "{0,-18} {1,-3} {2}",
-                            Truncate(row.PlayerName, 18),
-                            row.PrimaryPosition,
-                            note);
-                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
-                    }
-                    break;
-
-                case RosterViewMode.MedicalReport:
-                    DrawMedicalReportHeader(uiRenderer);
-                    for (var i = 0; i < visibleRows.Count; i++)
-                    {
-                        var row = visibleRows[i];
-                        var line = string.Format(
-                            "{0,-18} {1,-3} {2,-10} {3}",
-                            Truncate(row.PlayerName, 18),
-                            row.PrimaryPosition,
-                            Truncate(row.MedicalStatus, 10),
-                            Truncate(row.MedicalReport, 54));
-                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
-                    }
-                    break;
-
-                case RosterViewMode.HiddenRatings:
-                    DrawHiddenRatingsHeader(uiRenderer);
-                    for (var i = 0; i < visibleRows.Count; i++)
-                    {
-                        var row = visibleRows[i];
-                        var ratings = row.HiddenRatings;
-                        var line = string.Format(
-                            "{0,-12} {1,-3} {2,3} {3,3} {4,3} {5,4:0.#} {6,4:0.#} {7,4:0.#} {8,4:0.#} {9,4:0.#} {10,4:0.#} {11,4:0.#} {12,4:0.#} {13,4:0.#}",
-                            Truncate(row.PlayerName, 12),
-                            row.PrimaryPosition,
-                            row.Age,
-                            ratings.OverallRating,
-                            ratings.AttributeTotal,
-                            ratings.ContactExactRating,
-                            ratings.PowerExactRating,
-                            ratings.DisciplineExactRating,
-                            ratings.SpeedExactRating,
-                            ratings.FieldingExactRating,
-                            ratings.ArmExactRating,
-                            ratings.PitchingExactRating,
-                            ratings.StaminaExactRating,
-                            ratings.DurabilityExactRating);
-                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
-                    }
-                    break;
-
-                case RosterViewMode.TrainingGrowth:
-                    DrawTrainingGrowthHeader(uiRenderer);
-                    DrawTrainingGrowthRows(uiRenderer, visibleRows);
-                    break;
-
-                case RosterViewMode.Contracts:
-                    DrawContractsHeader(uiRenderer);
-                    for (var i = 0; i < visibleRows.Count; i++)
-                    {
-                        var row = visibleRows[i];
-                        var line = string.Format(
-                            "{0,-18} {1,-3} {2,3}  {3,7}  {4,2}yr",
-                            Truncate(row.PlayerName, 18),
-                            row.PrimaryPosition,
-                            row.Age,
-                            FormatSalary(row.AnnualSalary),
-                            row.ContractYears);
-                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
-                    }
-                    break;
-
-                default:
-                    DrawStandardHeader(uiRenderer);
-                    for (var i = 0; i < visibleRows.Count; i++)
-                    {
-                        var row = visibleRows[i];
-                        var line = string.Format(
-                            "{0}  {1,-22} {2,-4} {3,-4} {4,3}   {5,2}      {6,2}",
-                            row.PlayerId.ToString("N")[..8],
-                            Truncate(row.PlayerName, 22),
-                            row.PrimaryPosition,
-                            row.SecondaryPosition,
-                            row.Age,
-                            row.LineupSlot?.ToString() ?? "-",
-                            row.RotationSlot?.ToString() ?? "-");
-                        uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
-                    }
-                    break;
-            }
-
-            DrawPagingButtons(uiRenderer, sortedRows.Count, PageSize);
-        }
-
         var mousePosition = Mouse.GetState().Position;
-        var backBounds = GetBackButtonBounds();
-        var viewBounds = GetViewButtonBounds();
-        var filterBounds = GetFilterButtonBounds();
-        var hiddenMenuBounds = GetHiddenMenuButtonBounds();
-        uiRenderer.DrawButton(_backButton.Label, backBounds, backBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_viewButton.Label, viewBounds, viewBounds.Contains(mousePosition) || _showViewDropdown ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
-        uiRenderer.DrawButton(_filterButton.Label, filterBounds, filterBounds.Contains(mousePosition) || _showFilterDropdown ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
-        uiRenderer.DrawButton(_hiddenMenuButton.Label, hiddenMenuBounds, hiddenMenuBounds.Contains(mousePosition) || _showTrainingGrowthMenu ? Color.DarkGoldenrod : Color.SaddleBrown, Color.White);
+        var players = GetVisiblePlayers();
+        EnsureSelectionIsValid(players);
+        var selectedPlayer = GetSelectedPlayer(players);
+        var contractsByPlayerId = _franchiseSession.GetSelectedTeamEconomy().PlayerContracts.ToDictionary(contract => contract.SubjectId, contract => contract);
 
-        if (_showViewDropdown)
+        _filterButton.Label = $"Filter: {GetFilterLabel(_filterMode)}";
+        _sortButton.Label = $"Sort: {GetSortLabel(_sortMode)}";
+
+        uiRenderer.DrawText("Roster", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, 360, 22), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(48, 112, Math.Max(640, _viewport.X - 96), 42), Color.White, uiRenderer.UiSmallFont, 2);
+
+        var listBounds = GetListPanelBounds();
+        var detailBounds = GetDetailPanelBounds();
+        uiRenderer.DrawButton(string.Empty, listBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawButton(string.Empty, detailBounds, new Color(38, 48, 56), Color.White);
+        uiRenderer.DrawTextInBounds("Organization Roster", new Rectangle(listBounds.X + 12, listBounds.Y + 8, listBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds("Player Details", new Rectangle(detailBounds.X + 12, detailBounds.Y + 8, detailBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
+
+        if (players.Count == 0)
         {
-            DrawViewDropdown(uiRenderer);
-        }
-
-        if (_showFilterDropdown)
-        {
-            DrawFilterDropdown(uiRenderer);
-        }
-    }
-
-    private void DrawSeasonStatsRows(UiRenderer uiRenderer, IReadOnlyList<RosterDisplayRow> rows, bool useLastSeasonStats)
-    {
-        for (var i = 0; i < rows.Count; i++)
-        {
-            var row = rows[i];
-            var stats = useLastSeasonStats ? row.LastSeasonStats : row.SeasonStats;
-            var line = string.Format(
-                "{0,-18} {1,-3} {2,5} {3,3} {4,3} {5,5} {6,5} {7,5}",
-                Truncate(row.PlayerName, 18),
-                row.PrimaryPosition,
-                stats.BattingAverageDisplay,
-                stats.HomeRuns,
-                stats.RunsBattedIn,
-                stats.OpsDisplay,
-                stats.EarnedRunAverageDisplay,
-                stats.WinLossDisplay);
-            uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
-        }
-    }
-
-    private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
-    {
-        var maxPage = Math.Max(0, (int)Math.Ceiling(totalRows / (double)pageSize) - 1);
-        uiRenderer.DrawText($"Page {_pageIndex + 1} / {maxPage + 1}", new Vector2(GetHeaderX(), GetPreviousPageBounds().Y - 26), Color.White, uiRenderer.ScoreboardFont);
-
-        var previousBounds = GetPreviousPageBounds();
-        var nextBounds = GetNextPageBounds();
-        uiRenderer.DrawButton(_previousPageButton.Label, previousBounds, previousBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_nextPageButton.Label, nextBounds, nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
-    }
-
-    private int GetHeaderX() => Math.Max(40, (_viewport.X - 1080) / 2);
-
-    private int GetHeaderY() => Math.Max(HeaderY, (_viewport.Y - 560) / 2);
-
-    private int GetRowY(int index) => GetHeaderY() + 40 + (index * 28);
-
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
-
-    private Rectangle GetViewButtonBounds() => new(_viewport.X - 270, 40, 210, 44);
-
-    private Rectangle GetFilterButtonBounds() => new(_viewport.X - 520, 40, 230, 44);
-
-    private Rectangle GetHiddenMenuButtonBounds() => new(Math.Max(40, _viewport.X - 750), 40, 210, 44);
-
-    private Rectangle GetPreviousPageBounds() => new(GetHeaderX(), _viewport.Y - 76, 120, 40);
-
-    private Rectangle GetNextPageBounds() => new(GetHeaderX() + 140, _viewport.Y - 76, 120, 40);
-
-    private void DrawViewDropdown(UiRenderer uiRenderer)
-    {
-        var options = GetViewOptions();
-        for (var i = 0; i < options.Count; i++)
-        {
-            var option = options[i];
-            var bounds = GetViewOptionBounds(i);
-            var isHovered = bounds.Contains(Mouse.GetState().Position);
-            var isSelected = option == _viewMode;
-            var color = isSelected ? Color.DarkSlateBlue : (isHovered ? Color.SteelBlue : Color.SlateGray);
-            uiRenderer.DrawButton(GetViewLabel(option), bounds, color, Color.White, uiRenderer.ScoreboardFont);
-        }
-    }
-
-    private bool TrySelectViewOption(Point mousePosition)
-    {
-        var options = GetViewOptions();
-        for (var i = 0; i < options.Count; i++)
-        {
-            if (!GetViewOptionBounds(i).Contains(mousePosition))
-            {
-                continue;
-            }
-
-            _viewMode = options[i];
-            _pageIndex = 0;
-            _showViewDropdown = false;
-            _showTrainingGrowthMenu = false;
-            return true;
-        }
-
-        _showViewDropdown = false;
-        return false;
-    }
-
-    private void DrawFilterDropdown(UiRenderer uiRenderer)
-    {
-        var options = GetFilterOptions();
-        for (var i = 0; i < options.Count; i++)
-        {
-            var option = options[i];
-            var bounds = GetFilterOptionBounds(i);
-            var isHovered = bounds.Contains(Mouse.GetState().Position);
-            var isSelected = option == _filterMode;
-            var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
-            uiRenderer.DrawButton(GetFilterLabel(option), bounds, color, Color.White, uiRenderer.ScoreboardFont);
-        }
-    }
-
-    private bool TrySelectFilterOption(Point mousePosition)
-    {
-        var options = GetFilterOptions();
-        for (var i = 0; i < options.Count; i++)
-        {
-            if (!GetFilterOptionBounds(i).Contains(mousePosition))
-            {
-                continue;
-            }
-
-            _filterMode = options[i];
-            _pageIndex = 0;
-            _showFilterDropdown = false;
-            return true;
-        }
-
-        _showFilterDropdown = false;
-        return false;
-    }
-
-    private Rectangle GetViewOptionBounds(int index)
-    {
-        var buttonBounds = GetViewButtonBounds();
-        return new Rectangle(buttonBounds.X, buttonBounds.Bottom + 4 + (index * 32), buttonBounds.Width, 28);
-    }
-
-    private Rectangle GetFilterOptionBounds(int index)
-    {
-        var buttonBounds = GetFilterButtonBounds();
-        return new Rectangle(buttonBounds.X, buttonBounds.Bottom + 4 + (index * 32), buttonBounds.Width, 28);
-    }
-
-    private static IReadOnlyList<RosterViewMode> GetViewOptions()
-    {
-        return
-        [
-            RosterViewMode.Standard,
-            RosterViewMode.SeasonStats,
-            RosterViewMode.LastSeasonStats,
-            RosterViewMode.ScoutNotes,
-            RosterViewMode.MedicalReport,
-            RosterViewMode.HiddenRatings,
-            RosterViewMode.Contracts
-        ];
-    }
-
-    private static IReadOnlyList<RosterFilterMode> GetFilterOptions()
-    {
-        return
-        [
-            RosterFilterMode.All,
-            RosterFilterMode.Hitters,
-            RosterFilterMode.Pitchers,
-            RosterFilterMode.Contact,
-            RosterFilterMode.Power,
-            RosterFilterMode.Speed,
-            RosterFilterMode.Fielding,
-            RosterFilterMode.Pitching,
-            RosterFilterMode.CurrentOps,
-            RosterFilterMode.CurrentEra,
-            RosterFilterMode.LastOps,
-            RosterFilterMode.LastEra
-        ];
-    }
-
-    private void DrawStandardHeader(UiRenderer uiRenderer)
-    {
-        _headerHitBoxes.Clear();
-        var headerBuilder = new System.Text.StringBuilder();
-
-        AppendStatic(headerBuilder, "ID        ");
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 22, RosterViewMode.Standard);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POS", 4, RosterViewMode.Standard);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "SEC", 4, RosterViewMode.Standard);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.Standard);
-        AppendStatic(headerBuilder, "   ");
-        AppendColumn(headerBuilder, uiRenderer, "LINEUP", 6, RosterViewMode.Standard);
-        AppendStatic(headerBuilder, "  ");
-        AppendColumn(headerBuilder, uiRenderer, "ROT", 3, RosterViewMode.Standard);
-
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
-    }
-
-    private void DrawSeasonStatsHeader(UiRenderer uiRenderer, RosterViewMode mode)
-    {
-        _headerHitBoxes.Clear();
-        var headerBuilder = new System.Text.StringBuilder();
-
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, mode);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POS", 3, mode);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "AVG", 5, mode);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "HR", 3, mode);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "RBI", 3, mode);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "OPS", 5, mode);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "ERA", 5, mode);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "W-L", 5, mode);
-
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
-    }
-
-    private void DrawScoutNotesHeader(UiRenderer uiRenderer)
-    {
-        _headerHitBoxes.Clear();
-        var headerBuilder = new System.Text.StringBuilder();
-
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.ScoutNotes);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.ScoutNotes);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "REPORT", 42, RosterViewMode.ScoutNotes);
-
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
-    }
-
-    private void DrawMedicalReportHeader(UiRenderer uiRenderer)
-    {
-        _headerHitBoxes.Clear();
-        var headerBuilder = new System.Text.StringBuilder();
-
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.MedicalReport);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.MedicalReport);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "STATUS", 10, RosterViewMode.MedicalReport);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "REPORT", 36, RosterViewMode.MedicalReport);
-
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
-    }
-
-    private void DrawHiddenRatingsHeader(UiRenderer uiRenderer)
-    {
-        _headerHitBoxes.Clear();
-        var headerBuilder = new System.Text.StringBuilder();
-
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 12, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "OVR", 3, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "TOT", 3, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "CON", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POW", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "DIS", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "SPD", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "FLD", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "ARM", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "PIT", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "STA", 4, RosterViewMode.HiddenRatings);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "DUR", 4, RosterViewMode.HiddenRatings);
-
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
-    }
-
-    private void DrawTrainingGrowthHeader(UiRenderer uiRenderer)
-    {
-        _headerHitBoxes.Clear();
-        var headerBuilder = new System.Text.StringBuilder();
-
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.TrainingGrowth);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.TrainingGrowth);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.TrainingGrowth);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "TOT", 5, RosterViewMode.TrainingGrowth);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "OVR", 4, RosterViewMode.TrainingGrowth);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "DETAILS", 42, RosterViewMode.TrainingGrowth);
-
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
-    }
-
-    private void DrawTrainingGrowthRows(UiRenderer uiRenderer, IReadOnlyList<RosterDisplayRow> rows)
-    {
-        for (var i = 0; i < rows.Count; i++)
-        {
-            var row = rows[i];
-            var line = string.Format(
-                "{0,-18} {1,-3} {2,3} {3,5} {4,4} {5}",
-                Truncate(row.PlayerName, 18),
-                row.PrimaryPosition,
-                row.Age,
-                FormatSignedValue(row.TrainingGrowth.TotalGain),
-                FormatSignedValue(row.TrainingGrowth.OverallGain),
-                Truncate(row.TrainingGrowth.TopDetails, 42));
-            uiRenderer.DrawText(line, new Vector2(GetHeaderX(), GetRowY(i)), Color.White, uiRenderer.ScoreboardFont);
-        }
-    }
-
-    private void DrawContractsHeader(UiRenderer uiRenderer)
-    {
-        _headerHitBoxes.Clear();
-        var headerBuilder = new System.Text.StringBuilder();
-
-        AppendColumn(headerBuilder, uiRenderer, "NAME", 18, RosterViewMode.Contracts);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "POS", 3, RosterViewMode.Contracts);
-        AppendStatic(headerBuilder, " ");
-        AppendColumn(headerBuilder, uiRenderer, "AGE", 3, RosterViewMode.Contracts);
-        AppendStatic(headerBuilder, "  ");
-        AppendColumn(headerBuilder, uiRenderer, "SALARY", 7, RosterViewMode.Contracts);
-        AppendStatic(headerBuilder, "  ");
-        AppendColumn(headerBuilder, uiRenderer, "YRS", 4, RosterViewMode.Contracts);
-
-        uiRenderer.DrawText(headerBuilder.ToString(), new Vector2(GetHeaderX(), GetHeaderY()), Color.White, uiRenderer.ScoreboardFont);
-    }
-
-    private static void AppendStatic(System.Text.StringBuilder builder, string value)
-    {
-        builder.Append(value);
-    }
-
-    private void AppendColumn(System.Text.StringBuilder builder, UiRenderer uiRenderer, string columnName, int width, RosterViewMode mode)
-    {
-        var prefix = builder.ToString();
-        var visibleLabel = GetDisplayColumnLabel(columnName, mode);
-        var paddedColumn = visibleLabel.PadRight(width);
-
-        var left = GetHeaderX() + (int)MathF.Floor(MeasureTextWidth(prefix, uiRenderer.ScoreboardFont));
-        var labelWidth = (int)MathF.Ceiling(MeasureTextWidth(visibleLabel, uiRenderer.ScoreboardFont));
-        _headerHitBoxes[columnName] = new Rectangle(left, GetHeaderY(), Math.Max(1, labelWidth), HeaderHeight);
-
-        builder.Append(paddedColumn);
-    }
-
-    private static float MeasureTextWidth(string text, SpriteFont? font)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return 0f;
-        }
-
-        return font?.MeasureString(text).X ?? (text.Length * 8f);
-    }
-
-    private string GetDisplayColumnLabel(string columnName, RosterViewMode mode)
-    {
-        var currentSort = GetCurrentSortColumn(mode);
-        if (currentSort == columnName)
-        {
-            var arrow = _sortAscending ? "^" : "v";
-            return $"{columnName}{arrow}";
-        }
-
-        return columnName;
-    }
-
-    private string? GetCurrentSortColumn(RosterViewMode mode)
-    {
-        return mode switch
-        {
-            RosterViewMode.Standard => _sortColumnStandard,
-            RosterViewMode.SeasonStats => _sortColumnSeasonStats,
-            RosterViewMode.LastSeasonStats => _sortColumnLastSeasonStats,
-            RosterViewMode.ScoutNotes => _sortColumnScoutNotes,
-            RosterViewMode.MedicalReport => _sortColumnMedicalReport,
-            RosterViewMode.HiddenRatings => _sortColumnHiddenRatings,
-            RosterViewMode.TrainingGrowth => _sortColumnTrainingGrowth,
-            RosterViewMode.Contracts => _sortColumnContracts,
-            _ => null
-        };
-    }
-
-    private string? GetClickedColumn(int mouseX)
-    {
-        foreach (var (columnName, hitBox) in _headerHitBoxes)
-        {
-            if (mouseX >= hitBox.Left && mouseX < hitBox.Right)
-            {
-                return columnName;
-            }
-        }
-
-        return null;
-    }
-
-    private void HandleColumnSort(string columnName)
-    {
-        var activeMode = _showTrainingGrowthMenu ? RosterViewMode.TrainingGrowth : _viewMode;
-        var currentSort = GetCurrentSortColumn(activeMode);
-
-        if (currentSort == columnName)
-        {
-            _sortAscending = !_sortAscending;
+            uiRenderer.DrawWrappedTextInBounds("No roster players match the current filter.", new Rectangle(listBounds.X + 12, listBounds.Y + 40, listBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
+            uiRenderer.DrawWrappedTextInBounds("Change the filter or return after adding players to the organization.", new Rectangle(detailBounds.X + 12, detailBounds.Y + 40, detailBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
         }
         else
         {
-            switch (activeMode)
+            DrawPlayerList(uiRenderer, players, mousePosition);
+            if (selectedPlayer != null)
             {
-                case RosterViewMode.Standard:
-                    _sortColumnStandard = columnName;
-                    break;
-                case RosterViewMode.SeasonStats:
-                    _sortColumnSeasonStats = columnName;
-                    break;
-                case RosterViewMode.LastSeasonStats:
-                    _sortColumnLastSeasonStats = columnName;
-                    break;
-                case RosterViewMode.ScoutNotes:
-                    _sortColumnScoutNotes = columnName;
-                    break;
-                case RosterViewMode.MedicalReport:
-                    _sortColumnMedicalReport = columnName;
-                    break;
-                case RosterViewMode.HiddenRatings:
-                    _sortColumnHiddenRatings = columnName;
-                    break;
-                case RosterViewMode.TrainingGrowth:
-                    _sortColumnTrainingGrowth = columnName;
-                    break;
-                case RosterViewMode.Contracts:
-                    _sortColumnContracts = columnName;
-                    break;
+                DrawPlayerDetail(uiRenderer, selectedPlayer, contractsByPlayerId);
             }
-
-            _sortAscending = true;
         }
 
+        DrawButtons(uiRenderer, mousePosition, selectedPlayer);
+    }
+
+    private void DrawPlayerList(UiRenderer uiRenderer, IReadOnlyList<OrganizationRosterPlayerView> players, Point mousePosition)
+    {
+        var pageSize = GetPageSize();
+        var maxPage = Math.Max(0, (int)Math.Ceiling(players.Count / (double)pageSize) - 1);
+        _pageIndex = Math.Clamp(_pageIndex, 0, maxPage);
+        var startIndex = _pageIndex * pageSize;
+        var visiblePlayers = players.Skip(startIndex).Take(pageSize).ToList();
+
+        for (var i = 0; i < visiblePlayers.Count; i++)
+        {
+            var player = visiblePlayers[i];
+            var bounds = GetPlayerRowBounds(i);
+            var isSelected = player.PlayerId == _selectedPlayerId;
+            var background = isSelected ? Color.DarkOliveGreen : (bounds.Contains(mousePosition) ? Color.DimGray : new Color(54, 62, 70));
+            uiRenderer.DrawButton(string.Empty, bounds, background, Color.White);
+            uiRenderer.DrawTextInBounds($"{player.PlayerName} | {player.PrimaryPosition}/{player.SecondaryPosition}".TrimEnd('/'), new Rectangle(bounds.X + 8, bounds.Y + 4, bounds.Width - 216, 16), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(player.AssignmentLabel, new Rectangle(bounds.Right - 208, bounds.Y + 4, 200, 16), player.IsOnFortyMan ? Color.Gold : Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
+            uiRenderer.DrawTextInBounds(GetPlayerListSummary(player), new Rectangle(bounds.X + 8, bounds.Y + 22, bounds.Width - 16, 14), Color.White, uiRenderer.UiSmallFont);
+        }
+
+        uiRenderer.DrawButton(_previousPageButton.Label, GetPreviousPageBounds(), _pageIndex > 0 && GetPreviousPageBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+        uiRenderer.DrawButton(_nextPageButton.Label, GetNextPageBounds(), _pageIndex < maxPage && GetNextPageBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+        uiRenderer.DrawTextInBounds($"Page {_pageIndex + 1}/{maxPage + 1}", new Rectangle(GetPreviousPageBounds().Right + 8, GetPreviousPageBounds().Y + 4, 120, 18), Color.White, uiRenderer.UiSmallFont);
+    }
+
+    private void DrawPlayerDetail(UiRenderer uiRenderer, OrganizationRosterPlayerView player, IReadOnlyDictionary<Guid, BaseballManager.Core.Economy.Contract> contractsByPlayerId)
+    {
+        var currentStats = _franchiseSession.GetPlayerSeasonStats(player.PlayerId);
+        var lastSeasonStats = _franchiseSession.GetLastSeasonStats(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var recentStats = _franchiseSession.GetRecentPlayerStats(player.PlayerId);
+        var scoutNote = _franchiseSession.GetQuickScoutNote(player.PlayerId);
+        var medicalStatus = _franchiseSession.GetPlayerMedicalStatus(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var medicalReport = _franchiseSession.GetPlayerMedicalReport(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        contractsByPlayerId.TryGetValue(player.PlayerId, out var contract);
+
+        var bounds = GetDetailPanelBounds();
+        var content = new Rectangle(bounds.X + 12, bounds.Y + 36, bounds.Width - 24, bounds.Height - 48);
+        uiRenderer.DrawTextInBounds(player.PlayerName, new Rectangle(content.X, content.Y, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"{player.PrimaryPosition}/{player.SecondaryPosition} | Age {player.Age} | {player.AssignmentLabel}", new Rectangle(content.X, content.Y + 24, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"40-Man Spots Used: {_franchiseSession.GetSelectedTeam40ManCount()}/40", new Rectangle(content.X, content.Y + 48, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+
+        var slotLabel = player.RotationSlot.HasValue
+            ? $"Rotation Slot: {player.RotationSlot.Value}"
+            : player.LineupSlot.HasValue
+                ? $"Lineup Slot: {player.LineupSlot.Value}"
+                : "Not in current lineup or rotation";
+        uiRenderer.DrawTextInBounds(slotLabel, new Rectangle(content.X, content.Y + 72, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+
+        uiRenderer.DrawTextInBounds("Current Season", new Rectangle(content.X, content.Y + 104, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(FormatSeasonLine(player.PrimaryPosition, currentStats), new Rectangle(content.X, content.Y + 126, content.Width, 36), Color.White, uiRenderer.UiSmallFont, 2);
+
+        uiRenderer.DrawTextInBounds("Last Season", new Rectangle(content.X, content.Y + 170, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(FormatSeasonLine(player.PrimaryPosition, lastSeasonStats), new Rectangle(content.X, content.Y + 192, content.Width, 36), Color.White, uiRenderer.UiSmallFont, 2);
+
+        uiRenderer.DrawTextInBounds("Recent Form", new Rectangle(content.X, content.Y + 236, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(FormatRecentLine(player.PrimaryPosition, recentStats), new Rectangle(content.X, content.Y + 258, content.Width, 36), Color.White, uiRenderer.UiSmallFont, 2);
+
+        uiRenderer.DrawTextInBounds("Contract", new Rectangle(content.X, content.Y + 302, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds(contract == null ? "No active contract on file." : $"{FormatSalary(contract.AnnualSalary)} for {contract.YearsRemaining} year(s) remaining.", new Rectangle(content.X, content.Y + 324, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+
+        var optionsLabel = player.IsDraftedPlayer
+            ? $"Minor-League Options Remaining: {player.MinorLeagueOptionsRemaining}"
+            : "Veteran import: affiliate and 40-man moves are enabled here; option years are not tracked yet.";
+        uiRenderer.DrawTextInBounds(optionsLabel, new Rectangle(content.X, content.Y + 348, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+
+        uiRenderer.DrawTextInBounds($"Medical: {medicalStatus}", new Rectangle(content.X, content.Y + 380, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(medicalReport, new Rectangle(content.X, content.Y + 402, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+
+        uiRenderer.DrawTextInBounds("Scout Note", new Rectangle(content.X, content.Y + 462, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(scoutNote, new Rectangle(content.X, content.Y + 484, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+    }
+
+    private void DrawButtons(UiRenderer uiRenderer, Point mousePosition, OrganizationRosterPlayerView? selectedPlayer)
+    {
+        uiRenderer.DrawButton(_backButton.Label, GetBackButtonBounds(), GetBackButtonBounds().Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_filterButton.Label, GetFilterButtonBounds(), GetFilterButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
+        uiRenderer.DrawButton(_sortButton.Label, GetSortButtonBounds(), GetSortButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
+
+        var canAssignToFortyMan = selectedPlayer?.CanAssignToFortyMan == true;
+        var canAssignToAffiliate = selectedPlayer?.CanAssignToAffiliate == true;
+        var canRemoveFromFortyMan = selectedPlayer?.IsOnFortyMan == true;
+        var canRelease = selectedPlayer?.CanRelease == true;
+        uiRenderer.DrawButton(_assign40ManButton.Label, GetAssign40ManBounds(), canAssignToFortyMan && GetAssign40ManBounds().Contains(mousePosition) ? Color.DarkOliveGreen : (canAssignToFortyMan ? Color.OliveDrab : new Color(76, 76, 76)), canAssignToFortyMan ? Color.White : new Color(188, 188, 188));
+        uiRenderer.DrawButton(_assignAffiliateButton.Label, GetAssignAffiliateBounds(), canAssignToAffiliate && GetAssignAffiliateBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canAssignToAffiliate ? Color.SlateBlue : new Color(76, 76, 76)), canAssignToAffiliate ? Color.White : new Color(188, 188, 188));
+        uiRenderer.DrawButton(_removeFromFortyManButton.Label, GetRemoveFromFortyManBounds(), canRemoveFromFortyMan && GetRemoveFromFortyManBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canRemoveFromFortyMan ? Color.SlateBlue : new Color(76, 76, 76)), canRemoveFromFortyMan ? Color.White : new Color(188, 188, 188));
+        uiRenderer.DrawButton(_releaseButton.Label, GetReleaseButtonBounds(), canRelease && GetReleaseButtonBounds().Contains(mousePosition) ? Color.DarkRed : (canRelease ? Color.Firebrick : new Color(76, 76, 76)), canRelease ? Color.White : new Color(188, 188, 188));
+    }
+
+    private IReadOnlyList<OrganizationRosterPlayerView> GetVisiblePlayers()
+    {
+        var players = _franchiseSession.GetSelectedTeamOrganizationRoster();
+        IEnumerable<OrganizationRosterPlayerView> filtered = _filterMode switch
+        {
+            RosterFilterMode.FortyMan => players.Where(player => player.IsOnFortyMan),
+            RosterFilterMode.Affiliate => players.Where(player => !player.IsOnFortyMan),
+            RosterFilterMode.Hitters => players.Where(player => !IsPitcher(player.PrimaryPosition)),
+            RosterFilterMode.Pitchers => players.Where(player => IsPitcher(player.PrimaryPosition)),
+            _ => players
+        };
+
+        return _sortMode switch
+        {
+            RosterSortMode.Name => filtered.OrderBy(player => player.PlayerName).ToList(),
+            RosterSortMode.Position => filtered.OrderBy(player => player.PrimaryPosition).ThenBy(player => player.PlayerName).ToList(),
+            _ => filtered.OrderByDescending(player => player.AssignmentLabel == "Organization Roster")
+                .ThenByDescending(player => player.AssignmentLabel == "Decision Needed")
+                .ThenByDescending(player => player.IsOnFortyMan)
+                .ThenBy(player => player.PlayerName)
+                .ToList()
+        };
+    }
+
+    private void EnsureSelectionIsValid(IReadOnlyList<OrganizationRosterPlayerView> players)
+    {
+        if (players.Count == 0)
+        {
+            _selectedPlayerId = null;
+            _pageIndex = 0;
+            return;
+        }
+
+        if (_selectedPlayerId == null || players.All(player => player.PlayerId != _selectedPlayerId.Value))
+        {
+            _selectedPlayerId = players[0].PlayerId;
+        }
+
+        _pageIndex = Math.Clamp(_pageIndex, 0, Math.Max(0, (int)Math.Ceiling(players.Count / (double)GetPageSize()) - 1));
+    }
+
+    private OrganizationRosterPlayerView? GetSelectedPlayer(IReadOnlyList<OrganizationRosterPlayerView> players)
+    {
+        if (_selectedPlayerId == null)
+        {
+            return players.Count == 0 ? null : players[0];
+        }
+
+        return players.FirstOrDefault(player => player.PlayerId == _selectedPlayerId.Value);
+    }
+
+    private void TrySelectPlayer(Point mousePosition, IReadOnlyList<OrganizationRosterPlayerView> players)
+    {
+        var pageSize = GetPageSize();
+        var startIndex = _pageIndex * pageSize;
+        var visibleCount = Math.Min(pageSize, Math.Max(0, players.Count - startIndex));
+
+        for (var i = 0; i < visibleCount; i++)
+        {
+            if (!GetPlayerRowBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            _selectedPlayerId = players[startIndex + i].PlayerId;
+            return;
+        }
+    }
+
+    private void CycleFilter()
+    {
+        _filterMode = _filterMode switch
+        {
+            RosterFilterMode.All => RosterFilterMode.FortyMan,
+            RosterFilterMode.FortyMan => RosterFilterMode.Affiliate,
+            RosterFilterMode.Affiliate => RosterFilterMode.Hitters,
+            RosterFilterMode.Hitters => RosterFilterMode.Pitchers,
+            _ => RosterFilterMode.All
+        };
         _pageIndex = 0;
     }
 
-    private List<RosterDisplayRow> ApplySorting(List<RosterDisplayRow> rows, RosterViewMode mode)
+    private void CycleSort()
     {
-        var currentSort = GetCurrentSortColumn(mode);
-        if (string.IsNullOrEmpty(currentSort))
+        _sortMode = _sortMode switch
         {
-            return mode switch
-            {
-                RosterViewMode.MedicalReport => rows.OrderByDescending(row => row.Health.InjuryDaysRemaining)
-                    .ThenByDescending(row => row.Health.DaysUntilAvailable)
-                    .ThenByDescending(row => row.Health.Fatigue)
-                    .ThenBy(row => row.PlayerName)
-                    .ToList(),
-                RosterViewMode.TrainingGrowth => rows.OrderByDescending(row => row.TrainingGrowth.TotalGain)
-                    .ThenByDescending(row => row.TrainingGrowth.OverallGain)
-                    .ThenBy(row => row.PlayerName)
-                    .ToList(),
-                _ => ApplyDefaultFilterSort(rows)
-            };
+            RosterSortMode.Status => RosterSortMode.Name,
+            RosterSortMode.Name => RosterSortMode.Position,
+            _ => RosterSortMode.Status
+        };
+        _pageIndex = 0;
+    }
+
+    private void AssignToFortyMan()
+    {
+        var selectedPlayer = GetSelectedPlayer(GetVisiblePlayers());
+        if (selectedPlayer == null)
+        {
+            _statusMessage = "Select a player before managing the 40-man roster.";
+            return;
         }
 
-        var sorted = mode switch
+        _franchiseSession.AssignSelectedTeamPlayerToFortyMan(selectedPlayer.PlayerId, out var message);
+        _statusMessage = message;
+    }
+
+    private void AssignToAffiliate()
+    {
+        var selectedPlayer = GetSelectedPlayer(GetVisiblePlayers());
+        if (selectedPlayer == null)
         {
-            RosterViewMode.Standard => SortStandardRows(rows, currentSort),
-            RosterViewMode.SeasonStats => SortSeasonStatsRows(rows, currentSort, useLastSeasonStats: false),
-            RosterViewMode.LastSeasonStats => SortSeasonStatsRows(rows, currentSort, useLastSeasonStats: true),
-            RosterViewMode.ScoutNotes => SortScoutNoteRows(rows, currentSort),
-            RosterViewMode.MedicalReport => SortMedicalRows(rows, currentSort),
-            RosterViewMode.HiddenRatings => SortHiddenRatingsRows(rows, currentSort),
-            RosterViewMode.TrainingGrowth => SortTrainingGrowthRows(rows, currentSort),
-            RosterViewMode.Contracts => SortContractsRows(rows, currentSort),
-            _ => rows
-        };
+            _statusMessage = "Select a player before sending someone to the affiliate.";
+            return;
+        }
 
-        return _sortAscending ? sorted : sorted.AsEnumerable().Reverse().ToList();
+        _franchiseSession.AssignSelectedTeamPlayerToAffiliate(selectedPlayer.PlayerId, out var message);
+        _statusMessage = message;
+        EnsurePlayerRemainsVisibleAfterAffiliateMove(selectedPlayer.PlayerId);
     }
 
-    private List<RosterDisplayRow> SortStandardRows(List<RosterDisplayRow> rows, string columnName)
+    private void RemoveFromFortyMan()
     {
-        return columnName switch
+        var selectedPlayer = GetSelectedPlayer(GetVisiblePlayers());
+        if (selectedPlayer == null)
         {
-            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
-            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
-            "SEC" => rows.OrderBy(r => r.SecondaryPosition).ToList(),
-            "AGE" => rows.OrderBy(r => r.Age).ToList(),
-            "LINEUP" => rows.OrderBy(r => r.LineupSlot ?? 99).ToList(),
-            "ROT" => rows.OrderBy(r => r.RotationSlot ?? 99).ToList(),
-            _ => rows
-        };
+            _statusMessage = "Select a player before removing someone from the 40-man roster.";
+            return;
+        }
+
+        _franchiseSession.RemoveSelectedTeamPlayerFromFortyMan(selectedPlayer.PlayerId, out var message);
+        _statusMessage = message;
+        EnsurePlayerRemainsVisibleAfterAffiliateMove(selectedPlayer.PlayerId);
     }
 
-    private List<RosterDisplayRow> SortSeasonStatsRows(List<RosterDisplayRow> rows, string columnName, bool useLastSeasonStats)
+    private void ReleasePlayer()
     {
-        Func<RosterDisplayRow, PlayerSeasonStatsState> statsSelector = row => useLastSeasonStats ? row.LastSeasonStats : row.SeasonStats;
-
-        return columnName switch
+        var selectedPlayer = GetSelectedPlayer(GetVisiblePlayers());
+        if (selectedPlayer == null)
         {
-            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
-            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
-            "AVG" => rows.OrderBy(r => statsSelector(r).AtBats == 0 ? 0 : statsSelector(r).Hits / (double)statsSelector(r).AtBats).ToList(),
-            "HR" => rows.OrderBy(r => statsSelector(r).HomeRuns).ToList(),
-            "RBI" => rows.OrderBy(r => statsSelector(r).RunsBattedIn).ToList(),
-            "OPS" => rows.OrderBy(r => CalculateOps(statsSelector(r))).ToList(),
-            "ERA" => rows.OrderBy(r => CalculateEra(statsSelector(r))).ToList(),
-            "W-L" => rows.OrderBy(r => statsSelector(r).Wins).ToList(),
-            _ => rows
-        };
+            _statusMessage = "Select a player before releasing someone from the organization.";
+            return;
+        }
+
+        _franchiseSession.ReleaseSelectedTeamPlayer(selectedPlayer.PlayerId, out var message);
+        _statusMessage = message;
     }
 
-    private static double CalculateOps(PlayerSeasonStatsState stats)
+    private void EnsurePlayerRemainsVisibleAfterAffiliateMove(Guid playerId)
     {
-        var obp = stats.PlateAppearances == 0 ? 0d : (stats.Hits + stats.Walks) / (double)stats.PlateAppearances;
-        var slg = stats.AtBats == 0 ? 0d : GetTotalBases(stats) / (double)stats.AtBats;
-        return obp + slg;
-    }
-
-    private static double CalculateEra(PlayerSeasonStatsState stats)
-    {
-        return stats.InningsPitchedOuts == 0 ? double.MaxValue : (stats.EarnedRuns * 9d) / (stats.InningsPitchedOuts / 3d);
-    }
-
-    private static int GetTotalBases(PlayerSeasonStatsState stats)
-    {
-        var singles = Math.Max(0, stats.Hits - stats.Doubles - stats.Triples - stats.HomeRuns);
-        return singles + (stats.Doubles * 2) + (stats.Triples * 3) + (stats.HomeRuns * 4);
-    }
-
-    private static List<RosterDisplayRow> SortScoutNoteRows(List<RosterDisplayRow> rows, string columnName)
-    {
-        return columnName switch
+        var organizationPlayers = _franchiseSession.GetSelectedTeamOrganizationRoster();
+        if (organizationPlayers.All(player => player.PlayerId != playerId))
         {
-            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
-            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
-            "REPORT" => rows.OrderBy(r => r.HiddenRatings.OverallRating).ToList(),
-            _ => rows
-        };
-    }
+            return;
+        }
 
-    private static List<RosterDisplayRow> SortMedicalRows(List<RosterDisplayRow> rows, string columnName)
-    {
-        return columnName switch
+        _selectedPlayerId = playerId;
+        if (_filterMode == RosterFilterMode.FortyMan)
         {
-            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
-            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
-            "STATUS" => rows.OrderByDescending(r => r.Health.InjuryDaysRemaining)
-                .ThenByDescending(r => r.Health.DaysUntilAvailable)
-                .ThenByDescending(r => r.Health.Fatigue)
-                .ToList(),
-            "REPORT" => rows.OrderBy(r => r.MedicalReport).ToList(),
-            _ => rows
-        };
+            _filterMode = RosterFilterMode.All;
+            _pageIndex = 0;
+        }
     }
 
-    private static List<RosterDisplayRow> SortHiddenRatingsRows(List<RosterDisplayRow> rows, string columnName)
+    private string GetPlayerListSummary(OrganizationRosterPlayerView player)
     {
-        return columnName switch
+        var stats = _franchiseSession.GetPlayerSeasonStats(player.PlayerId);
+        var slotLabel = player.RotationSlot.HasValue
+            ? $"Rotation {player.RotationSlot.Value}"
+            : player.LineupSlot.HasValue
+                ? $"Lineup {player.LineupSlot.Value}"
+                : player.IsOnFortyMan ? "Bench / Bullpen" : "Affiliate";
+        if (IsPitcher(player.PrimaryPosition))
         {
-            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
-            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
-            "AGE" => rows.OrderBy(r => r.Age).ToList(),
-            "OVR" => rows.OrderBy(r => r.HiddenRatings.OverallRating).ToList(),
-            "TOT" => rows.OrderBy(r => r.HiddenRatings.AttributeTotal).ToList(),
-            "CON" => rows.OrderBy(r => r.HiddenRatings.ContactExactRating).ToList(),
-            "POW" => rows.OrderBy(r => r.HiddenRatings.PowerExactRating).ToList(),
-            "DIS" => rows.OrderBy(r => r.HiddenRatings.DisciplineExactRating).ToList(),
-            "SPD" => rows.OrderBy(r => r.HiddenRatings.SpeedExactRating).ToList(),
-            "FLD" => rows.OrderBy(r => r.HiddenRatings.FieldingExactRating).ToList(),
-            "ARM" => rows.OrderBy(r => r.HiddenRatings.ArmExactRating).ToList(),
-            "PIT" => rows.OrderBy(r => r.HiddenRatings.PitchingExactRating).ToList(),
-            "STA" => rows.OrderBy(r => r.HiddenRatings.StaminaExactRating).ToList(),
-            "DUR" => rows.OrderBy(r => r.HiddenRatings.DurabilityExactRating).ToList(),
-            _ => rows
-        };
+            return $"{stats.EarnedRunAverageDisplay} ERA | {stats.StrikeoutsPitched} K | {slotLabel}";
+        }
+
+        return $"{stats.BattingAverageDisplay} AVG | {stats.OpsDisplay} OPS | {slotLabel}";
     }
 
-    private static List<RosterDisplayRow> SortTrainingGrowthRows(List<RosterDisplayRow> rows, string columnName)
+    private static string FormatSeasonLine(string primaryPosition, PlayerSeasonStatsState stats)
     {
-        return columnName switch
+        if (IsPitcher(primaryPosition))
         {
-            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
-            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
-            "AGE" => rows.OrderBy(r => r.Age).ToList(),
-            "TOT" => rows.OrderBy(r => r.TrainingGrowth.TotalGain).ToList(),
-            "OVR" => rows.OrderBy(r => r.TrainingGrowth.OverallGain).ToList(),
-            "DETAILS" => rows.OrderBy(r => r.TrainingGrowth.TopDetails).ToList(),
-            _ => rows
-        };
+            return $"GP {stats.GamesPitched} | IP {FormatInnings(stats.InningsPitchedOuts)} | ERA {stats.EarnedRunAverageDisplay} | K {stats.StrikeoutsPitched} | W-L {stats.WinLossDisplay}";
+        }
+
+        return $"G {stats.GamesPlayed} | AVG {stats.BattingAverageDisplay} | HR {stats.HomeRuns} | RBI {stats.RunsBattedIn} | OPS {stats.OpsDisplay}";
     }
 
-    private static List<RosterDisplayRow> SortContractsRows(List<RosterDisplayRow> rows, string columnName)
+    private static string FormatRecentLine(string primaryPosition, RecentPlayerStatsView stats)
     {
-        return columnName switch
+        if (IsPitcher(primaryPosition))
         {
-            "NAME" => rows.OrderBy(r => r.PlayerName).ToList(),
-            "POS" => rows.OrderBy(r => r.PrimaryPosition).ToList(),
-            "AGE" => rows.OrderBy(r => r.Age).ToList(),
-            "SALARY" => rows.OrderBy(r => r.AnnualSalary).ToList(),
-            "YRS" => rows.OrderBy(r => r.ContractYears).ToList(),
-            _ => rows
-        };
-    }
+            return $"Last {stats.SampleGames} G: {stats.InningsPitchedDisplay} IP, {stats.EraDisplay} ERA, {stats.PitcherStrikeouts} K, {stats.Wins}-{stats.Losses}";
+        }
 
-    private List<RosterDisplayRow> ApplyRosterFilter(List<RosterDisplayRow> rows)
-    {
-        return _filterMode switch
-        {
-            RosterFilterMode.Hitters or RosterFilterMode.Contact or RosterFilterMode.Power or RosterFilterMode.Speed or RosterFilterMode.Fielding or RosterFilterMode.CurrentOps or RosterFilterMode.LastOps
-                => rows.Where(row => !IsPitcher(row)).ToList(),
-            RosterFilterMode.Pitchers or RosterFilterMode.Pitching or RosterFilterMode.CurrentEra or RosterFilterMode.LastEra
-                => rows.Where(IsPitcher).ToList(),
-            _ => rows
-        };
-    }
-
-    private List<RosterDisplayRow> ApplyDefaultFilterSort(List<RosterDisplayRow> rows)
-    {
-        return _filterMode switch
-        {
-            RosterFilterMode.Contact => rows.OrderByDescending(row => row.HiddenRatings.ContactRating).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.Power => rows.OrderByDescending(row => row.HiddenRatings.PowerRating).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.Speed => rows.OrderByDescending(row => row.HiddenRatings.SpeedRating).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.Fielding => rows.OrderByDescending(row => row.HiddenRatings.FieldingRating).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.Pitching => rows.OrderByDescending(row => row.HiddenRatings.PitchingRating).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.CurrentOps => rows.OrderByDescending(row => CalculateOps(row.SeasonStats)).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.CurrentEra => rows.OrderBy(row => CalculateEra(row.SeasonStats)).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.LastOps => rows.OrderByDescending(row => CalculateOps(row.LastSeasonStats)).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.LastEra => rows.OrderBy(row => CalculateEra(row.LastSeasonStats)).ThenBy(row => row.PlayerName).ToList(),
-            RosterFilterMode.Pitchers => rows.OrderByDescending(row => row.HiddenRatings.PitchingRating).ThenBy(row => row.PlayerName).ToList(),
-            _ => rows.OrderBy(row => row.RotationSlot ?? 99).ThenBy(row => row.LineupSlot ?? 99).ThenBy(row => row.PlayerName).ToList()
-        };
-    }
-
-    private List<RosterDisplayRow> GetRosterRows()
-    {
-        var economy = _franchiseSession.GetSelectedTeamEconomy();
-        var contractsByPlayerId = economy.PlayerContracts.ToDictionary(c => c.SubjectId, c => c);
-        return _franchiseSession.GetSelectedTeamRoster()
-            .Select(row =>
-            {
-                var hiddenRatings = _franchiseSession.GetPlayerRatings(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age);
-                contractsByPlayerId.TryGetValue(row.PlayerId, out var contract);
-                return new RosterDisplayRow(
-                    row.PlayerId,
-                    row.PlayerName,
-                    row.PrimaryPosition,
-                    row.SecondaryPosition,
-                    row.Age,
-                    row.LineupSlot,
-                    row.RotationSlot,
-                    hiddenRatings,
-                    _franchiseSession.GetPlayerSeasonStats(row.PlayerId),
-                    _franchiseSession.GetLastSeasonStats(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
-                    _franchiseSession.GetPlayerHealth(row.PlayerId),
-                    _franchiseSession.GetPlayerMedicalStatus(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
-                    _franchiseSession.GetPlayerMedicalReport(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age),
-                    BuildTrainingGrowthSummary(row.PlayerId, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age, hiddenRatings),
-                    contract?.AnnualSalary ?? 0m,
-                    contract?.YearsRemaining ?? 0);
-            })
-            .ToList();
-    }
-
-    private static bool IsPitcher(RosterDisplayRow row)
-    {
-        return row.PrimaryPosition is "SP" or "RP";
-    }
-
-    private static RosterFilterMode GetNextFilterMode(RosterFilterMode currentFilter)
-    {
-        return currentFilter switch
-        {
-            RosterFilterMode.All => RosterFilterMode.Hitters,
-            RosterFilterMode.Hitters => RosterFilterMode.Pitchers,
-            RosterFilterMode.Pitchers => RosterFilterMode.Contact,
-            RosterFilterMode.Contact => RosterFilterMode.Power,
-            RosterFilterMode.Power => RosterFilterMode.Speed,
-            RosterFilterMode.Speed => RosterFilterMode.Fielding,
-            RosterFilterMode.Fielding => RosterFilterMode.Pitching,
-            RosterFilterMode.Pitching => RosterFilterMode.CurrentOps,
-            RosterFilterMode.CurrentOps => RosterFilterMode.CurrentEra,
-            RosterFilterMode.CurrentEra => RosterFilterMode.LastOps,
-            RosterFilterMode.LastOps => RosterFilterMode.LastEra,
-            _ => RosterFilterMode.All
-        };
-    }
-
-    private static string GetViewLabel(RosterViewMode viewMode)
-    {
-        return viewMode switch
-        {
-            RosterViewMode.Standard => "Roster",
-            RosterViewMode.SeasonStats => "Season Stats",
-            RosterViewMode.LastSeasonStats => "Last Season",
-            RosterViewMode.ScoutNotes => "Scout Notes",
-            RosterViewMode.MedicalReport => "Medical Report",
-            RosterViewMode.HiddenRatings => "Secret Attributes",
-            RosterViewMode.TrainingGrowth => "Training Growth",
-            RosterViewMode.Contracts => "Contracts",
-            _ => "Roster"
-        };
+        return $"Last {stats.SampleGames} G: {stats.BattingAverageDisplay} AVG, {stats.HomeRuns} HR, {stats.OpsDisplay} OPS";
     }
 
     private static string GetFilterLabel(RosterFilterMode filterMode)
     {
         return filterMode switch
         {
-            RosterFilterMode.All => "All Players",
+            RosterFilterMode.FortyMan => "40-Man",
+            RosterFilterMode.Affiliate => "Affiliate",
             RosterFilterMode.Hitters => "Hitters",
             RosterFilterMode.Pitchers => "Pitchers",
-            RosterFilterMode.Contact => "Best Contact",
-            RosterFilterMode.Power => "Best Power",
-            RosterFilterMode.Speed => "Most Speed",
-            RosterFilterMode.Fielding => "Best Gloves",
-            RosterFilterMode.Pitching => "Best Arms",
-            RosterFilterMode.CurrentOps => "Current OPS",
-            RosterFilterMode.CurrentEra => "Current ERA",
-            RosterFilterMode.LastOps => "Last OPS",
-            _ => "Last ERA"
+            _ => "All"
         };
     }
 
-    private static string GetFilterDescription(RosterFilterMode filterMode)
+    private static string GetSortLabel(RosterSortMode sortMode)
     {
-        return filterMode switch
+        return sortMode switch
         {
-            RosterFilterMode.All => "showing the full club",
-            RosterFilterMode.Hitters => "showing only hitters and position players",
-            RosterFilterMode.Pitchers => "showing only pitchers",
-            RosterFilterMode.Contact => "sorted by contact skill",
-            RosterFilterMode.Power => "sorted by power bats",
-            RosterFilterMode.Speed => "sorted by speed and athleticism",
-            RosterFilterMode.Fielding => "sorted by glove work",
-            RosterFilterMode.Pitching => "sorted by pitching stuff",
-            RosterFilterMode.CurrentOps => "sorted by current-season OPS",
-            RosterFilterMode.CurrentEra => "sorted by current-season ERA",
-            RosterFilterMode.LastOps => "sorted by last-season OPS",
-            _ => "sorted by last-season ERA"
+            RosterSortMode.Name => "Name",
+            RosterSortMode.Position => "Position",
+            _ => "Status"
         };
     }
 
-    private static TrainingGrowthSummary BuildTrainingGrowthSummary(Guid playerId, string playerName, string primaryPosition, string secondaryPosition, int age, PlayerHiddenRatingsState currentRatings)
+    private static bool IsPitcher(string position)
     {
-        var baseline = PlayerRatingsGenerator.Generate(playerId, playerName, primaryPosition, secondaryPosition, age);
-        var gains = new[]
-        {
-            new AttributeGain("CON", RoundToHalf(currentRatings.ContactExactRating - baseline.ContactExactRating)),
-            new AttributeGain("POW", RoundToHalf(currentRatings.PowerExactRating - baseline.PowerExactRating)),
-            new AttributeGain("DIS", RoundToHalf(currentRatings.DisciplineExactRating - baseline.DisciplineExactRating)),
-            new AttributeGain("SPD", RoundToHalf(currentRatings.SpeedExactRating - baseline.SpeedExactRating)),
-            new AttributeGain("FLD", RoundToHalf(currentRatings.FieldingExactRating - baseline.FieldingExactRating)),
-            new AttributeGain("ARM", RoundToHalf(currentRatings.ArmExactRating - baseline.ArmExactRating)),
-            new AttributeGain("PIT", RoundToHalf(currentRatings.PitchingExactRating - baseline.PitchingExactRating)),
-            new AttributeGain("STA", RoundToHalf(currentRatings.StaminaExactRating - baseline.StaminaExactRating)),
-            new AttributeGain("DUR", RoundToHalf(currentRatings.DurabilityExactRating - baseline.DurabilityExactRating))
-        };
-
-        var positiveGains = gains
-            .Where(gain => gain.Value > 0.01d)
-            .OrderByDescending(gain => gain.Value)
-            .ToList();
-
-        var totalGain = RoundToHalf(positiveGains.Sum(gain => gain.Value));
-        var overallGain = currentRatings.OverallRating - baseline.OverallRating;
-        var details = positiveGains.Count == 0
-            ? "No visible training gains yet"
-            : string.Join(", ", positiveGains.Take(3).Select(gain => $"{gain.Label} {FormatSignedValue(gain.Value)}"));
-
-        return new TrainingGrowthSummary(totalGain, overallGain, details);
+        return position is "SP" or "RP";
     }
 
-    private static double RoundToHalf(double value)
+    private static string FormatInnings(int inningsPitchedOuts)
     {
-        return Math.Round(value * 2d, MidpointRounding.AwayFromZero) / 2d;
+        return $"{inningsPitchedOuts / 3}.{inningsPitchedOuts % 3}";
     }
 
     private static string FormatSalary(decimal salary)
@@ -1139,69 +504,60 @@ public sealed class RosterScreen : GameScreen
         return salary >= 1_000_000m ? $"${salary / 1_000_000m:0.0}M" : $"${salary / 1_000m:0}K";
     }
 
-    private static string FormatSignedValue(double value)
-    {
-        var rounded = RoundToHalf(value);
-        if (Math.Abs(rounded) < 0.01d)
-        {
-            return "0.0";
-        }
+    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
-        return rounded > 0d ? $"+{rounded:0.#}" : $"{rounded:0.#}";
+    private Rectangle GetFilterButtonBounds() => new(48, _viewport.Y - 58, 150, 34);
+
+    private Rectangle GetSortButtonBounds() => new(210, _viewport.Y - 58, 140, 34);
+
+    private Rectangle GetReleaseButtonBounds() => new(Math.Max(360, _viewport.X - 120), _viewport.Y - 58, 100, 34);
+
+    private Rectangle GetRemoveFromFortyManBounds()
+    {
+        var releaseBounds = GetReleaseButtonBounds();
+        return new Rectangle(releaseBounds.X - 182, releaseBounds.Y, 170, 34);
     }
 
-    private static string Truncate(string value, int maxLength)
+    private Rectangle GetAssignAffiliateBounds()
     {
-        return value.Length <= maxLength ? value : value[..maxLength];
+        var removeBounds = GetRemoveFromFortyManBounds();
+        return new Rectangle(removeBounds.X - 162, removeBounds.Y, 150, 34);
     }
 
-    private sealed record RosterDisplayRow(
-        Guid PlayerId,
-        string PlayerName,
-        string PrimaryPosition,
-        string SecondaryPosition,
-        int Age,
-        int? LineupSlot,
-        int? RotationSlot,
-        PlayerHiddenRatingsState HiddenRatings,
-        PlayerSeasonStatsState SeasonStats,
-        PlayerSeasonStatsState LastSeasonStats,
-        PlayerHealthState Health,
-        string MedicalStatus,
-        string MedicalReport,
-        TrainingGrowthSummary TrainingGrowth,
-        decimal AnnualSalary,
-        int ContractYears);
-
-    private sealed record TrainingGrowthSummary(double TotalGain, double OverallGain, string TopDetails);
-
-    private sealed record AttributeGain(string Label, double Value);
-
-    private enum RosterViewMode
+    private Rectangle GetAssign40ManBounds()
     {
-        Standard,
-        SeasonStats,
-        LastSeasonStats,
-        ScoutNotes,
-        MedicalReport,
-        HiddenRatings,
-        TrainingGrowth,
-        Contracts
+        var affiliateBounds = GetAssignAffiliateBounds();
+        return new Rectangle(affiliateBounds.X - 152, affiliateBounds.Y, 140, 34);
     }
 
-    private enum RosterFilterMode
+    private Rectangle GetListPanelBounds() => new(48, 168, Math.Max(560, _viewport.X - 540), Math.Max(360, _viewport.Y - 250));
+
+    private Rectangle GetDetailPanelBounds()
     {
-        All,
-        Hitters,
-        Pitchers,
-        Contact,
-        Power,
-        Speed,
-        Fielding,
-        Pitching,
-        CurrentOps,
-        CurrentEra,
-        LastOps,
-        LastEra
+        var listBounds = GetListPanelBounds();
+        return new Rectangle(listBounds.Right + 18, listBounds.Y, Math.Max(360, _viewport.X - listBounds.Right - 66), listBounds.Height);
+    }
+
+    private int GetPageSize()
+    {
+        return Math.Max(6, (GetListPanelBounds().Height - 92) / 44);
+    }
+
+    private Rectangle GetPlayerRowBounds(int visibleIndex)
+    {
+        var panelBounds = GetListPanelBounds();
+        return new Rectangle(panelBounds.X + 10, panelBounds.Y + 36 + (visibleIndex * 44), panelBounds.Width - 20, 38);
+    }
+
+    private Rectangle GetPreviousPageBounds()
+    {
+        var panelBounds = GetListPanelBounds();
+        return new Rectangle(panelBounds.X + 10, panelBounds.Bottom - 40, 60, 28);
+    }
+
+    private Rectangle GetNextPageBounds()
+    {
+        var previous = GetPreviousPageBounds();
+        return new Rectangle(previous.Right + 126, previous.Y, 60, 28);
     }
 }

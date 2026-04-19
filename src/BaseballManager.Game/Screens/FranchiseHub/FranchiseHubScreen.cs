@@ -45,7 +45,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _buttons.Add(new ButtonControl { Label = "Next Season", OnClick = () => AdvanceToNextSeason() });
         _buttons.Add(new ButtonControl { Label = "Draft", OnClick = () => _screenManager.TransitionTo(nameof(DraftScreen)) });
         _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
-        _buttons.Add(new ButtonControl { Label = "Training Reports", OnClick = () => _screenManager.TransitionTo(nameof(TrainingReportsScreen)) });
+        _buttons.Add(new ButtonControl { Label = "Reports", OnClick = () => _screenManager.TransitionTo(nameof(TrainingReportsScreen)) });
         _buttons.Add(new ButtonControl { Label = "Standings", OnClick = () => _screenManager.TransitionTo(nameof(StandingsScreen)) });
         _buttons.Add(new ButtonControl { Label = "Finances", OnClick = () => _screenManager.TransitionTo(nameof(FinancesScreen)) });
 

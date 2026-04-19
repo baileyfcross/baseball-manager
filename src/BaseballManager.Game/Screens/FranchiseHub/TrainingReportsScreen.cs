@@ -88,9 +88,9 @@ public sealed class TrainingReportsScreen : GameScreen
         var mousePosition = Mouse.GetState().Position;
         var seasonYear = _franchiseSession.GetCurrentTrainingReportSeason();
 
-        uiRenderer.DrawText("Training Reports", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText("Reports", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds($"{seasonYear} Season | {_franchiseSession.SelectedTeamName}", new Rectangle(168, 82, 420, 22), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds("Every practice and recovery-day report for the current season is saved here until the season ends.", new Rectangle(48, 112, Math.Max(560, _viewport.X - 96), 40), Color.White, uiRenderer.UiSmallFont, 2);
+        uiRenderer.DrawWrappedTextInBounds("Practice updates, offseason summaries, trades, and contract activity for the current cycle are saved here.", new Rectangle(48, 112, Math.Max(560, _viewport.X - 96), 40), Color.White, uiRenderer.UiSmallFont, 2);
 
         var listBounds = GetListPanelBounds();
         var detailBounds = GetDetailPanelBounds();
@@ -102,7 +102,7 @@ public sealed class TrainingReportsScreen : GameScreen
 
         if (reports.Count == 0)
         {
-            uiRenderer.DrawWrappedTextInBounds("No training reports are saved right now. Sim through a practice day to log one. These clear automatically after the season is over.", new Rectangle(listBounds.X + 12, listBounds.Y + 34, listBounds.Width - 24, listBounds.Height - 46), Color.White, uiRenderer.UiSmallFont, 5);
+            uiRenderer.DrawWrappedTextInBounds("No reports are saved right now. Practice days and offseason rollover will add items here automatically.", new Rectangle(listBounds.X + 12, listBounds.Y + 34, listBounds.Width - 24, listBounds.Height - 46), Color.White, uiRenderer.UiSmallFont, 5);
         }
         else
         {
