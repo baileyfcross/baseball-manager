@@ -1,5 +1,7 @@
+using BaseballManager.Application.Drafts;
 using BaseballManager.Application.Transactions;
 using BaseballManager.Contracts.ImportDtos;
+using BaseballManager.Core.Drafts;
 using BaseballManager.Core.Economy;
 using BaseballManager.Sim.AI;
 using BaseballManager.Sim.Economy;
@@ -12,6 +14,10 @@ public sealed class FranchiseSession
 {
     private const int MaxRosterSize = 40;
     private const string FreeAgentTeamName = "Free Agents";
+    private const int DefaultDraftRounds = 5;
+    private const string PendingRosterAssignment = "Pending";
+    private const string MajorLeagueRosterAssignment = "40-Man Roster";
+    private const string AffiliateRosterAssignment = "Affiliate";
 
     private enum PracticeDevelopmentAttribute
     {
@@ -44,6 +50,12 @@ public sealed class FranchiseSession
     private readonly SignPlayerContractUseCase _signPlayerContractUseCase = new();
     private readonly ReleasePlayerUseCase _releasePlayerUseCase = new();
     private readonly OffseasonContractEvaluator _offseasonContractEvaluator = new();
+    private readonly DraftProspectFactory _draftProspectFactory = new();
+    private readonly StartDraftUseCase _startDraftUseCase = new();
+    private readonly GetDraftStateUseCase _getDraftStateUseCase = new();
+    private readonly MakeUserDraftPickUseCase _makeUserDraftPickUseCase = new();
+    private readonly AdvanceDraftUseCase _advanceDraftUseCase = new();
+    private readonly FinishDraftUseCase _finishDraftUseCase = new();
     private readonly ManagerAi _managerAi = new();
     private readonly HireCoachUseCase _hireCoachUseCase = new();
     private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
@@ -62,6 +74,7 @@ public sealed class FranchiseSession
         _saveState.PlayerHealth ??= new Dictionary<Guid, PlayerHealthState>();
         _saveState.PlayerAges ??= new Dictionary<Guid, int>();
         _saveState.PlayerAssignments ??= new Dictionary<Guid, string>();
+        _saveState.CreatedPlayers ??= new Dictionary<Guid, FranchiseCreatedPlayerState>();
         _saveState.CompletedScheduleGameKeys ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         _saveState.CompletedScheduleGameResults ??= new Dictionary<string, CompletedScheduleGameResult>(StringComparer.OrdinalIgnoreCase);
         _saveState.CompletedGameBoxScores ??= new Dictionary<string, CompletedGameBoxScoreState>(StringComparer.OrdinalIgnoreCase);
@@ -83,7 +96,7 @@ public sealed class FranchiseSession
         EnsureFranchiseDateInitialized();
         EnsureSeasonYearInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsurePlayerAgesGenerated() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
+        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsurePlayerAgesGenerated() || EnsureCreatedPlayerRosterAssignmentsGenerated() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
         {
             Save();
         }
@@ -102,6 +115,8 @@ public sealed class FranchiseSession
     public bool HasAnySaveData =>
         !string.IsNullOrWhiteSpace(_saveState.SelectedTeamName) ||
         _saveState.Teams.Count > 0 ||
+        _saveState.CreatedPlayers.Count > 0 ||
+        _saveState.ActiveDraft != null ||
         _saveState.CurrentLiveMatch != null ||
         _saveState.QuickMatchLiveMatch != null;
 
@@ -329,7 +344,7 @@ public sealed class FranchiseSession
         return _saveState.CurrentSeasonYear;
     }
 
-    public bool CanAdvanceToNextSeason()
+    public bool IsRegularSeasonComplete()
     {
         if (SelectedTeam == null)
         {
@@ -344,6 +359,36 @@ public sealed class FranchiseSession
 
         var seasonEndDate = activeSchedule.Max(game => game.Date.Date);
         return !activeSchedule.Any(game => !IsScheduledGameCompleted(game)) && GetCurrentFranchiseDate().Date > seasonEndDate;
+    }
+
+    public bool CanAdvanceToNextSeason()
+    {
+        return IsRegularSeasonComplete() && !HasRequiredDraftWorkRemaining();
+    }
+
+    public string GetNextSeasonBlockerMessage()
+    {
+        if (!IsRegularSeasonComplete())
+        {
+            return $"Finish the {GetCurrentSeasonYear()} regular season before moving into the offseason.";
+        }
+
+        if (_saveState.ActiveDraft != null)
+        {
+            return "Finish the draft before moving into the offseason.";
+        }
+
+        if (_saveState.LastCompletedDraftSeasonYear != GetCurrentSeasonYear())
+        {
+            return "Run the draft before moving into the offseason.";
+        }
+
+        if (HasPendingDraftRosterDecisions())
+        {
+            return "Resolve your drafted players' 40-man or affiliate assignments before moving into the offseason.";
+        }
+
+        return string.Empty;
     }
 
     public OffseasonSummaryState? GetLastOffseasonSummary()
@@ -361,7 +406,7 @@ public sealed class FranchiseSession
 
         if (!CanAdvanceToNextSeason())
         {
-            statusMessage = "Finish the current regular season before moving into the offseason.";
+            statusMessage = GetNextSeasonBlockerMessage();
             return false;
         }
 
@@ -398,6 +443,386 @@ public sealed class FranchiseSession
     public IReadOnlyList<ScheduleImportDto> GetSelectedTeamSeasonSchedule()
     {
         return GetSeasonSchedule();
+    }
+
+    public bool CanStartDraft()
+    {
+        return SelectedTeam != null
+            && _saveState.ActiveDraft == null
+            && IsRegularSeasonComplete()
+            && _saveState.LastCompletedDraftSeasonYear != GetCurrentSeasonYear();
+    }
+
+    public bool HasActiveDraft()
+    {
+        return _saveState.ActiveDraft != null;
+    }
+
+    public DraftBoardView GetDraftBoard()
+    {
+        var draftState = LoadDraftState();
+        if (draftState == null)
+        {
+            return new DraftBoardView(false, false, 0, 0, 0, string.Empty, [], [], []);
+        }
+
+        var currentRoundOrder = draftState.IsComplete
+            ? Array.Empty<string>()
+            : draftState.GetDraftOrderForRound(draftState.CurrentRound).ToArray();
+
+        return new DraftBoardView(
+            true,
+            draftState.IsComplete,
+            draftState.TotalRounds,
+            draftState.CurrentRound,
+            draftState.CurrentPickNumber,
+            draftState.CurrentTeamName,
+            currentRoundOrder,
+            draftState.AvailableProspects
+                .Select(prospect => new DraftProspectView(
+                    prospect.PlayerId,
+                    prospect.PlayerName,
+                    prospect.PrimaryPosition,
+                    prospect.SecondaryPosition,
+                    prospect.Age,
+                    prospect.Source,
+                    prospect.Summary,
+                    prospect.ScoutSummary,
+                    prospect.PotentialSummary,
+                    prospect.SourceTeamName,
+                    prospect.SourceStatsSummary,
+                    prospect.OverallRating,
+                    prospect.PotentialRating))
+                .ToList(),
+            draftState.DraftedPicks
+                .OrderByDescending(pick => pick.OverallPickNumber)
+                .Take(12)
+                .Select(pick => new DraftPickView(
+                    pick.RoundNumber,
+                    pick.PickNumberInRound,
+                    pick.OverallPickNumber,
+                    pick.TeamName,
+                    pick.PlayerName,
+                    pick.PrimaryPosition,
+                    pick.IsUserPick))
+                .ToList());
+    }
+
+    public IReadOnlyList<DraftOrganizationPlayerView> GetDraftOrganizationPlayers()
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        return _saveState.CreatedPlayers.Values
+            .Where(player => string.Equals(player.TeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(player => player.RequiresRosterDecision)
+            .ThenByDescending(player => player.DraftSeasonYear)
+            .ThenByDescending(player => player.DraftOverallRating)
+            .ThenBy(player => player.FullName)
+            .Select(player => new DraftOrganizationPlayerView(
+                player.PlayerId,
+                player.FullName,
+                player.PrimaryPosition,
+                player.SecondaryPosition,
+                player.Age,
+                player.ScoutSummary,
+                player.PotentialSummary,
+                player.Source,
+                player.SourceTeamName,
+                player.SourceStatsSummary,
+                GetRosterAssignmentLabel(player),
+                player.RequiresRosterDecision,
+                player.MinorLeagueOptionsRemaining,
+                player.DraftOverallRating,
+                player.PotentialRating))
+            .ToList();
+    }
+
+    public IReadOnlyList<DraftFortyManPlayerView> GetDraftFortyManRoster()
+    {
+        if (SelectedTeam == null)
+        {
+            return [];
+        }
+
+        return GetSelectedTeamRoster()
+            .OrderBy(player => player.PlayerName)
+            .Select(player =>
+            {
+                var isDraftedPlayer = _saveState.CreatedPlayers.TryGetValue(player.PlayerId, out var createdPlayer);
+                return new DraftFortyManPlayerView(
+                    player.PlayerId,
+                    player.PlayerName,
+                    player.PrimaryPosition,
+                    player.SecondaryPosition,
+                    player.Age,
+                    isDraftedPlayer ? "Draft pick on 40-man" : "Current 40-man player",
+                    isDraftedPlayer,
+                    isDraftedPlayer ? createdPlayer!.MinorLeagueOptionsRemaining : 0);
+            })
+            .ToList();
+    }
+
+    public int GetSelectedTeam40ManCount()
+    {
+        return SelectedTeam == null ? 0 : GetTeamRosterCount(SelectedTeam.Name);
+    }
+
+    public bool IsSelectedTeam40ManFull()
+    {
+        return SelectedTeam != null && GetTeamRosterCount(SelectedTeam.Name) >= MaxRosterSize;
+    }
+
+    public bool AssignDraftPlayerTo40Man(Guid playerId, out string statusMessage)
+    {
+        if (!TryGetSelectedTeamCreatedPlayer(playerId, out var createdPlayer, out statusMessage))
+        {
+            return false;
+        }
+
+        if (!string.Equals(createdPlayer.RosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
+            && GetTeamRosterCount(SelectedTeam!.Name) >= MaxRosterSize)
+        {
+            statusMessage = $"The {SelectedTeam.Name} already have {MaxRosterSize} players on the 40-man roster. Open the 40-man list and remove a player to make space.";
+            return false;
+        }
+
+        createdPlayer.RosterAssignment = MajorLeagueRosterAssignment;
+        createdPlayer.RequiresRosterDecision = false;
+        Save();
+        statusMessage = $"{createdPlayer.FullName} is now on the 40-man roster.";
+        return true;
+    }
+
+    public bool AssignDraftPlayerToAffiliate(Guid playerId, out string statusMessage)
+    {
+        if (!TryGetSelectedTeamCreatedPlayer(playerId, out var createdPlayer, out statusMessage))
+        {
+            return false;
+        }
+
+        if (string.Equals(createdPlayer.RosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
+            && createdPlayer.LastOptionedSeasonYear != GetCurrentSeasonYear())
+        {
+            if (createdPlayer.MinorLeagueOptionsRemaining <= 0)
+            {
+                statusMessage = $"{createdPlayer.FullName} has no minor-league option years remaining.";
+                return false;
+            }
+
+            createdPlayer.MinorLeagueOptionsRemaining--;
+            createdPlayer.LastOptionedSeasonYear = GetCurrentSeasonYear();
+        }
+
+        createdPlayer.RosterAssignment = AffiliateRosterAssignment;
+        createdPlayer.RequiresRosterDecision = false;
+        Save();
+        statusMessage = $"{createdPlayer.FullName} was assigned to the {SelectedTeam!.Name} affiliate.";
+        return true;
+    }
+
+    public bool ReleaseSelectedTeam40ManPlayer(Guid playerId, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before managing the 40-man roster.";
+            return false;
+        }
+
+        var player = FindPlayerImport(playerId);
+        if (player == null || !string.Equals(GetAssignedTeamName(playerId, player.TeamName), SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "That player is not on your 40-man roster.";
+            return false;
+        }
+
+        if (!IsPlayerOnMajorLeagueRoster(playerId))
+        {
+            statusMessage = "That player is not currently occupying a 40-man roster spot.";
+            return false;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        var releaseCost = _releasePlayerUseCase.Execute(teamState.Economy, playerId);
+        _saveState.PlayerAssignments[playerId] = FreeAgentTeamName;
+
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
+        {
+            createdPlayer.TeamName = FreeAgentTeamName;
+            createdPlayer.RequiresRosterDecision = false;
+            createdPlayer.RosterAssignment = MajorLeagueRosterAssignment;
+        }
+
+        InitializeLineupSlots(teamState, SelectedTeam.Name);
+        InitializeRotationSlots(teamState, SelectedTeam.Name);
+        AddTransferRecord(SelectedTeam.Name, $"Released {player.FullName} from the 40-man roster.");
+        Save();
+
+        statusMessage = releaseCost > 0m
+            ? $"Released {player.FullName} and opened a 40-man spot. Buyout cost: {GetBudgetDisplay(releaseCost)}."
+            : $"Released {player.FullName} and opened a 40-man spot.";
+        return true;
+    }
+
+    public string GetDraftProspectDebugSummary(Guid playerId)
+    {
+        var draftState = LoadDraftState();
+        var prospect = draftState?.FindProspect(playerId);
+        if (prospect != null)
+        {
+            return $"Debug - OVR {prospect.OverallRating}, POT {prospect.PotentialRating}, outcome {prospect.TalentOutcome}.";
+        }
+
+        if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
+        {
+            return $"Debug - OVR {createdPlayer.DraftOverallRating}, POT {createdPlayer.PotentialRating}, outcome {createdPlayer.TalentOutcome}.";
+        }
+
+        return "Debug data unavailable.";
+    }
+
+    public bool StartDraft(out string statusMessage, int totalRounds = DefaultDraftRounds, bool isSnakeDraft = false)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before starting the draft.";
+            return false;
+        }
+
+        if (_saveState.ActiveDraft != null)
+        {
+            statusMessage = "A draft is already in progress.";
+            return false;
+        }
+
+        if (!IsRegularSeasonComplete())
+        {
+            statusMessage = "Finish the regular season before opening the draft.";
+            return false;
+        }
+
+        if (_saveState.LastCompletedDraftSeasonYear == GetCurrentSeasonYear())
+        {
+            statusMessage = "The current season draft has already been completed.";
+            return false;
+        }
+
+        var draftOrder = BuildDraftOrder();
+        var draftProspects = _draftProspectFactory.CreateProspects(GetCurrentSeasonYear(), Math.Max(draftOrder.Count * Math.Max(1, totalRounds) + 24, 60));
+        foreach (var prospect in draftProspects)
+        {
+            EnsureDraftCreatedPlayer(prospect);
+        }
+
+        var draftState = _startDraftUseCase.Execute(draftOrder, draftProspects, totalRounds, isSnakeDraft);
+        SaveDraftState(draftState);
+        Save();
+        statusMessage = $"Draft started: {draftOrder.Count} teams, {totalRounds} rounds, {draftProspects.Count} available prospects.";
+        return true;
+    }
+
+    public bool MakeDraftPick(Guid playerId, out string statusMessage)
+    {
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before making a draft pick.";
+            return false;
+        }
+
+        var draftState = LoadDraftState();
+        if (draftState == null)
+        {
+            statusMessage = "Start a draft before making a pick.";
+            return false;
+        }
+
+        try
+        {
+            var pick = _makeUserDraftPickUseCase.Execute(draftState, SelectedTeam.Name, playerId);
+            ApplyDraftPick(pick);
+            return FinalizeDraftProgress(draftState, $"{pick.TeamName} selected {pick.PlayerName} ({pick.PrimaryPosition}).", out statusMessage);
+        }
+        catch (Exception exception)
+        {
+            statusMessage = exception.Message;
+            return false;
+        }
+    }
+
+    public bool SimulateCpuDraftPick(out string statusMessage)
+    {
+        return AdvanceDraft(out statusMessage);
+    }
+
+    public bool AdvanceDraftToNextUserPick(out string statusMessage)
+    {
+        var draftState = LoadDraftState();
+        if (draftState == null)
+        {
+            statusMessage = "There is no active draft to advance.";
+            return false;
+        }
+
+        var userTeamName = SelectedTeam?.Name ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(userTeamName))
+        {
+            statusMessage = "Select a team before advancing the draft.";
+            return false;
+        }
+
+        if (draftState.IsTeamOnClock(userTeamName))
+        {
+            statusMessage = $"The {userTeamName} are already on the clock.";
+            return false;
+        }
+
+        var lastMessage = string.Empty;
+        while (!draftState.IsComplete && !draftState.IsTeamOnClock(userTeamName))
+        {
+            var result = _advanceDraftUseCase.Execute(draftState, userTeamName, BuildDraftCpuTeamContext);
+            if (result.PickMade == null)
+            {
+                statusMessage = string.IsNullOrWhiteSpace(result.Message) ? "Draft advance stopped unexpectedly." : result.Message;
+                return false;
+            }
+
+            ApplyDraftPick(result.PickMade);
+            lastMessage = result.Message;
+        }
+
+        return FinalizeDraftProgress(draftState, string.IsNullOrWhiteSpace(lastMessage) ? "Draft advanced." : lastMessage, out statusMessage);
+    }
+
+    public bool AdvanceDraft(out string statusMessage)
+    {
+        var draftState = LoadDraftState();
+        if (draftState == null)
+        {
+            statusMessage = "There is no active draft to advance.";
+            return false;
+        }
+
+        var userTeamName = SelectedTeam?.Name ?? string.Empty;
+
+        try
+        {
+            var result = _advanceDraftUseCase.Execute(draftState, userTeamName, BuildDraftCpuTeamContext);
+            if (result.PickMade == null)
+            {
+                statusMessage = result.Message;
+                return false;
+            }
+
+            ApplyDraftPick(result.PickMade);
+            return FinalizeDraftProgress(draftState, result.Message, out statusMessage);
+        }
+        catch (Exception exception)
+        {
+            statusMessage = exception.Message;
+            return false;
+        }
     }
 
     public bool IsScheduledGameCompleted(ScheduleImportDto game)
@@ -1873,7 +2298,7 @@ public sealed class FranchiseSession
 
     public bool CanSimulateCurrentDay()
     {
-        return SelectedTeam != null && !CanAdvanceToNextSeason();
+        return SelectedTeam != null && !IsRegularSeasonComplete();
     }
 
     public bool SimulateToEndOfSeason(out string statusMessage)
@@ -2244,7 +2669,7 @@ public sealed class FranchiseSession
             return false;
         }
 
-        if (CanAdvanceToNextSeason())
+        if (IsRegularSeasonComplete())
         {
             statusMessage = $"The {GetCurrentSeasonYear()} regular season is complete. Use Next Season to move into the offseason.";
             return false;
@@ -3087,6 +3512,7 @@ public sealed class FranchiseSession
         _saveState.CurrentLiveMatch = null;
         _saveState.LastCompletedLiveMatch = null;
         _saveState.LastOffseasonSummary = null;
+        _saveState.ActiveDraft = null;
         _saveState.CurrentSeasonYear = 0;
         _saveState.CurrentFranchiseDate = DateTime.Today;
         _saveState.CompletedScheduleGameKeys.Clear();
@@ -3094,6 +3520,7 @@ public sealed class FranchiseSession
         _saveState.CompletedGameBoxScores.Clear();
         _saveState.CurrentViewedBoxScoreGameKey = null;
         _saveState.PlayerAssignments.Clear();
+        _saveState.CreatedPlayers.Clear();
 
         if (removedTeamState || removedSelection)
         {
@@ -3113,6 +3540,7 @@ public sealed class FranchiseSession
         _saveState.QuickMatchLiveMatch = null;
         _saveState.LastCompletedLiveMatch = null;
         _saveState.LastOffseasonSummary = null;
+        _saveState.ActiveDraft = null;
         _saveState.CurrentSeasonYear = 0;
         _saveState.PlayerRatings.Clear();
         _saveState.PlayerSeasonStats.Clear();
@@ -3122,6 +3550,7 @@ public sealed class FranchiseSession
         _saveState.PlayerHealth.Clear();
         _saveState.PlayerAges.Clear();
         _saveState.PlayerAssignments.Clear();
+        _saveState.CreatedPlayers.Clear();
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
         _saveState.CompletedGameBoxScores.Clear();
@@ -3164,8 +3593,9 @@ public sealed class FranchiseSession
         var lineupMap = BuildSlotMap(lineupSlots);
         var rotationMap = BuildSlotMap(rotationSlots);
 
-        return _leagueData.Players
+        return GetAllPlayers()
             .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Where(player => IsPlayerOnMajorLeagueRoster(player.PlayerId))
             .Select(player =>
             {
                 rostersByPlayerId.TryGetValue(player.PlayerId, out var roster);
@@ -3184,6 +3614,17 @@ public sealed class FranchiseSession
             })
             .OrderBy(entry => entry.PlayerName)
             .ToList();
+    }
+
+    private bool IsPlayerOnMajorLeagueRoster(Guid playerId)
+    {
+        if (!_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
+        {
+            return true;
+        }
+
+        return !string.Equals(createdPlayer.RosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(createdPlayer.RosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase);
     }
 
     private List<Guid?> BuildLineupSlots(string teamName)
@@ -3212,7 +3653,323 @@ public sealed class FranchiseSession
 
     private PlayerImportDto? FindPlayerImport(Guid playerId)
     {
-        return _leagueData.Players.FirstOrDefault(player => player.PlayerId == playerId);
+        return GetAllPlayers().FirstOrDefault(player => player.PlayerId == playerId);
+    }
+
+    private IReadOnlyList<PlayerImportDto> GetAllPlayers()
+    {
+        if (_saveState.CreatedPlayers.Count == 0)
+        {
+            return _leagueData.Players;
+        }
+
+        return _leagueData.Players
+            .Concat(_saveState.CreatedPlayers.Values.Select(player => new PlayerImportDto
+            {
+                PlayerId = player.PlayerId,
+                FullName = player.FullName,
+                PrimaryPosition = player.PrimaryPosition,
+                SecondaryPosition = player.SecondaryPosition,
+                TeamName = player.TeamName,
+                Age = player.Age
+            }))
+            .ToList();
+    }
+
+    private bool HasRequiredDraftWorkRemaining()
+    {
+        return _saveState.ActiveDraft != null
+            || _saveState.LastCompletedDraftSeasonYear != GetCurrentSeasonYear()
+            || HasPendingDraftRosterDecisions();
+    }
+
+    private bool HasPendingDraftRosterDecisions()
+    {
+        if (SelectedTeam == null)
+        {
+            return false;
+        }
+
+        return _saveState.CreatedPlayers.Values.Any(player =>
+            string.Equals(player.TeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase)
+            && player.RequiresRosterDecision);
+    }
+
+    private bool TryGetSelectedTeamCreatedPlayer(Guid playerId, out FranchiseCreatedPlayerState createdPlayer, out string statusMessage)
+    {
+        createdPlayer = new FranchiseCreatedPlayerState();
+        if (SelectedTeam == null)
+        {
+            statusMessage = "Select a team before managing drafted players.";
+            return false;
+        }
+
+        if (!_saveState.CreatedPlayers.TryGetValue(playerId, out var resolvedPlayer)
+            || !string.Equals(resolvedPlayer.TeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "That player is not part of your drafted-player pool.";
+            return false;
+        }
+
+        createdPlayer = resolvedPlayer;
+        statusMessage = string.Empty;
+        return true;
+    }
+
+    private string GetRosterAssignmentLabel(FranchiseCreatedPlayerState createdPlayer)
+    {
+        if (string.Equals(createdPlayer.RosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{createdPlayer.TeamName} Affiliate";
+        }
+
+        if (string.Equals(createdPlayer.RosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return "Decision Needed";
+        }
+
+        return MajorLeagueRosterAssignment;
+    }
+
+    private DraftState? LoadDraftState()
+    {
+        if (_saveState.ActiveDraft == null)
+        {
+            return null;
+        }
+
+        var draftState = DraftState.Restore(
+            _saveState.ActiveDraft.DraftOrder,
+            _saveState.ActiveDraft.AvailableProspects.Select(prospect => new DraftProspect(
+                prospect.PlayerId,
+                prospect.PlayerName,
+                prospect.PrimaryPosition,
+                prospect.SecondaryPosition,
+                prospect.Age,
+                prospect.OverallRating,
+                prospect.PotentialRating,
+                prospect.Source,
+                prospect.Summary,
+                prospect.ScoutSummary,
+                prospect.PotentialSummary,
+                prospect.SourceTeamName,
+                prospect.SourceStatsSummary,
+                prospect.TalentOutcome)).ToList(),
+            _saveState.ActiveDraft.DraftedPicks.Select(pick => new DraftPick(
+                pick.RoundNumber,
+                pick.PickNumberInRound,
+                pick.OverallPickNumber,
+                pick.TeamName,
+                pick.PlayerId,
+                pick.PlayerName,
+                pick.PrimaryPosition,
+                pick.OverallRating,
+                pick.IsUserPick)).ToList(),
+            _saveState.ActiveDraft.TotalRounds,
+            _saveState.ActiveDraft.IsSnakeDraft,
+            _saveState.ActiveDraft.CurrentRound,
+            _saveState.ActiveDraft.CurrentPickNumber);
+
+        return _getDraftStateUseCase.Execute(draftState);
+    }
+
+    private void SaveDraftState(DraftState? draftState)
+    {
+        if (draftState == null)
+        {
+            _saveState.ActiveDraft = null;
+            return;
+        }
+
+        _saveState.ActiveDraft = new DraftSessionState
+        {
+            TotalRounds = draftState.TotalRounds,
+            IsSnakeDraft = draftState.IsSnakeDraft,
+            CurrentRound = draftState.CurrentRound,
+            CurrentPickNumber = draftState.CurrentPickNumber,
+            DraftOrder = draftState.DraftOrder.ToList(),
+            AvailableProspects = draftState.AvailableProspects.Select(prospect => new DraftProspectState
+            {
+                PlayerId = prospect.PlayerId,
+                PlayerName = prospect.PlayerName,
+                PrimaryPosition = prospect.PrimaryPosition,
+                SecondaryPosition = prospect.SecondaryPosition,
+                Age = prospect.Age,
+                OverallRating = prospect.OverallRating,
+                PotentialRating = prospect.PotentialRating,
+                Source = prospect.Source,
+                Summary = prospect.Summary,
+                ScoutSummary = prospect.ScoutSummary,
+                PotentialSummary = prospect.PotentialSummary,
+                SourceTeamName = prospect.SourceTeamName,
+                SourceStatsSummary = prospect.SourceStatsSummary,
+                TalentOutcome = prospect.TalentOutcome
+            }).ToList(),
+            DraftedPicks = draftState.DraftedPicks.Select(pick => new DraftPickState
+            {
+                RoundNumber = pick.RoundNumber,
+                PickNumberInRound = pick.PickNumberInRound,
+                OverallPickNumber = pick.OverallPickNumber,
+                TeamName = pick.TeamName,
+                PlayerId = pick.PlayerId,
+                PlayerName = pick.PlayerName,
+                PrimaryPosition = pick.PrimaryPosition,
+                OverallRating = pick.OverallRating,
+                IsUserPick = pick.IsUserPick
+            }).ToList()
+        };
+    }
+
+    private IReadOnlyList<string> BuildDraftOrder()
+    {
+        return GetStandings()
+            .OrderBy(team => team.GamesPlayed == 0 ? 0.5d : team.Wins / (double)team.GamesPlayed)
+            .ThenBy(team => team.Wins)
+            .ThenByDescending(team => team.Losses)
+            .ThenBy(team => team.TeamName)
+            .Select(team => team.TeamName)
+            .ToList();
+    }
+
+    private DraftCpuTeamContext BuildDraftCpuTeamContext(string teamName)
+    {
+        return new DraftCpuTeamContext(
+            teamName,
+            GetTeamRoster(teamName)
+                .Select(player => player.PrimaryPosition)
+                .ToList());
+    }
+
+    private void EnsureDraftCreatedPlayer(DraftProspect prospect)
+    {
+        if (!_saveState.CreatedPlayers.ContainsKey(prospect.PlayerId))
+        {
+            _saveState.CreatedPlayers[prospect.PlayerId] = new FranchiseCreatedPlayerState
+            {
+                PlayerId = prospect.PlayerId,
+                FullName = prospect.PlayerName,
+                PrimaryPosition = prospect.PrimaryPosition,
+                SecondaryPosition = prospect.SecondaryPosition,
+                Age = prospect.Age,
+                TeamName = string.Empty,
+                Source = prospect.Source,
+                DraftOverallRating = prospect.OverallRating,
+                PotentialRating = prospect.PotentialRating,
+                Summary = prospect.Summary,
+                ScoutSummary = prospect.ScoutSummary,
+                PotentialSummary = prospect.PotentialSummary,
+                SourceTeamName = prospect.SourceTeamName,
+                SourceStatsSummary = prospect.SourceStatsSummary,
+                TalentOutcome = prospect.TalentOutcome,
+                DraftSeasonYear = GetCurrentSeasonYear(),
+                RosterAssignment = PendingRosterAssignment,
+                RequiresRosterDecision = false,
+                MinorLeagueOptionsRemaining = 3,
+                LastOptionedSeasonYear = 0
+            };
+        }
+
+        if (!_saveState.PlayerRatings.ContainsKey(prospect.PlayerId))
+        {
+            _saveState.PlayerRatings[prospect.PlayerId] = CreateDraftPlayerRatings(prospect);
+        }
+
+        _saveState.PlayerHealth.TryAdd(prospect.PlayerId, new PlayerHealthState());
+        _saveState.PlayerSeasonStats.TryAdd(prospect.PlayerId, new PlayerSeasonStatsState());
+        _saveState.PlayerRecentTrackingTotals.TryAdd(prospect.PlayerId, new PlayerRecentTotalsState());
+        _saveState.PlayerAges[prospect.PlayerId] = prospect.Age;
+    }
+
+    private PlayerHiddenRatingsState CreateDraftPlayerRatings(DraftProspect prospect)
+    {
+        var ratings = PlayerRatingsGenerator.Generate(prospect.PlayerId, prospect.PlayerName, prospect.PrimaryPosition, prospect.SecondaryPosition, prospect.Age);
+        var delta = prospect.OverallRating - ratings.OverallRating;
+        if (delta == 0)
+        {
+            return ratings;
+        }
+
+        ratings.ContactRating = Math.Clamp(ratings.ContactRating + delta, 20, 99);
+        ratings.PowerRating = Math.Clamp(ratings.PowerRating + delta, 20, 99);
+        ratings.DisciplineRating = Math.Clamp(ratings.DisciplineRating + delta, 20, 99);
+        ratings.SpeedRating = Math.Clamp(ratings.SpeedRating + delta, 20, 99);
+        ratings.FieldingRating = Math.Clamp(ratings.FieldingRating + delta, 20, 99);
+        ratings.ArmRating = Math.Clamp(ratings.ArmRating + delta, 20, 99);
+        ratings.PitchingRating = Math.Clamp(ratings.PitchingRating + delta, 20, 99);
+        ratings.StaminaRating = Math.Clamp(ratings.StaminaRating + delta, 20, 99);
+        ratings.DurabilityRating = Math.Clamp(ratings.DurabilityRating + delta, 20, 99);
+        ratings.RecalculateDerivedRatings();
+        return ratings;
+    }
+
+    private void ApplyDraftPick(DraftPick pick)
+    {
+        var draftedPlayer = FindPlayerImport(pick.PlayerId);
+        if (draftedPlayer == null)
+        {
+            throw new InvalidOperationException("The drafted prospect could not be resolved.");
+        }
+
+        if (_saveState.CreatedPlayers.TryGetValue(pick.PlayerId, out var createdPlayer))
+        {
+            createdPlayer.TeamName = pick.TeamName;
+            if (SelectedTeam != null && string.Equals(pick.TeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase))
+            {
+                createdPlayer.RosterAssignment = PendingRosterAssignment;
+                createdPlayer.RequiresRosterDecision = true;
+            }
+            else
+            {
+                createdPlayer.RosterAssignment = pick.OverallRating >= 68 ? MajorLeagueRosterAssignment : AffiliateRosterAssignment;
+                createdPlayer.RequiresRosterDecision = false;
+            }
+        }
+
+        _saveState.PlayerAssignments[pick.PlayerId] = pick.TeamName;
+        _saveState.PlayerAges[pick.PlayerId] = draftedPlayer.Age;
+        _saveState.PlayerHealth.TryAdd(pick.PlayerId, new PlayerHealthState());
+        _saveState.PlayerSeasonStats.TryAdd(pick.PlayerId, new PlayerSeasonStatsState());
+
+        var teamState = GetOrCreateTeamState(pick.TeamName);
+        var rookieSalary = 650_000m + Math.Max(0, pick.OverallRating - 45) * 55_000m + Math.Max(0, 20 - pick.OverallPickNumber) * 20_000m;
+        var rookieYears = pick.RoundNumber == 1 ? 4 : 3;
+        _signPlayerContractUseCase.Execute(teamState.Economy, pick.PlayerId, pick.PlayerName, rookieSalary, rookieYears, GetCurrentFranchiseDate());
+        AddTransferRecord(pick.TeamName, $"Drafted {pick.PlayerName} ({pick.PrimaryPosition}) in Round {pick.RoundNumber}, Pick {pick.PickNumberInRound}.");
+    }
+
+    private bool FinalizeDraftProgress(DraftState draftState, string baseMessage, out string statusMessage)
+    {
+        if (!draftState.IsComplete)
+        {
+            SaveDraftState(draftState);
+            Save();
+            statusMessage = baseMessage;
+            return true;
+        }
+
+        _finishDraftUseCase.Execute(draftState);
+        CleanupUndraftedProspects(draftState);
+        _saveState.LastCompletedDraftSeasonYear = GetCurrentSeasonYear();
+        SaveDraftState(null);
+        Save();
+        statusMessage = $"{baseMessage} Draft complete after {draftState.DraftedPicks.Count} pick(s).";
+        return true;
+    }
+
+    private void CleanupUndraftedProspects(DraftState draftState)
+    {
+        foreach (var undrafted in draftState.AvailableProspects)
+        {
+            _saveState.CreatedPlayers.Remove(undrafted.PlayerId);
+            _saveState.PlayerRatings.Remove(undrafted.PlayerId);
+            _saveState.PlayerSeasonStats.Remove(undrafted.PlayerId);
+            _saveState.PreviousSeasonStats.Remove(undrafted.PlayerId);
+            _saveState.PlayerRecentGameStats.Remove(undrafted.PlayerId);
+            _saveState.PlayerRecentTrackingTotals.Remove(undrafted.PlayerId);
+            _saveState.PlayerHealth.Remove(undrafted.PlayerId);
+            _saveState.PlayerAges.Remove(undrafted.PlayerId);
+            _saveState.PlayerAssignments.Remove(undrafted.PlayerId);
+        }
     }
 
     private bool EnsurePlayerHealthGenerated()
@@ -3249,6 +4006,34 @@ public sealed class FranchiseSession
                 : _leagueData.Rosters.FirstOrDefault(roster => roster.PlayerId == player.PlayerId)?.TeamName ?? string.Empty;
 
             _saveState.PlayerAssignments[player.PlayerId] = fallbackTeamName;
+            hasChanges = true;
+        }
+
+        return hasChanges;
+    }
+
+    private bool EnsureCreatedPlayerRosterAssignmentsGenerated()
+    {
+        var hasChanges = false;
+
+        foreach (var player in _saveState.CreatedPlayers.Values)
+        {
+            if (string.IsNullOrWhiteSpace(player.TeamName))
+            {
+                continue;
+            }
+
+            if (!string.Equals(player.RosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (player.RequiresRosterDecision)
+            {
+                continue;
+            }
+
+            player.RosterAssignment = MajorLeagueRosterAssignment;
             hasChanges = true;
         }
 
@@ -3499,7 +4284,11 @@ public sealed class FranchiseSession
     private int GetTeamRosterCount(string teamName)
     {
         return _leagueData.Players.Count(player =>
-            string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase));
+            string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase)
+            && IsPlayerOnMajorLeagueRoster(player.PlayerId))
+            + _saveState.CreatedPlayers.Values.Count(player =>
+                string.Equals(player.TeamName, teamName, StringComparison.OrdinalIgnoreCase)
+                && IsPlayerOnMajorLeagueRoster(player.PlayerId));
     }
 
     private decimal GetPositionNeedMultiplier(string teamName, string position)

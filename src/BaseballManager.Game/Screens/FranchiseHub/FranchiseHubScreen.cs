@@ -43,6 +43,7 @@ public sealed class FranchiseHubScreen : GameScreen
         _buttons.Add(new ButtonControl { Label = "Sim Day", OnClick = () => SimDay() });
         _buttons.Add(new ButtonControl { Label = "Sim Next Game", OnClick = () => SimNextGame() });
         _buttons.Add(new ButtonControl { Label = "Next Season", OnClick = () => AdvanceToNextSeason() });
+        _buttons.Add(new ButtonControl { Label = "Draft", OnClick = () => _screenManager.TransitionTo(nameof(DraftScreen)) });
         _buttons.Add(new ButtonControl { Label = "Schedule / Training", OnClick = () => _screenManager.TransitionTo(nameof(ScheduleScreen)) });
         _buttons.Add(new ButtonControl { Label = "Training Reports", OnClick = () => _screenManager.TransitionTo(nameof(TrainingReportsScreen)) });
         _buttons.Add(new ButtonControl { Label = "Standings", OnClick = () => _screenManager.TransitionTo(nameof(StandingsScreen)) });
@@ -231,6 +232,7 @@ public sealed class FranchiseHubScreen : GameScreen
             "Sim Day" => _franchiseSession.CanSimulateCurrentDay(),
             "Sim Next Game" => _franchiseSession.HasPendingScheduledGame(),
             "Next Season" => _franchiseSession.CanAdvanceToNextSeason(),
+            "Draft" => _franchiseSession.SelectedTeam != null,
             _ => true
         };
     }
@@ -240,8 +242,10 @@ public sealed class FranchiseHubScreen : GameScreen
         var nextGame = _franchiseSession.GetNextScheduledGame();
         if (nextGame == null)
         {
-            return _franchiseSession.CanAdvanceToNextSeason()
-                ? $"The {_franchiseSession.GetCurrentSeasonYear()} regular season is complete. Use Next Season to run league-wide offseason deals, contract offers, and year rollover."
+            return _franchiseSession.IsRegularSeasonComplete()
+                ? (_franchiseSession.CanAdvanceToNextSeason()
+                    ? $"The {_franchiseSession.GetCurrentSeasonYear()} regular season is complete. Use Next Season to continue into the offseason rollover."
+                    : _franchiseSession.GetNextSeasonBlockerMessage())
                 : "No remaining scheduled games are on the calendar. Use Schedule / Training or roster management to review the completed season state.";
         }
 

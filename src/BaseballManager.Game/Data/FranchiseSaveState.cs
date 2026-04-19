@@ -37,6 +37,8 @@ public sealed class FranchiseSaveState
 
     public Dictionary<Guid, string> PlayerAssignments { get; set; } = new();
 
+    public Dictionary<Guid, FranchiseCreatedPlayerState> CreatedPlayers { get; set; } = new();
+
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }
 
     public LiveMatchSaveState? QuickMatchLiveMatch { get; set; }
@@ -45,7 +47,123 @@ public sealed class FranchiseSaveState
 
     public OffseasonSummaryState? LastOffseasonSummary { get; set; }
 
+    public DraftSessionState? ActiveDraft { get; set; }
+
+    public int LastCompletedDraftSeasonYear { get; set; }
+
     public Dictionary<string, TeamFranchiseState> Teams { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class FranchiseCreatedPlayerState
+{
+    public Guid PlayerId { get; set; }
+
+    public string FullName { get; set; } = string.Empty;
+
+    public string PrimaryPosition { get; set; } = string.Empty;
+
+    public string SecondaryPosition { get; set; } = string.Empty;
+
+    public int Age { get; set; }
+
+    public string TeamName { get; set; } = string.Empty;
+
+    public string Source { get; set; } = string.Empty;
+
+    public int DraftOverallRating { get; set; }
+
+    public int PotentialRating { get; set; }
+
+    public string Summary { get; set; } = string.Empty;
+
+    public string ScoutSummary { get; set; } = string.Empty;
+
+    public string PotentialSummary { get; set; } = string.Empty;
+
+    public string SourceTeamName { get; set; } = string.Empty;
+
+    public string SourceStatsSummary { get; set; } = string.Empty;
+
+    public string TalentOutcome { get; set; } = string.Empty;
+
+    public int DraftSeasonYear { get; set; }
+
+    public string RosterAssignment { get; set; } = "Pending";
+
+    public bool RequiresRosterDecision { get; set; }
+
+    public int MinorLeagueOptionsRemaining { get; set; } = 3;
+
+    public int LastOptionedSeasonYear { get; set; }
+}
+
+public sealed class DraftSessionState
+{
+    public int TotalRounds { get; set; }
+
+    public bool IsSnakeDraft { get; set; }
+
+    public int CurrentRound { get; set; }
+
+    public int CurrentPickNumber { get; set; }
+
+    public List<string> DraftOrder { get; set; } = new();
+
+    public List<DraftProspectState> AvailableProspects { get; set; } = new();
+
+    public List<DraftPickState> DraftedPicks { get; set; } = new();
+}
+
+public sealed class DraftProspectState
+{
+    public Guid PlayerId { get; set; }
+
+    public string PlayerName { get; set; } = string.Empty;
+
+    public string PrimaryPosition { get; set; } = string.Empty;
+
+    public string SecondaryPosition { get; set; } = string.Empty;
+
+    public int Age { get; set; }
+
+    public int OverallRating { get; set; }
+
+    public int PotentialRating { get; set; }
+
+    public string Source { get; set; } = string.Empty;
+
+    public string Summary { get; set; } = string.Empty;
+
+    public string ScoutSummary { get; set; } = string.Empty;
+
+    public string PotentialSummary { get; set; } = string.Empty;
+
+    public string SourceTeamName { get; set; } = string.Empty;
+
+    public string SourceStatsSummary { get; set; } = string.Empty;
+
+    public string TalentOutcome { get; set; } = string.Empty;
+}
+
+public sealed class DraftPickState
+{
+    public int RoundNumber { get; set; }
+
+    public int PickNumberInRound { get; set; }
+
+    public int OverallPickNumber { get; set; }
+
+    public string TeamName { get; set; } = string.Empty;
+
+    public Guid PlayerId { get; set; }
+
+    public string PlayerName { get; set; } = string.Empty;
+
+    public string PrimaryPosition { get; set; } = string.Empty;
+
+    public int OverallRating { get; set; }
+
+    public bool IsUserPick { get; set; }
 }
 
 public sealed class OffseasonSummaryState

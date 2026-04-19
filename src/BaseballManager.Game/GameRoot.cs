@@ -1,6 +1,7 @@
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Data;
+using BaseballManager.Game.Platform;
 using BaseballManager.Game.Screens.GameDay;
 using BaseballManager.Game.Screens.PostGame;
 using BaseballManager.Game.Screens.FranchiseHub;
@@ -25,6 +26,7 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
     private ImportedLeagueData _leagueData = null!;
     private FranchiseSession _franchiseSession = null!;
     private FranchiseStateStore _franchiseStateStore = null!;
+    private const string WindowIconAssetPath = "Assets/Textures/ui/baseballmanagerlogo.png";
 
     public GameRoot()
     {
@@ -60,6 +62,7 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
         _screenManager.Register(new ScheduleScreen(_screenManager, _leagueData, _franchiseSession));
         _screenManager.Register(new TrainingReportsScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new ScoutingScreen(_screenManager, _franchiseSession));
+        _screenManager.Register(new DraftScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new TransfersScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new CoachingStaffScreen(_screenManager, _franchiseSession));
         _screenManager.Register(new StandingsScreen(_screenManager, _franchiseSession));
@@ -143,6 +146,7 @@ public sealed class GameRoot : Microsoft.Xna.Framework.Game
 
     protected override void LoadContent()
     {
+        WindowIconService.TryApplyWindowIcon(GraphicsDevice, Window, WindowIconAssetPath);
         _uiRenderer.LoadContent(Content);
         base.LoadContent();
     }

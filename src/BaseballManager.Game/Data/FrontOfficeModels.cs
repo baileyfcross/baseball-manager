@@ -57,6 +57,68 @@ public sealed record AmateurProspectView(
     bool IsOnTargetList,
     string AssignedScoutName);
 
+public sealed record DraftProspectView(
+    Guid PlayerId,
+    string PlayerName,
+    string PrimaryPosition,
+    string SecondaryPosition,
+    int Age,
+    string Source,
+    string Summary,
+    string ScoutSummary,
+    string PotentialSummary,
+    string SourceTeamName,
+    string SourceStatsSummary,
+    int ScoutRank,
+    int PotentialRank);
+
+public sealed record DraftPickView(
+    int RoundNumber,
+    int PickNumberInRound,
+    int OverallPickNumber,
+    string TeamName,
+    string PlayerName,
+    string PrimaryPosition,
+    bool IsUserPick);
+
+public sealed record DraftOrganizationPlayerView(
+    Guid PlayerId,
+    string PlayerName,
+    string PrimaryPosition,
+    string SecondaryPosition,
+    int Age,
+    string ScoutSummary,
+    string PotentialSummary,
+    string Source,
+    string SourceTeamName,
+    string SourceStatsSummary,
+    string AssignmentLabel,
+    bool RequiresRosterDecision,
+    int MinorLeagueOptionsRemaining,
+    int ScoutRank,
+    int PotentialRank);
+
+public sealed record DraftFortyManPlayerView(
+    Guid PlayerId,
+    string PlayerName,
+    string PrimaryPosition,
+    string SecondaryPosition,
+    int Age,
+    string StatusLabel,
+    bool IsDraftedPlayer,
+    int MinorLeagueOptionsRemaining);
+
+public sealed record DraftBoardView(
+    bool HasActiveDraft,
+    bool IsComplete,
+    int TotalRounds,
+    int CurrentRound,
+    int CurrentPickNumber,
+    string CurrentTeamName,
+    IReadOnlyList<string> CurrentRoundOrder,
+    IReadOnlyList<DraftProspectView> AvailableProspects,
+    IReadOnlyList<DraftPickView> RecentPicks);
+
 public sealed record MedicalPlayerStatus(
     Guid PlayerId,
     string PlayerName,

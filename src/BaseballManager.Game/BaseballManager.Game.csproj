@@ -7,6 +7,7 @@
     <Nullable>enable</Nullable>
     <MonoGamePlatform>DesktopGL</MonoGamePlatform>
     <GenerateMonoGameContentBuilderTask>true</GenerateMonoGameContentBuilderTask>
+    <ApplicationIcon>Assets\Textures\ui\baseball_manager_icon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +17,12 @@
 
   <ItemGroup>
     <MonoGameContentReference Include="Assets/Content.mgcb" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="Assets\Textures\ui\baseballmanagerlogo.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
