@@ -30,6 +30,8 @@ public sealed class FranchiseSession
         Utility
     }
 
+    private delegate bool BatchRosterMoveOperation(Guid playerId, out string statusMessage);
+
     private enum PracticeDevelopmentAttribute
     {
         Contact,
@@ -699,7 +701,7 @@ public sealed class FranchiseSession
         var lineupMap = BuildSlotMap(BuildLineupSlots(teamName));
         var rotationMap = BuildSlotMap(BuildRotationSlots(teamName));
 
-        return GetAllPlayers()
+        var organizationPlayers = GetAllPlayers()
             .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
             .Select(player =>
             {
@@ -722,7 +724,9 @@ public sealed class FranchiseSession
                     secondaryPosition,
                     player.Age,
                     assignmentLabel,
+                    string.Empty,
                     isOnFortyMan,
+                    false,
                     isDraftedPlayer,
                     isDraftedPlayer ? createdPlayer!.MinorLeagueOptionsRemaining : 0,
                     canAssignToFortyMan,
@@ -731,12 +735,43 @@ public sealed class FranchiseSession
                     isOnActiveRoster && lineupMap.TryGetValue(player.PlayerId, out var lineupSlot) ? lineupSlot : null,
                     isOnActiveRoster && rotationMap.TryGetValue(player.PlayerId, out var rotationSlot) ? rotationSlot : null);
             })
-                    .OrderByDescending(player => player.AssignmentLabel == ReserveRosterAssignment)
+                    .ToList();
+
+        var firstTeamPlayerIds = SelectFirstTeamPlayers(organizationPlayers)
+            .Select(player => player.PlayerId)
+            .ToHashSet();
+
+        return organizationPlayers
+            .Select(player => player with
+            {
+                TeamStatusLabel = firstTeamPlayerIds.Contains(player.PlayerId)
+                    ? "First Team"
+                    : IsAffiliateRosterAssignment(player.PlayerId)
+                        ? "Affiliate"
+                        : "Organization Depth",
+                IsOnFirstTeam = firstTeamPlayerIds.Contains(player.PlayerId)
+            })
+            .OrderByDescending(player => player.AssignmentLabel == ReserveRosterAssignment)
                     .ThenByDescending(player => player.AssignmentLabel == "Decision Needed")
             .ThenByDescending(player => player.IsOnFortyMan)
             .ThenBy(player => player.PrimaryPosition)
             .ThenBy(player => player.PlayerName)
             .ToList();
+    }
+
+    public bool AssignSelectedTeamPlayersToFortyMan(IReadOnlyCollection<Guid> playerIds, out string statusMessage)
+    {
+        return ProcessBatchRosterMove(playerIds, AssignSelectedTeamPlayerToFortyMan, "added to the 40-man roster", out statusMessage);
+    }
+
+    public bool AssignSelectedTeamPlayersToAffiliate(IReadOnlyCollection<Guid> playerIds, out string statusMessage)
+    {
+        return ProcessBatchRosterMove(playerIds, AssignSelectedTeamPlayerToAffiliate, "assigned to the affiliate roster", out statusMessage);
+    }
+
+    public bool RemoveSelectedTeamPlayersFromFortyMan(IReadOnlyCollection<Guid> playerIds, out string statusMessage)
+    {
+        return ProcessBatchRosterMove(playerIds, RemoveSelectedTeamPlayerFromFortyMan, "removed from the 40-man roster", out statusMessage);
     }
 
     private OrganizationRosterCompositionView CreateEmptyRosterComposition(string title, string summary, int? targetCount)
@@ -765,12 +800,26 @@ public sealed class FranchiseSession
             .GroupBy(GetRosterCompositionBucket)
             .ToDictionary(group => group.Key, group => group.Count());
 
+        var playersByPrimaryPosition = players
+            .GroupBy(player => player.PrimaryPosition, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+
         var buckets = new List<OrganizationRosterCompositionBucketView>
         {
             CreateRosterCompositionBucket(RosterCompositionBucket.Pitchers, "Pitchers", playersByBucket, targetCount == FirstTeamRosterSize ? 13 : null),
             CreateRosterCompositionBucket(RosterCompositionBucket.Catchers, "Catchers", playersByBucket, targetCount == FirstTeamRosterSize ? 2 : null),
-            CreateRosterCompositionBucket(RosterCompositionBucket.Infielders, "Infielders", playersByBucket, targetCount == FirstTeamRosterSize ? 6 : null),
-            CreateRosterCompositionBucket(RosterCompositionBucket.Outfielders, "Outfielders", playersByBucket, targetCount == FirstTeamRosterSize ? 5 : null)
+            CreateRosterCompositionBucket(
+                RosterCompositionBucket.Infielders,
+                "Infielders",
+                playersByBucket,
+                targetCount == FirstTeamRosterSize ? 6 : null,
+                BuildPrimaryPositionDetails(playersByPrimaryPosition, ["1B", "2B", "3B", "SS"])),
+            CreateRosterCompositionBucket(
+                RosterCompositionBucket.Outfielders,
+                "Outfielders",
+                playersByBucket,
+                targetCount == FirstTeamRosterSize ? 5 : null,
+                BuildPrimaryPositionDetails(playersByPrimaryPosition, ["LF", "CF", "RF"]))
         };
 
         var utilityCount = playersByBucket.GetValueOrDefault(RosterCompositionBucket.Utility);
@@ -786,9 +835,19 @@ public sealed class FranchiseSession
         RosterCompositionBucket bucket,
         string label,
         IReadOnlyDictionary<RosterCompositionBucket, int> playersByBucket,
-        int? targetCount)
+        int? targetCount,
+        IReadOnlyList<OrganizationRosterCompositionBucketView>? details = null)
     {
-        return new OrganizationRosterCompositionBucketView(label, playersByBucket.GetValueOrDefault(bucket), targetCount);
+        return new OrganizationRosterCompositionBucketView(label, playersByBucket.GetValueOrDefault(bucket), targetCount, details);
+    }
+
+    private static IReadOnlyList<OrganizationRosterCompositionBucketView> BuildPrimaryPositionDetails(
+        IReadOnlyDictionary<string, int> playersByPrimaryPosition,
+        IReadOnlyList<string> positions)
+    {
+        return positions
+            .Select(position => new OrganizationRosterCompositionBucketView(position, playersByPrimaryPosition.GetValueOrDefault(position), null))
+            .ToList();
     }
 
     private List<OrganizationRosterPlayerView> SelectFirstTeamPlayers(IReadOnlyList<OrganizationRosterPlayerView> organizationPlayers)
@@ -1073,6 +1132,51 @@ public sealed class FranchiseSession
         statusMessage = releaseCost > 0m
             ? $"Released {player.FullName}. Buyout cost: {GetBudgetDisplay(releaseCost)}."
             : $"Released {player.FullName}.";
+        return true;
+    }
+
+    private bool ProcessBatchRosterMove(
+        IReadOnlyCollection<Guid> playerIds,
+        BatchRosterMoveOperation operation,
+        string successLabel,
+        out string statusMessage)
+    {
+        if (playerIds.Count == 0)
+        {
+            statusMessage = "Select at least one player before making a roster move.";
+            return false;
+        }
+
+        var successCount = 0;
+        var failureMessages = new List<string>();
+
+        foreach (var playerId in playerIds.Distinct())
+        {
+            if (operation(playerId, out var message))
+            {
+                successCount++;
+            }
+            else if (!string.IsNullOrWhiteSpace(message))
+            {
+                failureMessages.Add(message);
+            }
+        }
+
+        if (successCount == 0)
+        {
+            statusMessage = failureMessages.Count == 0 ? "No players were updated." : failureMessages[0];
+            return false;
+        }
+
+        statusMessage = successCount == 1
+            ? $"1 player was {successLabel}."
+            : $"{successCount} players were {successLabel}.";
+
+        if (failureMessages.Count > 0)
+        {
+            statusMessage = $"{statusMessage} {failureMessages.Count} move(s) were skipped. {failureMessages[0]}";
+        }
+
         return true;
     }
 

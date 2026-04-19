@@ -104,8 +104,24 @@ public sealed class TransfersScreen : GameScreen
         {
             var mousePosition = currentMouseState.Position;
 
-            if (_showTransactionMenu && TryHandleTransactionClick(mousePosition))
+            if (_showTransactionMenu)
             {
+                TryHandleTransactionClick(mousePosition);
+                _previousMouseState = currentMouseState;
+                return;
+            }
+
+            if (_showFilterDropdown)
+            {
+                if (GetFilterButtonBounds().Contains(mousePosition))
+                {
+                    _filterButton.Click();
+                }
+                else
+                {
+                    TrySelectFilterOption(mousePosition);
+                }
+
                 _previousMouseState = currentMouseState;
                 return;
             }
@@ -121,10 +137,6 @@ public sealed class TransfersScreen : GameScreen
             else if (GetFilterButtonBounds().Contains(mousePosition))
             {
                 _filterButton.Click();
-            }
-            else if (_showFilterDropdown)
-            {
-                TrySelectFilterOption(mousePosition);
             }
             else if (GetMarketPreviousBounds().Contains(mousePosition))
             {
@@ -165,6 +177,7 @@ public sealed class TransfersScreen : GameScreen
             ? $"Filter: {GetFilterLabel(_filterMode)} ^"
             : $"Filter: {GetFilterLabel(_filterMode)} v";
         _tradeButton.Label = _showTransactionMenu ? "Close Transaction" : "Open Transaction";
+        var suppressHover = IsOverlayCapturingMouse();
 
         var transferBudget = _franchiseSession.GetTransferBudget();
         var rosterCount = _franchiseSession.GetSelectedTeamRosterCount();
@@ -189,9 +202,9 @@ public sealed class TransfersScreen : GameScreen
         var statusBounds = new Rectangle(40, _viewport.Y - 62, Math.Max(480, _viewport.X - 420), 52);
         uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
         uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 10, statusBounds.Y + 8, statusBounds.Width - 20, statusBounds.Height - 16), Color.White, uiRenderer.UiSmallFont, 2);
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !_showFilterDropdown && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !suppressHover && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
         var tradeButtonColor = _showTransactionMenu ? Color.DarkSlateBlue : Color.OliveDrab;
-        uiRenderer.DrawButton(_tradeButton.Label, tradeButtonBounds, !_showFilterDropdown && tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : tradeButtonColor, Color.White);
+        uiRenderer.DrawButton(_tradeButton.Label, tradeButtonBounds, !suppressHover && tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : tradeButtonColor, Color.White);
 
         if (_showFilterDropdown)
         {
@@ -206,6 +219,7 @@ public sealed class TransfersScreen : GameScreen
 
     private void DrawCoaches(UiRenderer uiRenderer, IReadOnlyList<CoachProfileView> coaches)
     {
+        var suppressHover = IsOverlayCapturingMouse();
         var coachHeaderBounds = new Rectangle(GetCoachRowBounds(0).X, 174, GetCoachRowBounds(0).Width, 24);
         uiRenderer.DrawTextInBounds("COACH REPORTS", coachHeaderBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
 
@@ -213,7 +227,7 @@ public sealed class TransfersScreen : GameScreen
         {
             var coach = coaches[i];
             var bounds = GetCoachRowBounds(i);
-            var isHovered = !_showFilterDropdown && bounds.Contains(Mouse.GetState().Position);
+            var isHovered = !suppressHover && bounds.Contains(Mouse.GetState().Position);
             var isSelected = string.Equals(_selectedCoachRole, coach.Role, StringComparison.OrdinalIgnoreCase);
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
             uiRenderer.DrawButton($"{coach.Role}: {Truncate(coach.Name, 14)}", bounds, color, Color.White);
@@ -222,6 +236,7 @@ public sealed class TransfersScreen : GameScreen
 
     private void DrawMarketPlayers(UiRenderer uiRenderer, IReadOnlyList<ScoutingPlayerCard> marketPlayers)
     {
+        var suppressHover = IsOverlayCapturingMouse();
         var marketHeaderBounds = new Rectangle(GetMarketRowBounds(0).X, 174, GetMarketRowBounds(0).Width, 24);
         uiRenderer.DrawTextInBounds("TRADE TARGETS", marketHeaderBounds, Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
         var visiblePlayers = marketPlayers.Skip(_marketPageIndex * PageSize).Take(PageSize).ToList();
@@ -230,7 +245,7 @@ public sealed class TransfersScreen : GameScreen
         {
             var player = visiblePlayers[i];
             var bounds = GetMarketRowBounds(i);
-            var isHovered = !_showFilterDropdown && bounds.Contains(Mouse.GetState().Position);
+            var isHovered = !suppressHover && bounds.Contains(Mouse.GetState().Position);
             var isSelected = _selectedPlayerId == player.PlayerId;
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
             var ownTag = player.IsOnSelectedTeam ? " (Yours)" : string.Empty;
@@ -279,8 +294,9 @@ public sealed class TransfersScreen : GameScreen
 
     private void DrawListPaging(UiRenderer uiRenderer, Rectangle previousBounds, Rectangle nextBounds, int currentPage, int totalItems)
     {
-        uiRenderer.DrawButton(_marketPreviousButton.Label, previousBounds, !_showFilterDropdown && previousBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_marketNextButton.Label, nextBounds, !_showFilterDropdown && nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
+        var suppressHover = IsOverlayCapturingMouse();
+        uiRenderer.DrawButton(_marketPreviousButton.Label, previousBounds, !suppressHover && previousBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_marketNextButton.Label, nextBounds, !suppressHover && nextBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
 
         var pageLabel = $"Page {currentPage + 1} / {GetMaxPage(totalItems) + 1}";
         var labelBounds = new Rectangle(previousBounds.Right + 8, previousBounds.Y, Math.Max(84, nextBounds.X - previousBounds.Right - 16), previousBounds.Height);
@@ -365,6 +381,16 @@ public sealed class TransfersScreen : GameScreen
 
     private bool TryHandleTransactionClick(Point mousePosition)
     {
+        if (!GetTransactionPanelBounds().Contains(mousePosition))
+        {
+            _showTransactionMenu = false;
+            _selectedTradeChipIds.Clear();
+            _transactionTargetPlayerId = null;
+            _transactionCacheDirty = true;
+            _statusMessage = "Transaction closed.";
+            return true;
+        }
+
         if (GetTransactionCloseBounds().Contains(mousePosition))
         {
             _showTransactionMenu = false;
@@ -422,7 +448,12 @@ public sealed class TransfersScreen : GameScreen
             return true;
         }
 
-        return GetTransactionPanelBounds().Contains(mousePosition);
+        return true;
+    }
+
+    private bool IsOverlayCapturingMouse()
+    {
+        return _showFilterDropdown || _showTransactionMenu;
     }
 
     private void CompleteTransactionPurchase()

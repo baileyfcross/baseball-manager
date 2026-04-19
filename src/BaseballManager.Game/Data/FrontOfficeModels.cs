@@ -115,7 +115,9 @@ public sealed record OrganizationRosterPlayerView(
     string SecondaryPosition,
     int Age,
     string AssignmentLabel,
+    string TeamStatusLabel,
     bool IsOnFortyMan,
+    bool IsOnFirstTeam,
     bool IsDraftedPlayer,
     int MinorLeagueOptionsRemaining,
     bool CanAssignToFortyMan,
@@ -134,7 +136,8 @@ public enum OrganizationRosterCompositionMode
 public sealed record OrganizationRosterCompositionBucketView(
     string Label,
     int Count,
-    int? TargetCount);
+    int? TargetCount,
+    IReadOnlyList<OrganizationRosterCompositionBucketView>? Details = null);
 
 public sealed record OrganizationRosterCompositionView(
     string Title,
