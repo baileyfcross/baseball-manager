@@ -6,6 +6,9 @@ namespace BaseballManager.CsvDataGenerator;
 
 internal static class Program
 {
+    private const int RosterTierSize = 26;
+    private const int FullOrganizationRosterSize = RosterTierSize * 4;
+
     private static readonly string[] FirstNames =
     [
         "James", "John", "Robert", "Michael", "William", "David", "Joseph", "Thomas", "Daniel", "Matthew",
@@ -76,7 +79,7 @@ internal static class Program
     private static GeneratorOptions ParseOptions(string[] args)
     {
         var teamCount = 30;
-        var playersPerTeam = 40;
+        var playersPerTeam = FullOrganizationRosterSize;
         var outputDirectory = Path.Combine("data", "imports", "generated");
         var seed = 42;
         var startDate = new DateOnly(2026, 3, 26);
@@ -132,9 +135,9 @@ internal static class Program
             throw new ArgumentException("--teams must be an even number greater than or equal to 2.");
         }
 
-        if (playersPerTeam != 40)
+        if (playersPerTeam < FullOrganizationRosterSize)
         {
-            throw new ArgumentException("--players-per-team must be 40 to match the requested roster size.");
+            throw new ArgumentException($"--players-per-team must be at least {FullOrganizationRosterSize} so every club can fill MLB, AAA, AA, and A rosters.");
         }
 
         return new GeneratorOptions(teamCount, playersPerTeam, outputDirectory, seed, startDate, importAfterGenerate);
@@ -156,7 +159,7 @@ internal static class Program
         Console.WriteLine("Usage:");
         Console.WriteLine("  dotnet run --project tools/importers/BaseballManager.CsvDataGenerator/BaseballManager.CsvDataGenerator.csproj -- \\");
         Console.WriteLine("    --teams 30 \\");
-        Console.WriteLine("    --players-per-team 40 \\");
+        Console.WriteLine($"    --players-per-team {FullOrganizationRosterSize} \\");
         Console.WriteLine("    --out-dir data/imports/generated \\");
         Console.WriteLine("    --start-date 2026-03-26 \\");
         Console.WriteLine("    --seed 42 \\");
@@ -180,9 +183,11 @@ internal static class Program
             var mascot = mascotPool[i];
             var name = $"{city} {mascot}";
             var abbreviation = BuildAbbreviation(city, mascot, teams.Select(t => t.Abbreviation).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            var hexColor = BuildHexColor(city, mascot, abbreviation);
 
             teams.Add(new TeamRow(
                 name,
+                hexColor,
                 abbreviation,
                 leagueNames[leagueIndex],
                 divisionNames[Math.Min(divisionIndex, divisionNames.Length - 1)],
@@ -220,8 +225,6 @@ internal static class Program
     private static List<PlayerRow> GeneratePlayers(List<TeamRow> teams, int playersPerTeam, Random random)
     {
         var players = new List<PlayerRow>(teams.Count * playersPerTeam);
-        var ageMin = 19;
-        var ageMax = 38;
 
         foreach (var team in teams)
         {
@@ -231,34 +234,117 @@ internal static class Program
                 var fullName = $"{FirstNames[random.Next(FirstNames.Length)]} {LastNames[random.Next(LastNames.Length)]}";
                 var primaryPosition = GetPrimaryPosition(i);
                 var secondaryPosition = GetSecondaryPosition(primaryPosition, random);
-                var age = random.Next(ageMin, ageMax + 1);
+                var age = GenerateAgeForRosterBand(i, random);
 
                 players.Add(new PlayerRow(playerId, fullName, primaryPosition, secondaryPosition, team.Name, age));
             }
         }
 
+        ApplyTwoWayProfiles(players, GetTwoWayPlayerTarget(teams.Count, playersPerTeam, random), random);
         return players;
     }
 
     private static string GetPrimaryPosition(int index)
     {
-        if (index < 5) return "SP";
-        if (index < 13) return "RP";
-        if (index == 13) return "C";
-        if (index == 14) return "1B";
-        if (index == 15) return "2B";
-        if (index == 16) return "3B";
-        if (index == 17) return "SS";
-        if (index == 18) return "LF";
-        if (index == 19) return "CF";
-        if (index == 20) return "RF";
-        if (index == 21) return "DH";
-        return Positions[index % Positions.Length];
+        var tierIndex = index % RosterTierSize;
+        if (tierIndex < 5) return "SP";
+        if (tierIndex < 13) return "RP";
+        if (tierIndex == 13) return "C";
+        if (tierIndex == 14) return "1B";
+        if (tierIndex == 15) return "2B";
+        if (tierIndex == 16) return "3B";
+        if (tierIndex == 17) return "SS";
+        if (tierIndex == 18) return "LF";
+        if (tierIndex == 19) return "CF";
+        if (tierIndex == 20) return "RF";
+        if (tierIndex == 21) return "DH";
+        return Positions[tierIndex % Positions.Length];
+    }
+
+    private static int GenerateAgeForRosterBand(int playerIndex, Random random)
+    {
+        var tierBand = Math.Min(3, playerIndex / RosterTierSize);
+        return tierBand switch
+        {
+            0 => random.Next(24, 36),
+            1 => RollMinorLeagueAge(random, 22, 29, 31, 37, 0.22),
+            2 => RollMinorLeagueAge(random, 20, 26, 29, 34, 0.16),
+            _ => RollMinorLeagueAge(random, 19, 24, 28, 33, 0.10)
+        };
+    }
+
+    private static int RollMinorLeagueAge(Random random, int youngMin, int youngMaxExclusive, int veteranMin, int veteranMaxExclusive, double veteranChance)
+    {
+        var useVeteranRange = random.NextDouble() < veteranChance;
+        return useVeteranRange
+            ? random.Next(veteranMin, veteranMaxExclusive)
+            : random.Next(youngMin, youngMaxExclusive);
     }
 
     private static string GetSecondaryPosition(string primaryPosition, Random random)
     {
-        var options = Positions.Where(p => p != primaryPosition).ToArray();
+        return primaryPosition switch
+        {
+            "C" => PickWeightedPosition(random, "", "", "", "1B"),
+            "1B" => PickWeightedPosition(random, "", "", "3B", "LF", "RF", "DH"),
+            "2B" => PickWeightedPosition(random, "", "", "SS", "3B", "CF"),
+            "3B" => PickWeightedPosition(random, "", "", "1B", "SS", "LF"),
+            "SS" => PickWeightedPosition(random, "", "", "2B", "3B", "CF"),
+            "LF" => PickWeightedPosition(random, "", "", "CF", "RF", "3B"),
+            "CF" => PickWeightedPosition(random, "", "", "LF", "RF", "2B", "SS"),
+            "RF" => PickWeightedPosition(random, "", "", "LF", "CF", "1B"),
+            "DH" => PickWeightedPosition(random, "", "", "", "1B", "LF", "RF"),
+            "SP" => PickWeightedPosition(random, "", "", "RP"),
+            "RP" => PickWeightedPosition(random, "", "", "SP"),
+            _ => string.Empty
+        };
+    }
+
+    private static void ApplyTwoWayProfiles(List<PlayerRow> players, int targetTwoWayPlayers, Random random)
+    {
+        if (targetTwoWayPlayers <= 0)
+        {
+            return;
+        }
+
+        var eligibleIndices = players
+            .Select((player, index) => new { player, index })
+            .Where(entry => CanBeTwoWayPrimary(entry.player.PrimaryPosition))
+            .OrderBy(_ => random.Next())
+            .Take(targetTwoWayPlayers)
+            .Select(entry => entry.index)
+            .ToList();
+
+        foreach (var index in eligibleIndices)
+        {
+            var player = players[index];
+            players[index] = player with { SecondaryPosition = GetTwoWayPitchingSecondary(player.PrimaryPosition, random) };
+        }
+    }
+
+    private static int GetTwoWayPlayerTarget(int teamCount, int playersPerTeam, Random random)
+    {
+        var baselineTarget = random.Next(5, 11);
+        var scaledTarget = (int)Math.Round(baselineTarget * (teamCount / 30d) * (playersPerTeam / (double)FullOrganizationRosterSize));
+        return Math.Clamp(scaledTarget, 1, Math.Min(10, teamCount));
+    }
+
+    private static bool CanBeTwoWayPrimary(string primaryPosition)
+    {
+        return primaryPosition is "1B" or "2B" or "3B" or "LF" or "CF" or "RF" or "DH";
+    }
+
+    private static string GetTwoWayPitchingSecondary(string primaryPosition, Random random)
+    {
+        return primaryPosition switch
+        {
+            "DH" or "1B" => PickWeightedPosition(random, "SP", "SP", "RP"),
+            _ => PickWeightedPosition(random, "RP", "RP", "SP")
+        };
+    }
+
+    private static string PickWeightedPosition(Random random, params string[] options)
+    {
         return options[random.Next(options.Length)];
     }
 
@@ -393,9 +479,19 @@ internal static class Program
 
     private static void WriteTeamsCsv(string path, List<TeamRow> teams)
     {
-        var lines = new List<string> { "Team,Team Code,League,Division,City" };
-        lines.AddRange(teams.Select(team => string.Join(',', Escape(team.Name), Escape(team.Abbreviation), Escape(team.League), Escape(team.Division), Escape(team.City))));
+        var lines = new List<string> { "Team,Hex Color,Team Code,League,Division,City" };
+        lines.AddRange(teams.Select(team => string.Join(',', Escape(team.Name), Escape(team.HexColor), Escape(team.Abbreviation), Escape(team.League), Escape(team.Division), Escape(team.City))));
         File.WriteAllLines(path, lines, Encoding.UTF8);
+    }
+
+    private static string BuildHexColor(string city, string mascot, string abbreviation)
+    {
+        var key = string.Concat(city, mascot, abbreviation);
+        var hash = StringComparer.OrdinalIgnoreCase.GetHashCode(key);
+        var red = 48 + (Math.Abs(hash) % 144);
+        var green = 48 + (Math.Abs(hash / 7) % 144);
+        var blue = 48 + (Math.Abs(hash / 17) % 144);
+        return $"#{red:X2}{green:X2}{blue:X2}";
     }
 
     private static void WritePlayersCsv(string path, List<PlayerRow> players)
@@ -492,7 +588,7 @@ internal static class Program
         DateOnly StartDate,
         bool ImportAfterGenerate);
 
-    private sealed record TeamRow(string Name, string Abbreviation, string League, string Division, string City, string Ballpark);
+    private sealed record TeamRow(string Name, string HexColor, string Abbreviation, string League, string Division, string City, string Ballpark);
     private sealed record PlayerRow(Guid PlayerId, string FullName, string PrimaryPosition, string SecondaryPosition, string TeamName, int Age);
     private sealed record RosterRow(Guid PlayerId, string TeamName, string PlayerName, string PrimaryPosition, string SecondaryPosition, int? LineupSlot, int? RotationSlot);
     private sealed record ScheduleRow(DateOnly Date, string HomeTeamName, string AwayTeamName, int GameNumber, string Venue);

@@ -14,12 +14,16 @@ public sealed class FranchiseSession
 {
     private const int MaxRosterSize = 40;
     private const int FirstTeamRosterSize = 26;
+    private const int AffiliateRosterSize = 26;
     private const string FreeAgentTeamName = "Free Agents";
     private const int DefaultDraftRounds = 5;
     private const string PendingRosterAssignment = "Pending";
     private const string MajorLeagueRosterAssignment = "40-Man Roster";
     private const string ReserveRosterAssignment = "Organization Roster";
-    private const string AffiliateRosterAssignment = "Affiliate";
+    private const string LegacyAffiliateRosterAssignment = "Affiliate";
+    private const string TripleARosterAssignment = "AAA";
+    private const string DoubleARosterAssignment = "AA";
+    private const string SingleARosterAssignment = "A";
 
     private enum RosterCompositionBucket
     {
@@ -112,7 +116,22 @@ public sealed class FranchiseSession
         EnsureFranchiseDateInitialized();
         EnsureSeasonYearInitialized();
 
-        if (EnsurePlayerRatingsGenerated() || EnsurePlayerSeasonStatsGenerated() || EnsureRecentGameTrackingGenerated() || EnsurePlayerHealthGenerated() || EnsurePlayerAssignmentsGenerated() || EnsurePlayerRosterAssignmentsGenerated() || EnsurePlayerAgesGenerated() || EnsureCreatedPlayerRosterAssignmentsGenerated() || EnsureDraftCompletionStateConsistency() || EnsureCoachingStaffGenerated() || EnsureScoutingDepartmentGenerated() || EnsureTeamEconomyGenerated())
+        var hasInitializationChanges = false;
+        hasInitializationChanges |= EnsurePlayerRatingsGenerated();
+        hasInitializationChanges |= EnsurePlayerSeasonStatsGenerated();
+        hasInitializationChanges |= EnsureRecentGameTrackingGenerated();
+        hasInitializationChanges |= EnsurePlayerHealthGenerated();
+        hasInitializationChanges |= EnsurePlayerAssignmentsGenerated();
+        hasInitializationChanges |= EnsurePlayerRosterAssignmentsGenerated();
+        hasInitializationChanges |= EnsureFortyManRosterGenerated();
+        hasInitializationChanges |= EnsurePlayerAgesGenerated();
+        hasInitializationChanges |= EnsureCreatedPlayerRosterAssignmentsGenerated();
+        hasInitializationChanges |= EnsureDraftCompletionStateConsistency();
+        hasInitializationChanges |= EnsureCoachingStaffGenerated();
+        hasInitializationChanges |= EnsureScoutingDepartmentGenerated();
+        hasInitializationChanges |= EnsureTeamEconomyGenerated();
+
+        if (hasInitializationChanges)
         {
             Save();
         }
@@ -123,6 +142,32 @@ public sealed class FranchiseSession
     public string SelectedTeamName => SelectedTeam?.Name ?? "No Team Selected";
 
     public LiveMatchMode PendingLiveMatchMode { get; private set; }
+
+    public bool IsSelectedTeamMinorLeagueAutomationEnabled()
+    {
+        return SelectedTeam != null && GetOrCreateTeamState(SelectedTeam.Name).AutoManageMinorLeaguePromotions;
+    }
+
+    public string ToggleSelectedTeamMinorLeagueAutomation()
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before changing minor-league automation.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        teamState.AutoManageMinorLeaguePromotions = !teamState.AutoManageMinorLeaguePromotions;
+        if (teamState.AutoManageMinorLeaguePromotions)
+        {
+            ApplyAutomaticMinorLeaguePromotions(SelectedTeam.Name);
+            RefreshRosterSlots(SelectedTeam.Name);
+        }
+
+        Save();
+        return teamState.AutoManageMinorLeaguePromotions
+            ? "Minor-league AI promotions are on. Unlocked AAA, AA, and A players can move automatically."
+            : "Minor-league AI promotions are off. Affiliate tiers will stay fixed until you move players manually or turn AI back on.";
+    }
 
     public bool HasFranchiseSaveData => SelectedTeam != null;
 
@@ -598,9 +643,10 @@ public sealed class FranchiseSession
                     .ToList();
 
                 var fortyManCount = players.Count(player => player.IsOnFortyMan);
-                var affiliateCount = players.Count(player => player.AssignmentLabel.Contains("Affiliate", StringComparison.OrdinalIgnoreCase));
+                var affiliateLevels = group.Select(player => GetAffiliateLevel(player.RosterAssignment)).ToList();
+                var affiliateCount = affiliateLevels.Count(level => level.HasValue);
                 var organizationCount = players.Count(player => string.Equals(player.AssignmentLabel, ReserveRosterAssignment, StringComparison.OrdinalIgnoreCase));
-                var summary = $"{players.Count} signed player(s): {fortyManCount} on 40-man, {organizationCount} in organization depth, {affiliateCount} on the affiliate roster.";
+                var summary = $"{players.Count} signed player(s): {fortyManCount} on 40-man, {organizationCount} in organization depth, {BuildAffiliateSummary(affiliateCount, affiliateLevels)}.";
 
                 return new DraftClassHistoryView(
                     group.Key,
@@ -651,7 +697,7 @@ public sealed class FranchiseSession
         var title = mode switch
         {
             OrganizationRosterCompositionMode.Depth => "Depth",
-            OrganizationRosterCompositionMode.Affiliate => "Affiliate",
+            OrganizationRosterCompositionMode.Affiliate => "Affiliates",
             _ => "First Team"
         };
 
@@ -674,12 +720,12 @@ public sealed class FranchiseSession
             OrganizationRosterCompositionMode.Depth => BuildRosterComposition(
                 "Depth",
                 "40-man extras and organization depth outside the current 26-man mix.",
-                organizationPlayers.Where(player => !firstTeamPlayerIds.Contains(player.PlayerId) && !IsAffiliateRosterAssignment(player.PlayerId)).ToList(),
+                organizationPlayers.Where(player => !firstTeamPlayerIds.Contains(player.PlayerId) && !player.AffiliateLevel.HasValue).ToList(),
                 null),
             OrganizationRosterCompositionMode.Affiliate => BuildRosterComposition(
-                "Affiliate",
-                $"Players currently assigned to the {SelectedTeam.Name} affiliate.",
-                organizationPlayers.Where(player => IsAffiliateRosterAssignment(player.PlayerId)).ToList(),
+                "Affiliates",
+                $"Players currently assigned across the {SelectedTeam.Name} AAA, AA, and A affiliates. {BuildAffiliateBreakdownLabel(organizationPlayers)}",
+                organizationPlayers.Where(player => player.AffiliateLevel.HasValue).ToList(),
                 null),
             _ => BuildRosterComposition(
                 "First Team",
@@ -714,10 +760,11 @@ public sealed class FranchiseSession
                 var isDraftedPlayer = _saveState.CreatedPlayers.TryGetValue(player.PlayerId, out var createdPlayer);
                 var rosterAssignment = GetPlayerRosterAssignment(player.PlayerId);
                 var assignmentLabel = GetRosterAssignmentLabel(teamName, rosterAssignment);
-                var isOnFortyMan = string.Equals(rosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase);
+                var isOnFortyMan = IsPlayerOnFortyMan(player.PlayerId);
                 var isOnActiveRoster = IsPlayerOnActiveTeamRoster(player.PlayerId);
+                var affiliateLevel = GetAffiliateLevel(rosterAssignment);
+                var isMinorLeagueAssignmentLocked = affiliateLevel.HasValue && IsMinorLeagueAssignmentLocked(teamName, player.PlayerId);
                 var canAssignToFortyMan = !isOnFortyMan;
-                var canAssignToAffiliate = !string.Equals(rosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase);
 
                 return new OrganizationRosterPlayerView(
                     player.PlayerId,
@@ -727,13 +774,15 @@ public sealed class FranchiseSession
                     player.Age,
                     assignmentLabel,
                     string.Empty,
+                    affiliateLevel,
+                        isMinorLeagueAssignmentLocked,
                     isOnFortyMan,
                     false,
                     isDraftedPlayer,
                     isDraftedPlayer ? createdPlayer!.MinorLeagueOptionsRemaining : 0,
                     canAssignToFortyMan,
-                    canAssignToAffiliate,
-                        true,
+                        affiliateLevel.HasValue && isMinorLeagueAssignmentLocked,
+                    true,
                     isOnActiveRoster && lineupMap.TryGetValue(player.PlayerId, out var lineupSlot) ? lineupSlot : null,
                     isOnActiveRoster && rotationMap.TryGetValue(player.PlayerId, out var rotationSlot) ? rotationSlot : null);
             })
@@ -748,8 +797,8 @@ public sealed class FranchiseSession
             {
                 TeamStatusLabel = firstTeamPlayerIds.Contains(player.PlayerId)
                     ? "First Team"
-                    : IsAffiliateRosterAssignment(player.PlayerId)
-                        ? "Affiliate"
+                    : player.AffiliateLevel.HasValue
+                        ? $"{GetAffiliateLevelLabel(player.AffiliateLevel.Value)} Affiliate"
                         : "Organization Depth",
                 IsOnFirstTeam = firstTeamPlayerIds.Contains(player.PlayerId)
             })
@@ -766,9 +815,15 @@ public sealed class FranchiseSession
         return ProcessBatchRosterMove(playerIds, AssignSelectedTeamPlayerToFortyMan, "added to the 40-man roster", out statusMessage);
     }
 
-    public bool AssignSelectedTeamPlayersToAffiliate(IReadOnlyCollection<Guid> playerIds, out string statusMessage)
+    public bool AssignSelectedTeamPlayersToAffiliate(IReadOnlyCollection<Guid> playerIds, MinorLeagueAffiliateLevel affiliateLevel, out string statusMessage)
     {
-        return ProcessBatchRosterMove(playerIds, AssignSelectedTeamPlayerToAffiliate, "assigned to the affiliate roster", out statusMessage);
+        var affiliateLabel = GetAffiliateLevelLabel(affiliateLevel);
+        return ProcessBatchRosterMove(playerIds, (Guid playerId, out string message) => AssignSelectedTeamPlayerToAffiliate(playerId, affiliateLevel, out message), $"assigned to the {affiliateLabel} affiliate", out statusMessage);
+    }
+
+    public bool ReturnSelectedTeamPlayersToAutomaticAffiliate(IReadOnlyCollection<Guid> playerIds, out string statusMessage)
+    {
+        return ProcessBatchRosterMove(playerIds, ReturnSelectedTeamPlayerToAutomaticAffiliate, "returned to automatic minor-league management", out statusMessage);
     }
 
     public bool RemoveSelectedTeamPlayersFromFortyMan(IReadOnlyCollection<Guid> playerIds, out string statusMessage)
@@ -855,7 +910,7 @@ public sealed class FranchiseSession
     private List<OrganizationRosterPlayerView> SelectFirstTeamPlayers(IReadOnlyList<OrganizationRosterPlayerView> organizationPlayers)
     {
         var availablePlayers = organizationPlayers
-            .Where(player => player.IsOnFortyMan)
+            .Where(player => player.IsOnFortyMan && string.Equals(GetPlayerRosterAssignment(player.PlayerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase))
             .OrderBy(GetFirstTeamPriority)
             .ThenBy(player => player.PrimaryPosition)
             .ThenBy(player => player.PlayerName)
@@ -967,11 +1022,6 @@ public sealed class FranchiseSession
         return position is "SP" or "RP";
     }
 
-    private bool IsAffiliateRosterAssignment(Guid playerId)
-    {
-        return string.Equals(GetPlayerRosterAssignment(playerId), AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase);
-    }
-
     public bool IsSelectedTeam40ManFull()
     {
         return SelectedTeam != null && GetTeamFortyManCount(SelectedTeam.Name) >= MaxRosterSize;
@@ -997,7 +1047,8 @@ public sealed class FranchiseSession
             return false;
         }
 
-        SetPlayerRosterAssignment(playerId, MajorLeagueRosterAssignment);
+        AddPlayerToFortyManRoster(playerId);
+        SetMinorLeagueAssignmentLock(SelectedTeam.Name, playerId, false);
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
         {
             createdPlayer.RequiresRosterDecision = false;
@@ -1010,7 +1061,7 @@ public sealed class FranchiseSession
         return true;
     }
 
-    public bool AssignSelectedTeamPlayerToAffiliate(Guid playerId, out string statusMessage)
+    public bool AssignSelectedTeamPlayerToAffiliate(Guid playerId, MinorLeagueAffiliateLevel affiliateLevel, out string statusMessage)
     {
         if (!TryGetSelectedTeamPlayer(playerId, out var player, out statusMessage))
         {
@@ -1018,13 +1069,24 @@ public sealed class FranchiseSession
         }
 
         var currentAssignment = GetPlayerRosterAssignment(playerId);
-        if (string.Equals(currentAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        var targetAssignment = GetRosterAssignmentForAffiliateLevel(affiliateLevel);
+        var affiliateLabel = GetAffiliateLevelLabel(affiliateLevel);
+        if (string.Equals(currentAssignment, targetAssignment, StringComparison.OrdinalIgnoreCase))
         {
-            statusMessage = $"{player.FullName} is already on the affiliate roster.";
-            return false;
+            if (IsMinorLeagueAssignmentLocked(SelectedTeam!.Name, playerId))
+            {
+                statusMessage = $"{player.FullName} is already locked to the {affiliateLabel} affiliate.";
+                return false;
+            }
+
+            SetMinorLeagueAssignmentLock(SelectedTeam.Name, playerId, true);
+            Save();
+            statusMessage = $"{player.FullName} is now locked to the {affiliateLabel} affiliate.";
+            return true;
         }
 
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer)
+            && IsPlayerOnFortyMan(playerId)
             && string.Equals(currentAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
             && createdPlayer.LastOptionedSeasonYear != GetCurrentSeasonYear())
         {
@@ -1038,7 +1100,8 @@ public sealed class FranchiseSession
             createdPlayer.LastOptionedSeasonYear = GetCurrentSeasonYear();
         }
 
-        SetPlayerRosterAssignment(playerId, AffiliateRosterAssignment);
+        SetPlayerRosterAssignment(playerId, targetAssignment);
+        SetMinorLeagueAssignmentLock(SelectedTeam!.Name, playerId, true);
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out createdPlayer))
         {
             createdPlayer.RequiresRosterDecision = false;
@@ -1046,10 +1109,10 @@ public sealed class FranchiseSession
 
         RefreshRosterSlots(SelectedTeam!.Name);
         Save();
-        AddTransferRecord(SelectedTeam.Name, $"Assigned {player.FullName} to the affiliate roster.");
-        statusMessage = string.Equals(currentAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
-            ? $"{player.FullName} was removed from the 40-man roster and assigned to the {SelectedTeam.Name} affiliate."
-            : $"{player.FullName} was assigned to the {SelectedTeam.Name} affiliate.";
+        AddTransferRecord(SelectedTeam.Name, $"Assigned {player.FullName} to the {affiliateLabel} affiliate.");
+        statusMessage = IsPlayerOnFortyMan(playerId)
+            ? $"{player.FullName} was assigned to the {SelectedTeam.Name} {affiliateLabel} affiliate and remains on the 40-man roster."
+            : $"{player.FullName} was assigned to the {SelectedTeam.Name} {affiliateLabel} affiliate.";
         return true;
     }
 
@@ -1058,9 +1121,41 @@ public sealed class FranchiseSession
         return AssignSelectedTeamPlayerToFortyMan(playerId, out statusMessage);
     }
 
-    public bool AssignDraftPlayerToAffiliate(Guid playerId, out string statusMessage)
+    public bool AssignDraftPlayerToAffiliate(Guid playerId, MinorLeagueAffiliateLevel affiliateLevel, out string statusMessage)
     {
-        return AssignSelectedTeamPlayerToAffiliate(playerId, out statusMessage);
+        return AssignSelectedTeamPlayerToAffiliate(playerId, affiliateLevel, out statusMessage);
+    }
+
+    public bool ReturnSelectedTeamPlayerToAutomaticAffiliate(Guid playerId, out string statusMessage)
+    {
+        if (!TryGetSelectedTeamPlayer(playerId, out var player, out statusMessage))
+        {
+            return false;
+        }
+
+        var currentLevel = GetAffiliateLevel(GetPlayerRosterAssignment(playerId));
+        if (!currentLevel.HasValue)
+        {
+            statusMessage = $"{player.FullName} is not currently on a minor-league affiliate.";
+            return false;
+        }
+
+        if (!IsMinorLeagueAssignmentLocked(SelectedTeam!.Name, playerId))
+        {
+            statusMessage = $"{player.FullName} is already under automatic minor-league management.";
+            return false;
+        }
+
+        SetMinorLeagueAssignmentLock(SelectedTeam.Name, playerId, false);
+        var movedByAi = ApplyAutomaticMinorLeaguePromotions(SelectedTeam.Name);
+        RefreshRosterSlots(SelectedTeam.Name);
+        Save();
+
+        var updatedLevel = GetAffiliateLevel(GetPlayerRosterAssignment(playerId)) ?? currentLevel.Value;
+        statusMessage = movedByAi && updatedLevel != currentLevel.Value
+            ? $"{player.FullName} is back under AI control and moved to {GetAffiliateLevelLabel(updatedLevel)}."
+            : $"{player.FullName} is back under AI control on {GetAffiliateLevelLabel(updatedLevel)}.";
+        return true;
     }
 
     public bool ReleaseSelectedTeam40ManPlayer(Guid playerId, out string statusMessage)
@@ -1081,13 +1176,19 @@ public sealed class FranchiseSession
             return false;
         }
 
-        if (!string.Equals(GetPlayerRosterAssignment(playerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        if (!IsPlayerOnFortyMan(playerId))
         {
             statusMessage = $"{player.FullName} is not currently on the 40-man roster.";
             return false;
         }
 
-        SetPlayerRosterAssignment(playerId, ReserveRosterAssignment);
+        RemovePlayerFromFortyManRoster(playerId);
+        if (string.Equals(GetPlayerRosterAssignment(playerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            SetPlayerRosterAssignment(playerId, ReserveRosterAssignment);
+        }
+
+        SetMinorLeagueAssignmentLock(SelectedTeam.Name, playerId, false);
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
         {
             createdPlayer.RequiresRosterDecision = false;
@@ -1119,13 +1220,16 @@ public sealed class FranchiseSession
         var releaseCost = _releasePlayerUseCase.Execute(teamState.Economy, playerId);
         _saveState.PlayerAssignments[playerId] = FreeAgentTeamName;
         _saveState.PlayerRosterAssignments.Remove(playerId);
+        SetMinorLeagueAssignmentLock(SelectedTeam.Name, playerId, false);
 
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
         {
             createdPlayer.TeamName = FreeAgentTeamName;
             createdPlayer.RequiresRosterDecision = false;
-            createdPlayer.RosterAssignment = MajorLeagueRosterAssignment;
+            createdPlayer.RosterAssignment = ReserveRosterAssignment;
         }
+
+        RemovePlayerFromFortyManRoster(playerId);
 
         RefreshRosterSlots(SelectedTeam.Name);
         AddTransferRecord(SelectedTeam.Name, $"Released {player.FullName} from the roster.");
@@ -1541,6 +1645,7 @@ public sealed class FranchiseSession
         MigrateLegacyFranchiseMatchIfNeeded(team.Name);
         EnsureFranchiseDateInitialized();
         EnsureSeasonYearInitialized();
+        EnsureImportedPlayerMappingsAreSynchronized();
         _stateStore.Save(_saveState);
     }
 
@@ -3983,6 +4088,28 @@ public sealed class FranchiseSession
         };
     }
 
+    public OrganizationRosterCompositionView GetSelectedTeamAffiliateRosterComposition(MinorLeagueAffiliateLevel affiliateLevel)
+    {
+        if (SelectedTeam == null)
+        {
+            var emptyLabel = GetAffiliateLevelLabel(affiliateLevel);
+            return CreateEmptyRosterComposition($"{emptyLabel} Affiliate", "Select a team to review an affiliate roster.", AffiliateRosterSize);
+        }
+
+        var affiliateLabel = GetAffiliateLevelLabel(affiliateLevel);
+        var players = GetSelectedTeamOrganizationRoster()
+            .Where(player => player.AffiliateLevel == affiliateLevel)
+            .ToList();
+
+        return players.Count == 0
+            ? CreateEmptyRosterComposition($"{affiliateLabel} Affiliate", $"No players are currently assigned to the {SelectedTeam.Name} {affiliateLabel} affiliate.", AffiliateRosterSize)
+            : BuildRosterComposition(
+                $"{affiliateLabel} Affiliate",
+                $"Viewing the {SelectedTeam.Name} {affiliateLabel} affiliate roster as its own 26-man group.",
+                players,
+                AffiliateRosterSize);
+    }
+
     private void StoreCompletedGameBoxScore(MatchState finalState, ScheduleImportDto? completedScheduledGame, CompletedLiveMatchSummaryState summary, bool setCurrentView)
     {
         var key = BuildCompletedGameBoxScoreKey(completedScheduledGame, summary);
@@ -4360,7 +4487,18 @@ public sealed class FranchiseSession
         _saveState.CompletedScheduleGameResults.Clear();
         _saveState.CompletedGameBoxScores.Clear();
         _saveState.CurrentViewedBoxScoreGameKey = null;
-        _saveState.PlayerAssignments.Clear();
+        var releasedPlayerIds = GetAllPlayers()
+            .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Select(player => player.PlayerId)
+            .ToList();
+
+        foreach (var playerId in releasedPlayerIds)
+        {
+            _saveState.PlayerAssignments.Remove(playerId);
+            _saveState.PlayerRosterAssignments.Remove(playerId);
+            _saveState.FortyManRosterPlayerIds.Remove(playerId);
+        }
+
         _saveState.CreatedPlayers.Clear();
 
         if (removedTeamState || removedSelection)
@@ -4391,6 +4529,8 @@ public sealed class FranchiseSession
         _saveState.PlayerHealth.Clear();
         _saveState.PlayerAges.Clear();
         _saveState.PlayerAssignments.Clear();
+        _saveState.PlayerRosterAssignments.Clear();
+        _saveState.FortyManRosterPlayerIds.Clear();
         _saveState.CreatedPlayers.Clear();
         _saveState.CompletedScheduleGameKeys.Clear();
         _saveState.CompletedScheduleGameResults.Clear();
@@ -4418,9 +4558,11 @@ public sealed class FranchiseSession
         }
 
         teamState.PracticeFocusOverrides ??= new Dictionary<string, TeamPracticeFocus>(StringComparer.OrdinalIgnoreCase);
+        teamState.ManualMinorLeagueAssignmentLocks ??= new List<Guid>();
         teamState.TrainingReports ??= new List<TrainingReportState>();
         teamState.Economy ??= BuildDefaultTeamEconomy(teamName);
         EnsureTeamEconomyInitialized(teamState, teamName);
+        CleanupMinorLeagueAssignmentLocks(teamState, teamName);
         return teamState;
     }
 
@@ -4459,14 +4601,14 @@ public sealed class FranchiseSession
 
     private bool IsPlayerOnMajorLeagueRoster(Guid playerId)
     {
-        return string.Equals(GetPlayerRosterAssignment(playerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(GetPlayerRosterAssignment(playerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
+            && IsPlayerOnFortyMan(playerId);
     }
 
     private bool IsPlayerOnActiveTeamRoster(Guid playerId)
     {
-        var rosterAssignment = GetPlayerRosterAssignment(playerId);
-        return !string.Equals(rosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(rosterAssignment, PendingRosterAssignment, StringComparison.OrdinalIgnoreCase);
+        return string.Equals(GetPlayerRosterAssignment(playerId), MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase)
+            && IsPlayerOnFortyMan(playerId);
     }
 
     private List<Guid?> BuildLineupSlots(string teamName)
@@ -4600,24 +4742,53 @@ public sealed class FranchiseSession
     {
         if (_saveState.PlayerRosterAssignments.TryGetValue(playerId, out var rosterAssignment) && !string.IsNullOrWhiteSpace(rosterAssignment))
         {
-            return rosterAssignment;
+            return NormalizeRosterAssignment(rosterAssignment);
         }
 
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer) && !string.IsNullOrWhiteSpace(createdPlayer.RosterAssignment))
         {
-            return createdPlayer.RosterAssignment;
+            return NormalizeRosterAssignment(createdPlayer.RosterAssignment);
         }
 
-        return MajorLeagueRosterAssignment;
+        return ReserveRosterAssignment;
     }
 
     private void SetPlayerRosterAssignment(Guid playerId, string rosterAssignment)
     {
+        rosterAssignment = NormalizeRosterAssignment(rosterAssignment);
         _saveState.PlayerRosterAssignments[playerId] = rosterAssignment;
         if (_saveState.CreatedPlayers.TryGetValue(playerId, out var createdPlayer))
         {
             createdPlayer.RosterAssignment = rosterAssignment;
         }
+    }
+
+    private bool IsPlayerOnFortyMan(Guid playerId)
+    {
+        return _saveState.FortyManRosterPlayerIds.Contains(playerId);
+    }
+
+    private void EnsureImportedPlayerMappingsAreSynchronized()
+    {
+        var hasChanges = false;
+        hasChanges |= EnsurePlayerAssignmentsGenerated();
+        hasChanges |= EnsurePlayerRosterAssignmentsGenerated();
+        hasChanges |= EnsureFortyManRosterGenerated();
+
+        if (hasChanges)
+        {
+            Save();
+        }
+    }
+
+    private void AddPlayerToFortyManRoster(Guid playerId)
+    {
+        _saveState.FortyManRosterPlayerIds.Add(playerId);
+    }
+
+    private void RemovePlayerFromFortyManRoster(Guid playerId)
+    {
+        _saveState.FortyManRosterPlayerIds.Remove(playerId);
     }
 
     private bool TryGetSelectedTeamPlayer(Guid playerId, out PlayerImportDto player, out string statusMessage)
@@ -4655,9 +4826,15 @@ public sealed class FranchiseSession
 
     private string GetRosterAssignmentLabel(string teamName, string rosterAssignment)
     {
-        if (string.Equals(rosterAssignment, AffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        rosterAssignment = NormalizeRosterAssignment(rosterAssignment);
+        if (IsMinorLeagueRosterAssignment(rosterAssignment))
         {
-            return $"{teamName} Affiliate";
+            return $"{rosterAssignment} Affiliate";
+        }
+
+        if (string.Equals(rosterAssignment, MajorLeagueRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return "First Team";
         }
 
         if (string.Equals(rosterAssignment, ReserveRosterAssignment, StringComparison.OrdinalIgnoreCase))
@@ -4671,6 +4848,27 @@ public sealed class FranchiseSession
         }
 
         return MajorLeagueRosterAssignment;
+    }
+
+    private bool EnsureFortyManRosterGenerated()
+    {
+        var hasChanges = false;
+        var validPlayerIds = GetAllPlayers().Select(player => player.PlayerId).ToHashSet();
+        hasChanges |= _saveState.FortyManRosterPlayerIds.RemoveWhere(playerId => !validPlayerIds.Contains(playerId)) > 0;
+
+        if (_saveState.FortyManRosterPlayerIds.Count == 0)
+        {
+            var seededRoster = BuildInitialFortyManRosterMembership();
+            foreach (var playerId in seededRoster)
+            {
+                if (_saveState.FortyManRosterPlayerIds.Add(playerId))
+                {
+                    hasChanges = true;
+                }
+            }
+        }
+
+        return hasChanges;
     }
 
     private DraftState? LoadDraftState()
@@ -4863,8 +5061,12 @@ public sealed class FranchiseSession
             }
             else
             {
-                createdPlayer.RosterAssignment = pick.OverallRating >= 68 ? MajorLeagueRosterAssignment : AffiliateRosterAssignment;
+                createdPlayer.RosterAssignment = pick.OverallRating >= 68 ? MajorLeagueRosterAssignment : SingleARosterAssignment;
                 createdPlayer.RequiresRosterDecision = false;
+                if (pick.OverallRating >= 68)
+                {
+                    AddPlayerToFortyManRoster(pick.PlayerId);
+                }
             }
 
             _saveState.PlayerRosterAssignments[pick.PlayerId] = createdPlayer.RosterAssignment;
@@ -4914,6 +5116,8 @@ public sealed class FranchiseSession
             _saveState.PlayerHealth.Remove(undrafted.PlayerId);
             _saveState.PlayerAges.Remove(undrafted.PlayerId);
             _saveState.PlayerAssignments.Remove(undrafted.PlayerId);
+            _saveState.PlayerRosterAssignments.Remove(undrafted.PlayerId);
+            _saveState.FortyManRosterPlayerIds.Remove(undrafted.PlayerId);
         }
     }
 
@@ -4938,6 +5142,13 @@ public sealed class FranchiseSession
     private bool EnsurePlayerAssignmentsGenerated()
     {
         var hasChanges = false;
+        var validPlayerIds = GetAllPlayers().Select(player => player.PlayerId).ToHashSet();
+
+        foreach (var stalePlayerId in _saveState.PlayerAssignments.Keys.Where(playerId => !validPlayerIds.Contains(playerId)).ToList())
+        {
+            _saveState.PlayerAssignments.Remove(stalePlayerId);
+            hasChanges = true;
+        }
 
         foreach (var player in _leagueData.Players)
         {
@@ -4960,37 +5171,245 @@ public sealed class FranchiseSession
     private bool EnsurePlayerRosterAssignmentsGenerated()
     {
         var hasChanges = false;
+        var generatedAssignments = BuildInitialRosterAssignments();
+        var validPlayerIds = GetAllPlayers().Select(player => player.PlayerId).ToHashSet();
+
+        foreach (var stalePlayerId in _saveState.PlayerRosterAssignments.Keys.Where(playerId => !validPlayerIds.Contains(playerId)).ToList())
+        {
+            _saveState.PlayerRosterAssignments.Remove(stalePlayerId);
+            hasChanges = true;
+        }
 
         foreach (var player in _leagueData.Players)
         {
             if (_saveState.PlayerRosterAssignments.TryGetValue(player.PlayerId, out var rosterAssignment) && !string.IsNullOrWhiteSpace(rosterAssignment))
             {
+                var normalizedAssignment = NormalizeRosterAssignment(rosterAssignment);
+                if (!string.Equals(rosterAssignment, normalizedAssignment, StringComparison.OrdinalIgnoreCase))
+                {
+                    _saveState.PlayerRosterAssignments[player.PlayerId] = normalizedAssignment;
+                    hasChanges = true;
+                }
+
                 continue;
             }
 
-            _saveState.PlayerRosterAssignments[player.PlayerId] = MajorLeagueRosterAssignment;
+            _saveState.PlayerRosterAssignments[player.PlayerId] = generatedAssignments.GetValueOrDefault(player.PlayerId, ReserveRosterAssignment);
             hasChanges = true;
         }
 
         foreach (var player in _saveState.CreatedPlayers.Values)
         {
             var resolvedAssignment = string.IsNullOrWhiteSpace(player.RosterAssignment)
-                ? (player.RequiresRosterDecision ? PendingRosterAssignment : MajorLeagueRosterAssignment)
-                : player.RosterAssignment;
+                ? (player.RequiresRosterDecision ? PendingRosterAssignment : ReserveRosterAssignment)
+                : NormalizeRosterAssignment(player.RosterAssignment);
 
             if (!_saveState.PlayerRosterAssignments.TryGetValue(player.PlayerId, out var rosterAssignment) || string.IsNullOrWhiteSpace(rosterAssignment))
             {
                 _saveState.PlayerRosterAssignments[player.PlayerId] = resolvedAssignment;
                 hasChanges = true;
             }
-            else if (!string.Equals(player.RosterAssignment, rosterAssignment, StringComparison.OrdinalIgnoreCase))
+            else
             {
-                player.RosterAssignment = rosterAssignment;
-                hasChanges = true;
+                var normalizedAssignment = NormalizeRosterAssignment(rosterAssignment);
+                if (!string.Equals(rosterAssignment, normalizedAssignment, StringComparison.OrdinalIgnoreCase))
+                {
+                    _saveState.PlayerRosterAssignments[player.PlayerId] = normalizedAssignment;
+                    rosterAssignment = normalizedAssignment;
+                    hasChanges = true;
+                }
+
+                if (!string.Equals(player.RosterAssignment, rosterAssignment, StringComparison.OrdinalIgnoreCase))
+                {
+                    player.RosterAssignment = rosterAssignment;
+                    hasChanges = true;
+                }
             }
         }
 
         return hasChanges;
+    }
+
+    private Dictionary<Guid, string> BuildInitialRosterAssignments()
+    {
+        var assignments = new Dictionary<Guid, string>();
+        var playersByTeam = _leagueData.Players
+            .Where(player => !string.IsNullOrWhiteSpace(GetImportedPlayerTeamName(player)))
+            .GroupBy(GetImportedPlayerTeamName, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var teamGroup in playersByTeam)
+        {
+            var teamPlayers = teamGroup.ToList();
+            if (teamPlayers.Count == 0)
+            {
+                continue;
+            }
+
+            var firstTeam = teamPlayers
+                .OrderByDescending(GetMajorLeagueReadinessScore)
+                .ThenByDescending(player => player.Age)
+                .ThenBy(player => player.FullName, StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Min(FirstTeamRosterSize, teamPlayers.Count))
+                .ToList();
+
+            foreach (var player in firstTeam)
+            {
+                assignments[player.PlayerId] = MajorLeagueRosterAssignment;
+            }
+
+            var remainingPlayers = teamPlayers
+                .Where(player => !assignments.ContainsKey(player.PlayerId))
+                .ToList();
+
+            AssignAffiliateTier(assignments, remainingPlayers, MinorLeagueAffiliateLevel.TripleA, targetAge: 25, veteranSlots: 5);
+            AssignAffiliateTier(assignments, remainingPlayers, MinorLeagueAffiliateLevel.DoubleA, targetAge: 23, veteranSlots: 3);
+            AssignAffiliateTier(assignments, remainingPlayers, MinorLeagueAffiliateLevel.SingleA, targetAge: 21, veteranSlots: 2);
+
+            foreach (var player in remainingPlayers)
+            {
+                assignments[player.PlayerId] = ReserveRosterAssignment;
+            }
+        }
+
+        return assignments;
+    }
+
+    private HashSet<Guid> BuildInitialFortyManRosterMembership()
+    {
+        var fortyManRoster = new HashSet<Guid>();
+        var playersByTeam = _leagueData.Players
+            .Where(player => !string.IsNullOrWhiteSpace(GetImportedPlayerTeamName(player)))
+            .GroupBy(GetImportedPlayerTeamName, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var teamGroup in playersByTeam)
+        {
+            var teamPlayers = teamGroup.ToList();
+            if (teamPlayers.Count == 0)
+            {
+                continue;
+            }
+
+            var firstTeam = teamPlayers
+                .OrderByDescending(GetMajorLeagueReadinessScore)
+                .ThenByDescending(player => player.Age)
+                .Take(Math.Min(FirstTeamRosterSize, teamPlayers.Count))
+                .ToList();
+
+            foreach (var player in firstTeam)
+            {
+                fortyManRoster.Add(player.PlayerId);
+            }
+
+            var extraCandidates = teamPlayers
+                .Where(player => !fortyManRoster.Contains(player.PlayerId))
+                .OrderBy(player => GetAffiliateFortyManPriority(player))
+                .ThenByDescending(GetMajorLeagueReadinessScore)
+                .ThenBy(player => player.FullName, StringComparer.OrdinalIgnoreCase)
+                .Take(Math.Max(0, MaxRosterSize - firstTeam.Count))
+                .ToList();
+
+            foreach (var player in extraCandidates)
+            {
+                fortyManRoster.Add(player.PlayerId);
+            }
+        }
+
+        return fortyManRoster;
+    }
+
+    private void AssignAffiliateTier(
+        Dictionary<Guid, string> assignments,
+        List<PlayerImportDto> remainingPlayers,
+        MinorLeagueAffiliateLevel affiliateLevel,
+        int targetAge,
+        int veteranSlots)
+    {
+        if (remainingPlayers.Count == 0)
+        {
+            return;
+        }
+
+        var targetCount = Math.Min(AffiliateRosterSize, remainingPlayers.Count);
+        var veteranCount = Math.Min(veteranSlots, Math.Max(0, targetCount / 4));
+        var selectedPlayers = new List<PlayerImportDto>(targetCount);
+
+        if (veteranCount > 0)
+        {
+            var veterans = remainingPlayers
+                .OrderByDescending(player => player.Age)
+                .ThenByDescending(GetAffiliateDevelopmentScore)
+                .ThenBy(player => player.FullName, StringComparer.OrdinalIgnoreCase)
+                .Take(veteranCount)
+                .ToList();
+
+            foreach (var veteran in veterans)
+            {
+                remainingPlayers.Remove(veteran);
+                selectedPlayers.Add(veteran);
+            }
+        }
+
+        var prospectCount = Math.Min(targetCount - selectedPlayers.Count, remainingPlayers.Count);
+        var prospects = remainingPlayers
+            .OrderBy(player => Math.Abs(player.Age - targetAge))
+            .ThenByDescending(GetAffiliateDevelopmentScore)
+            .ThenBy(player => player.FullName, StringComparer.OrdinalIgnoreCase)
+            .Take(prospectCount)
+            .ToList();
+
+        foreach (var prospect in prospects)
+        {
+            remainingPlayers.Remove(prospect);
+            selectedPlayers.Add(prospect);
+        }
+
+        var assignment = GetRosterAssignmentForAffiliateLevel(affiliateLevel);
+        foreach (var player in selectedPlayers)
+        {
+            assignments[player.PlayerId] = assignment;
+        }
+    }
+
+    private string GetImportedPlayerTeamName(PlayerImportDto player)
+    {
+        if (_saveState.PlayerAssignments.TryGetValue(player.PlayerId, out var teamName) && !string.IsNullOrWhiteSpace(teamName))
+        {
+            return teamName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(player.TeamName))
+        {
+            return player.TeamName;
+        }
+
+        return _leagueData.Rosters.FirstOrDefault(roster => roster.PlayerId == player.PlayerId)?.TeamName ?? string.Empty;
+    }
+
+    private int GetMajorLeagueReadinessScore(PlayerImportDto player)
+    {
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var ageAdjustment = Math.Clamp(player.Age - 24, 0, 8);
+        var pitcherAdjustment = player.PrimaryPosition == "SP" ? 2 : 0;
+        return ratings.OverallRating * 10 + ageAdjustment + pitcherAdjustment;
+    }
+
+    private int GetAffiliateDevelopmentScore(PlayerImportDto player)
+    {
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var youthBonus = Math.Clamp(27 - player.Age, -6, 8);
+        return ratings.OverallRating * 10 + youthBonus;
+    }
+
+    private int GetAffiliateFortyManPriority(PlayerImportDto player)
+    {
+        var assignment = _saveState.PlayerRosterAssignments.GetValueOrDefault(player.PlayerId, ReserveRosterAssignment);
+        var affiliateLevel = GetAffiliateLevel(assignment);
+        return affiliateLevel switch
+        {
+            MinorLeagueAffiliateLevel.TripleA => 0,
+            MinorLeagueAffiliateLevel.DoubleA => 1,
+            _ => 2
+        };
     }
 
     private bool EnsureCreatedPlayerRosterAssignmentsGenerated()
@@ -4999,6 +5418,14 @@ public sealed class FranchiseSession
 
         foreach (var player in _saveState.CreatedPlayers.Values)
         {
+            var normalizedAssignment = NormalizeRosterAssignment(player.RosterAssignment);
+            if (!string.Equals(player.RosterAssignment, normalizedAssignment, StringComparison.OrdinalIgnoreCase))
+            {
+                player.RosterAssignment = normalizedAssignment;
+                _saveState.PlayerRosterAssignments[player.PlayerId] = normalizedAssignment;
+                hasChanges = true;
+            }
+
             if (string.IsNullOrWhiteSpace(player.TeamName))
             {
                 continue;
@@ -5014,12 +5441,215 @@ public sealed class FranchiseSession
                 continue;
             }
 
-            player.RosterAssignment = MajorLeagueRosterAssignment;
-            _saveState.PlayerRosterAssignments[player.PlayerId] = MajorLeagueRosterAssignment;
+            player.RosterAssignment = ReserveRosterAssignment;
+            _saveState.PlayerRosterAssignments[player.PlayerId] = ReserveRosterAssignment;
             hasChanges = true;
         }
 
         return hasChanges;
+    }
+
+    private static string NormalizeRosterAssignment(string rosterAssignment)
+    {
+        if (string.Equals(rosterAssignment, LegacyAffiliateRosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return TripleARosterAssignment;
+        }
+
+        if (string.Equals(rosterAssignment, TripleARosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return TripleARosterAssignment;
+        }
+
+        if (string.Equals(rosterAssignment, DoubleARosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return DoubleARosterAssignment;
+        }
+
+        if (string.Equals(rosterAssignment, SingleARosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return SingleARosterAssignment;
+        }
+
+        return rosterAssignment;
+    }
+
+    private static bool IsMinorLeagueRosterAssignment(string rosterAssignment)
+    {
+        rosterAssignment = NormalizeRosterAssignment(rosterAssignment);
+        return string.Equals(rosterAssignment, TripleARosterAssignment, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(rosterAssignment, DoubleARosterAssignment, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(rosterAssignment, SingleARosterAssignment, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static MinorLeagueAffiliateLevel? GetAffiliateLevel(string rosterAssignment)
+    {
+        rosterAssignment = NormalizeRosterAssignment(rosterAssignment);
+        if (string.Equals(rosterAssignment, TripleARosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return MinorLeagueAffiliateLevel.TripleA;
+        }
+
+        if (string.Equals(rosterAssignment, DoubleARosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return MinorLeagueAffiliateLevel.DoubleA;
+        }
+
+        if (string.Equals(rosterAssignment, SingleARosterAssignment, StringComparison.OrdinalIgnoreCase))
+        {
+            return MinorLeagueAffiliateLevel.SingleA;
+        }
+
+        return null;
+    }
+
+    private static string GetRosterAssignmentForAffiliateLevel(MinorLeagueAffiliateLevel affiliateLevel)
+    {
+        return affiliateLevel switch
+        {
+            MinorLeagueAffiliateLevel.DoubleA => DoubleARosterAssignment,
+            MinorLeagueAffiliateLevel.SingleA => SingleARosterAssignment,
+            _ => TripleARosterAssignment
+        };
+    }
+
+    private static string GetAffiliateLevelLabel(MinorLeagueAffiliateLevel affiliateLevel)
+    {
+        return affiliateLevel switch
+        {
+            MinorLeagueAffiliateLevel.DoubleA => DoubleARosterAssignment,
+            MinorLeagueAffiliateLevel.SingleA => SingleARosterAssignment,
+            _ => TripleARosterAssignment
+        };
+    }
+
+    private static string BuildAffiliateSummary(int affiliateCount, IEnumerable<MinorLeagueAffiliateLevel?> affiliateLevels)
+    {
+        if (affiliateCount <= 0)
+        {
+            return "0 on affiliates";
+        }
+
+        return $"{affiliateCount} on affiliates ({BuildAffiliateBreakdownLabel(affiliateLevels)})";
+    }
+
+    private static string BuildAffiliateBreakdownLabel(IEnumerable<OrganizationRosterPlayerView> players)
+    {
+        return BuildAffiliateBreakdownLabel(players.Select(player => player.AffiliateLevel));
+    }
+
+    private static string BuildAffiliateBreakdownLabel(IEnumerable<MinorLeagueAffiliateLevel?> affiliateLevels)
+    {
+        var levels = affiliateLevels.Where(level => level.HasValue).Select(level => level!.Value).ToList();
+        var tripleACount = levels.Count(level => level == MinorLeagueAffiliateLevel.TripleA);
+        var doubleACount = levels.Count(level => level == MinorLeagueAffiliateLevel.DoubleA);
+        var singleACount = levels.Count(level => level == MinorLeagueAffiliateLevel.SingleA);
+        return $"AAA {tripleACount} | AA {doubleACount} | A {singleACount}";
+    }
+
+    private void ApplySelectedTeamAutomaticMinorLeaguePromotions()
+    {
+        if (SelectedTeam == null)
+        {
+            return;
+        }
+
+        if (ApplyAutomaticMinorLeaguePromotions(SelectedTeam.Name))
+        {
+            RefreshRosterSlots(SelectedTeam.Name);
+        }
+    }
+
+    private bool ApplyAutomaticMinorLeaguePromotions(string teamName)
+    {
+        var teamState = GetOrCreateTeamState(teamName);
+        if (!teamState.AutoManageMinorLeaguePromotions)
+        {
+            return false;
+        }
+
+        CleanupMinorLeagueAssignmentLocks(teamState, teamName);
+        var lockedPlayerIds = teamState.ManualMinorLeagueAssignmentLocks.ToHashSet();
+        var changed = false;
+
+        foreach (var player in GetAllPlayers()
+                     .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+                     .Where(player => !lockedPlayerIds.Contains(player.PlayerId)))
+        {
+            var currentAssignment = GetPlayerRosterAssignment(player.PlayerId);
+            if (!GetAffiliateLevel(currentAssignment).HasValue)
+            {
+                continue;
+            }
+
+            var targetAssignment = GetRosterAssignmentForAffiliateLevel(GetRecommendedAffiliateLevel(player));
+            if (string.Equals(currentAssignment, targetAssignment, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            SetPlayerRosterAssignment(player.PlayerId, targetAssignment);
+            changed = true;
+        }
+
+        return changed;
+    }
+
+    private MinorLeagueAffiliateLevel GetRecommendedAffiliateLevel(PlayerImportDto player)
+    {
+        var ratings = GetPlayerRatings(player.PlayerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var overallRating = ratings.OverallRating;
+        if (overallRating >= 68 || (overallRating >= 64 && player.Age <= 24))
+        {
+            return MinorLeagueAffiliateLevel.TripleA;
+        }
+
+        if (overallRating >= 56 || (overallRating >= 52 && player.Age <= 22))
+        {
+            return MinorLeagueAffiliateLevel.DoubleA;
+        }
+
+        return MinorLeagueAffiliateLevel.SingleA;
+    }
+
+    private bool IsMinorLeagueAssignmentLocked(string teamName, Guid playerId)
+    {
+        return GetOrCreateTeamState(teamName).ManualMinorLeagueAssignmentLocks.Contains(playerId);
+    }
+
+    private void SetMinorLeagueAssignmentLock(string teamName, Guid playerId, bool isLocked)
+    {
+        var teamState = GetOrCreateTeamState(teamName);
+        if (isLocked)
+        {
+            if (!teamState.ManualMinorLeagueAssignmentLocks.Contains(playerId))
+            {
+                teamState.ManualMinorLeagueAssignmentLocks.Add(playerId);
+            }
+
+            return;
+        }
+
+        teamState.ManualMinorLeagueAssignmentLocks.RemoveAll(id => id == playerId);
+    }
+
+    private void CleanupMinorLeagueAssignmentLocks(TeamFranchiseState teamState, string teamName)
+    {
+        teamState.ManualMinorLeagueAssignmentLocks.RemoveAll(playerId =>
+        {
+            var player = FindPlayerImport(playerId);
+            if (player == null)
+            {
+                return true;
+            }
+
+            if (!string.Equals(GetAssignedTeamName(playerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return !GetAffiliateLevel(GetPlayerRosterAssignment(playerId)).HasValue;
+        });
     }
 
     private bool EnsureDraftCompletionStateConsistency()
@@ -5113,6 +5743,7 @@ public sealed class FranchiseSession
         var random = CreateStableRandom(teamName, "economy");
         var economy = new TeamEconomy
         {
+
             CashOnHand = marketSize switch
             {
                 MarketSize.Small => 16_000_000m + (random.Next(0, 7) * 350_000m),
@@ -5120,28 +5751,35 @@ public sealed class FranchiseSession
                 _ => 23_000_000m + (random.Next(0, 8) * 400_000m)
             },
             MarketSize = marketSize,
+
             FanInterest = Math.Clamp(46 + random.Next(-6, 9), 25, 80),
             TicketPrice = marketSize switch
             {
                 MarketSize.Small => 22m + random.Next(0, 5),
                 MarketSize.Large => 32m + random.Next(0, 7),
                 _ => 27m + random.Next(0, 6)
+
             },
             StadiumCapacity = marketSize switch
             {
                 MarketSize.Small => 28_000 + random.Next(0, 4_000),
+
                 MarketSize.Large => 40_000 + random.Next(0, 6_000),
                 _ => 34_000 + random.Next(0, 5_000)
             },
+
             MerchStrength = Math.Clamp(44 + random.Next(-4, 16), 25, 90),
             SponsorStrength = Math.Clamp(45 + random.Next(-4, 18), 25, 92),
             FacilitiesLevel = Math.Clamp(2 + random.Next(0, 3), 1, 5),
+
             BudgetAllocation = BuildDefaultBudgetAllocation(marketSize)
         };
 
         economy.ProjectedBudget = FinanceMath.CalculateProjectedBudget(economy);
         return economy;
+
     }
+
 
     private static BudgetAllocation BuildDefaultBudgetAllocation(MarketSize marketSize)
     {
@@ -5154,9 +5792,11 @@ public sealed class FranchiseSession
                 MedicalBudget = 175_000m,
                 FacilitiesBudget = 125_000m
             },
+
             MarketSize.Large => new BudgetAllocation
             {
                 ScoutingBudget = 325_000m,
+
                 PlayerDevelopmentBudget = 400_000m,
                 MedicalBudget = 280_000m,
                 FacilitiesBudget = 225_000m
@@ -5165,11 +5805,13 @@ public sealed class FranchiseSession
             {
                 ScoutingBudget = 240_000m,
                 PlayerDevelopmentBudget = 300_000m,
+
                 MedicalBudget = 220_000m,
                 FacilitiesBudget = 165_000m
             }
         };
     }
+
 
     private bool EnsurePlayerContractsInitialized(TeamEconomy economy, string teamName)
     {
@@ -5179,15 +5821,18 @@ public sealed class FranchiseSession
             .ToList();
         var assignedPlayerIds = assignedPlayers.Select(player => player.PlayerId).ToHashSet();
 
+
         var removedContracts = economy.PlayerContracts.RemoveAll(contract => !assignedPlayerIds.Contains(contract.SubjectId));
         hasChanges |= removedContracts > 0;
 
         foreach (var player in assignedPlayers)
+
         {
             if (economy.PlayerContracts.Any(contract => contract.SubjectId == player.PlayerId))
             {
                 continue;
             }
+
 
             var salary = EstimatePlayerSalary(player);
             var years = player.Age switch
@@ -5195,11 +5840,14 @@ public sealed class FranchiseSession
                 <= 24 => 3,
                 <= 29 => 4,
                 <= 33 => 3,
+
                 _ => 2
             };
             _signPlayerContractUseCase.Execute(economy, player.PlayerId, player.FullName, salary, years, GetCurrentFranchiseDate());
             hasChanges = true;
+
         }
+
 
         return hasChanges;
     }
@@ -5208,6 +5856,7 @@ public sealed class FranchiseSession
     {
         var hasChanges = false;
         var activeRoles = coaches.Select(coach => coach.Role).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
         var removedContracts = economy.CoachContracts.RemoveAll(contract => !activeRoles.Contains(contract.Role));
         hasChanges |= removedContracts > 0;
 
@@ -5296,10 +5945,10 @@ public sealed class FranchiseSession
     {
         return _leagueData.Players.Count(player =>
             string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase)
-            && IsPlayerOnMajorLeagueRoster(player.PlayerId))
+            && IsPlayerOnFortyMan(player.PlayerId))
             + _saveState.CreatedPlayers.Values.Count(player =>
                 string.Equals(player.TeamName, teamName, StringComparison.OrdinalIgnoreCase)
-                && IsPlayerOnMajorLeagueRoster(player.PlayerId));
+                && IsPlayerOnFortyMan(player.PlayerId));
     }
 
     private decimal GetPositionNeedMultiplier(string teamName, string position)
@@ -6752,6 +7401,7 @@ public sealed class FranchiseSession
         ApplyRecoveryBetweenDates(currentDate, nextDate);
         ProcessMonthlyFinanceBetweenDates(currentDate, nextDate);
         ProcessScoutingBetweenDates(currentDate, nextDate);
+        ApplySelectedTeamAutomaticMinorLeaguePromotions();
         _saveState.CurrentFranchiseDate = nextDate;
         ClearTrainingReportsIfSeasonComplete();
     }

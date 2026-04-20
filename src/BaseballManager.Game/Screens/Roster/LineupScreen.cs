@@ -428,7 +428,9 @@ public sealed class LineupScreen : GameScreen
         var rosterActions = new List<PlayerContextActionView>
         {
             new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", player.CanAssignToFortyMan),
-            new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", player.CanAssignToAffiliate),
+            new(PlayerContextAction.AssignToTripleA, "Send To AAA", player.AffiliateLevel != MinorLeagueAffiliateLevel.TripleA),
+            new(PlayerContextAction.AssignToDoubleA, "Send To AA", player.AffiliateLevel != MinorLeagueAffiliateLevel.DoubleA),
+            new(PlayerContextAction.AssignToSingleA, "Send To A", player.AffiliateLevel != MinorLeagueAffiliateLevel.SingleA),
             new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", player.IsOnFortyMan),
             new(PlayerContextAction.ReleasePlayer, "Release", player.CanRelease)
         };
@@ -455,8 +457,14 @@ public sealed class LineupScreen : GameScreen
             case PlayerContextAction.AssignToFortyMan:
                 _franchiseSession.AssignSelectedTeamPlayerToFortyMan(_selectedPlayerId.Value, out _);
                 break;
-            case PlayerContextAction.AssignToAffiliate:
-                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, out _);
+            case PlayerContextAction.AssignToTripleA:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, MinorLeagueAffiliateLevel.TripleA, out _);
+                break;
+            case PlayerContextAction.AssignToDoubleA:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, MinorLeagueAffiliateLevel.DoubleA, out _);
+                break;
+            case PlayerContextAction.AssignToSingleA:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, MinorLeagueAffiliateLevel.SingleA, out _);
                 break;
             case PlayerContextAction.RemoveFromFortyMan:
                 _franchiseSession.RemoveSelectedTeamPlayerFromFortyMan(_selectedPlayerId.Value, out _);

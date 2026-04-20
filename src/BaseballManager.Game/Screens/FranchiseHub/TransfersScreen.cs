@@ -507,7 +507,9 @@ public sealed class TransfersScreen : GameScreen
                 :
                 [
                     new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", rosterPlayer.CanAssignToFortyMan),
-                    new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", rosterPlayer.CanAssignToAffiliate),
+                    new(PlayerContextAction.AssignToTripleA, "Send To AAA", rosterPlayer.AffiliateLevel != MinorLeagueAffiliateLevel.TripleA),
+                    new(PlayerContextAction.AssignToDoubleA, "Send To AA", rosterPlayer.AffiliateLevel != MinorLeagueAffiliateLevel.DoubleA),
+                    new(PlayerContextAction.AssignToSingleA, "Send To A", rosterPlayer.AffiliateLevel != MinorLeagueAffiliateLevel.SingleA),
                     new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", rosterPlayer.IsOnFortyMan),
                     new(PlayerContextAction.ReleasePlayer, "Release", rosterPlayer.CanRelease)
                 ];
@@ -545,8 +547,18 @@ public sealed class TransfersScreen : GameScreen
                 MarkAllCachesDirty();
                 RefreshSelections();
                 break;
-            case PlayerContextAction.AssignToAffiliate:
-                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, out _statusMessage);
+            case PlayerContextAction.AssignToTripleA:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, MinorLeagueAffiliateLevel.TripleA, out _statusMessage);
+                MarkAllCachesDirty();
+                RefreshSelections();
+                break;
+            case PlayerContextAction.AssignToDoubleA:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, MinorLeagueAffiliateLevel.DoubleA, out _statusMessage);
+                MarkAllCachesDirty();
+                RefreshSelections();
+                break;
+            case PlayerContextAction.AssignToSingleA:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, MinorLeagueAffiliateLevel.SingleA, out _statusMessage);
                 MarkAllCachesDirty();
                 RefreshSelections();
                 break;

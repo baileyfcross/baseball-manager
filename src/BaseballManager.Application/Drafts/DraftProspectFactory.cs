@@ -76,12 +76,16 @@ public sealed class DraftProspectFactory
     {
         return primaryPosition switch
         {
-            "SS" => Pick(random, new[] { "2B", "3B" }),
-            "2B" => Pick(random, new[] { "SS", "CF" }),
-            "3B" => Pick(random, new[] { "1B", "SS" }),
-            "LF" or "CF" or "RF" => Pick(random, new[] { "LF", "CF", "RF" }.Where(position => !string.Equals(position, primaryPosition, StringComparison.OrdinalIgnoreCase)).ToArray()),
-            "SP" => "RP",
-            "RP" => "SP",
+            "C" => Pick(random, new[] { string.Empty, string.Empty, string.Empty, "1B" }),
+            "1B" => Pick(random, new[] { string.Empty, string.Empty, "3B", "LF", "RF" }),
+            "2B" => Pick(random, new[] { string.Empty, string.Empty, "SS", "3B", "CF" }),
+            "3B" => Pick(random, new[] { string.Empty, string.Empty, "1B", "SS", "LF" }),
+            "SS" => Pick(random, new[] { string.Empty, string.Empty, "2B", "3B", "CF" }),
+            "LF" => Pick(random, new[] { string.Empty, string.Empty, "CF", "RF", "3B" }),
+            "CF" => Pick(random, new[] { string.Empty, string.Empty, "LF", "RF", "2B", "SS" }),
+            "RF" => Pick(random, new[] { string.Empty, string.Empty, "LF", "CF", "1B" }),
+            "SP" => Pick(random, new[] { string.Empty, string.Empty, "RP" }),
+            "RP" => Pick(random, new[] { string.Empty, string.Empty, "SP" }),
             _ => string.Empty
         };
     }

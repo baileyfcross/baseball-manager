@@ -5,11 +5,21 @@ public enum PlayerContextAction
     OpenProfile,
     OpenRosterAssignments,
     AssignToFortyMan,
-    AssignToAffiliate,
+    AssignToTripleA,
+    AssignToDoubleA,
+    AssignToSingleA,
+    ReturnToAutomaticAffiliate,
     RemoveFromFortyMan,
     ReleasePlayer,
     TradeForPlayer,
     ScoutPlayer
+}
+
+public enum MinorLeagueAffiliateLevel
+{
+    TripleA,
+    DoubleA,
+    SingleA
 }
 
 public sealed record PlayerContextActionView(
@@ -139,12 +149,14 @@ public sealed record OrganizationRosterPlayerView(
     int Age,
     string AssignmentLabel,
     string TeamStatusLabel,
+    MinorLeagueAffiliateLevel? AffiliateLevel,
+    bool IsMinorLeagueAssignmentLocked,
     bool IsOnFortyMan,
     bool IsOnFirstTeam,
     bool IsDraftedPlayer,
     int MinorLeagueOptionsRemaining,
     bool CanAssignToFortyMan,
-    bool CanAssignToAffiliate,
+    bool CanReturnToAutomaticAffiliate,
     bool CanRelease,
     int? LineupSlot,
     int? RotationSlot);

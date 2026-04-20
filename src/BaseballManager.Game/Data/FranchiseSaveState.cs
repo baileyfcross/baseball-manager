@@ -39,6 +39,8 @@ public sealed class FranchiseSaveState
 
     public Dictionary<Guid, string> PlayerRosterAssignments { get; set; } = new();
 
+    public HashSet<Guid> FortyManRosterPlayerIds { get; set; } = new();
+
     public Dictionary<Guid, FranchiseCreatedPlayerState> CreatedPlayers { get; set; } = new();
 
     public LiveMatchSaveState? CurrentLiveMatch { get; set; }
@@ -346,6 +348,10 @@ public sealed class TeamFranchiseState
     public List<Guid?> LineupSlots { get; set; } = new();
 
     public List<Guid?> RotationSlots { get; set; } = new();
+
+    public bool AutoManageMinorLeaguePromotions { get; set; } = true;
+
+    public List<Guid> ManualMinorLeagueAssignmentLocks { get; set; } = new();
 
     public TeamPracticeFocus PracticeFocus { get; set; } = TeamPracticeFocus.Balanced;
 

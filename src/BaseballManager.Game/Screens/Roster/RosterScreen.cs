@@ -4,6 +4,7 @@ using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
 using BaseballManager.Game.UI.Widgets;
+using BaseballManager.Core.Economy;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -17,11 +18,20 @@ public sealed class RosterScreen : GameScreen
         Counts
     }
 
-    private enum RosterFilterMode
+    private enum RosterTeamFilterMode
     {
         All,
+        FirstTeam,
         FortyMan,
         Affiliate,
+        TripleA,
+        DoubleA,
+        SingleA
+    }
+
+    private enum RosterPositionFilterMode
+    {
+        All,
         Hitters,
         Pitchers,
         Catcher,
@@ -47,12 +57,16 @@ public sealed class RosterScreen : GameScreen
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly ButtonControl _filterButton;
+    private readonly ButtonControl _teamFilterButton;
+    private readonly ButtonControl _positionFilterButton;
     private readonly ButtonControl _sortButton;
     private readonly ButtonControl _clearSelectionButton;
     private readonly ButtonControl _detailModeButton;
     private readonly ButtonControl _compositionModeButton;
+    private readonly ButtonControl _minorLeagueAutomationButton;
+    private readonly ButtonControl _returnToAutoButton;
     private readonly ButtonControl _assign40ManButton;
+    private readonly ButtonControl _affiliateTargetButton;
     private readonly ButtonControl _assignAffiliateButton;
     private readonly ButtonControl _removeFromFortyManButton;
     private readonly ButtonControl _releaseButton;
@@ -60,7 +74,8 @@ public sealed class RosterScreen : GameScreen
     private readonly ButtonControl _nextPageButton;
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
-    private bool _showFilterDropdown;
+    private bool _showTeamFilterDropdown;
+    private bool _showPositionFilterDropdown;
     private Point _viewport = new(1280, 720);
     private Guid? _selectedPlayerId;
     private readonly HashSet<Guid> _selectedPlayerIds = [];
@@ -68,21 +83,33 @@ public sealed class RosterScreen : GameScreen
     private int _pageIndex;
     private DetailPanelMode _detailPanelMode = DetailPanelMode.Player;
     private OrganizationRosterCompositionMode _compositionMode = OrganizationRosterCompositionMode.FirstTeam;
-    private RosterFilterMode _filterMode = RosterFilterMode.All;
+    private MinorLeagueAffiliateLevel _affiliateAssignmentTarget = MinorLeagueAffiliateLevel.TripleA;
+    private RosterTeamFilterMode _teamFilterMode = RosterTeamFilterMode.All;
+    private RosterPositionFilterMode _positionFilterMode = RosterPositionFilterMode.All;
     private RosterSortMode _sortMode = RosterSortMode.Status;
-    private string _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or switch to Counts to review the 26-man and affiliate mix.";
+    private string _statusMessage = "Review player stats, add or remove players from the 40-man roster, and use AAA, AA, or A assignments to lock specific minor leaguers while AI manages everyone else.";
+    private IReadOnlyList<OrganizationRosterPlayerView> _cachedOrganizationPlayers = [];
+    private IReadOnlyList<OrganizationRosterPlayerView> _cachedVisiblePlayers = [];
+    private IReadOnlyDictionary<Guid, Contract> _cachedContractsByPlayerId = new Dictionary<Guid, Contract>();
+    private bool _organizationRosterDirty = true;
+    private bool _visibleRosterDirty = true;
+    private bool _contractsDirty = true;
 
     public RosterScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
         _screenManager = screenManager;
         _franchiseSession = franchiseSession;
         _backButton = new ButtonControl { Label = "Back", OnClick = () => _screenManager.TransitionTo(nameof(FranchiseHubScreen)) };
-        _filterButton = new ButtonControl { Label = "Filter: All", OnClick = ToggleFilterDropdown };
+        _teamFilterButton = new ButtonControl { Label = "Team: All", OnClick = ToggleTeamFilterDropdown };
+        _positionFilterButton = new ButtonControl { Label = "Pos: All", OnClick = TogglePositionFilterDropdown };
         _sortButton = new ButtonControl { Label = "Sort: Status", OnClick = CycleSort };
         _clearSelectionButton = new ButtonControl { Label = "Clear Select", OnClick = ClearSelection };
         _detailModeButton = new ButtonControl { Label = "View: Player", OnClick = ToggleDetailPanelMode };
         _compositionModeButton = new ButtonControl { Label = "Scope: First Team", OnClick = CycleCompositionMode };
+        _minorLeagueAutomationButton = new ButtonControl { Label = "Minor AI: On", OnClick = ToggleMinorLeagueAutomation };
+        _returnToAutoButton = new ButtonControl { Label = "Return To AI", OnClick = ReturnSelectedPlayersToAuto };
         _assign40ManButton = new ButtonControl { Label = "Add To 40-Man", OnClick = AssignToFortyMan };
+        _affiliateTargetButton = new ButtonControl { Label = "Target: AAA", OnClick = CycleAffiliateAssignmentTarget };
         _assignAffiliateButton = new ButtonControl { Label = "Send To Affiliate", OnClick = AssignToAffiliate };
         _removeFromFortyManButton = new ButtonControl { Label = "Remove From 40-Man", OnClick = RemoveFromFortyMan };
         _releaseButton = new ButtonControl { Label = "Release", OnClick = ReleasePlayer };
@@ -96,13 +123,17 @@ public sealed class RosterScreen : GameScreen
         _pageIndex = 0;
         _detailPanelMode = DetailPanelMode.Player;
         _compositionMode = OrganizationRosterCompositionMode.FirstTeam;
-        _filterMode = RosterFilterMode.All;
+        _affiliateAssignmentTarget = MinorLeagueAffiliateLevel.TripleA;
+        _teamFilterMode = RosterTeamFilterMode.All;
+        _positionFilterMode = RosterPositionFilterMode.All;
         _sortMode = RosterSortMode.Status;
-        _showFilterDropdown = false;
+        _showTeamFilterDropdown = false;
+        _showPositionFilterDropdown = false;
         _selectedPlayerId = null;
         _selectedPlayerIds.Clear();
         _playerContextOverlay.Close();
-        _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or switch to Counts to review the 26-man and affiliate mix.";
+        _statusMessage = "Review player stats, add or remove players from the 40-man roster, and use AAA, AA, or A assignments to lock specific minor leaguers while AI manages everyone else.";
+        InvalidateRosterCaches();
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -143,13 +174,21 @@ public sealed class RosterScreen : GameScreen
             {
                 _backButton.Click();
             }
-            else if (GetFilterButtonBounds().Contains(mousePosition))
+            else if (GetTeamFilterButtonBounds().Contains(mousePosition))
             {
-                _filterButton.Click();
+                _teamFilterButton.Click();
             }
-            else if (_showFilterDropdown)
+            else if (GetPositionFilterButtonBounds().Contains(mousePosition))
             {
-                TrySelectFilterOption(mousePosition);
+                _positionFilterButton.Click();
+            }
+            else if (_showTeamFilterDropdown)
+            {
+                TrySelectTeamFilterOption(mousePosition);
+            }
+            else if (_showPositionFilterDropdown)
+            {
+                TrySelectPositionFilterOption(mousePosition);
             }
             else if (GetSortButtonBounds().Contains(mousePosition))
             {
@@ -166,6 +205,18 @@ public sealed class RosterScreen : GameScreen
             else if (GetCompositionModeBounds().Contains(mousePosition))
             {
                 _compositionModeButton.Click();
+            }
+            else if (GetMinorLeagueAutomationBounds().Contains(mousePosition))
+            {
+                _minorLeagueAutomationButton.Click();
+            }
+            else if (GetAffiliateTargetBounds().Contains(mousePosition))
+            {
+                _affiliateTargetButton.Click();
+            }
+            else if (GetReturnToAutoBounds().Contains(mousePosition))
+            {
+                _returnToAutoButton.Click();
             }
             else if (GetAssign40ManBounds().Contains(mousePosition))
             {
@@ -220,14 +271,20 @@ public sealed class RosterScreen : GameScreen
         var players = GetVisiblePlayers();
         EnsureSelectionIsValid(players);
         var selectedPlayer = GetSelectedPlayer(players);
-        var contractsByPlayerId = _franchiseSession.GetSelectedTeamEconomy().PlayerContracts.ToDictionary(contract => contract.SubjectId, contract => contract);
+        var contractsByPlayerId = GetContractsByPlayerId();
 
-        _filterButton.Label = _showFilterDropdown
-            ? $"Filter: {GetFilterLabel(_filterMode)} ^"
-            : $"Filter: {GetFilterLabel(_filterMode)} v";
+        _teamFilterButton.Label = _showTeamFilterDropdown
+            ? $"Team: {GetTeamFilterLabel(_teamFilterMode)} ^"
+            : $"Team: {GetTeamFilterLabel(_teamFilterMode)} v";
+        _positionFilterButton.Label = _showPositionFilterDropdown
+            ? $"Pos: {GetPositionFilterLabel(_positionFilterMode)} ^"
+            : $"Pos: {GetPositionFilterLabel(_positionFilterMode)} v";
         _sortButton.Label = $"Sort: {GetSortLabel(_sortMode)}";
         _detailModeButton.Label = _detailPanelMode == DetailPanelMode.Player ? "View: Player" : "View: Counts";
         _compositionModeButton.Label = $"Scope: {GetCompositionModeLabel(_compositionMode)}";
+        _minorLeagueAutomationButton.Label = _franchiseSession.IsSelectedTeamMinorLeagueAutomationEnabled() ? "Minor AI: On" : "Minor AI: Off";
+        _affiliateTargetButton.Label = $"Target: {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}";
+        _assignAffiliateButton.Label = $"Send To {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}";
 
         uiRenderer.DrawText("Roster", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, 360, 22), Color.Gold, uiRenderer.UiSmallFont);
@@ -238,17 +295,18 @@ public sealed class RosterScreen : GameScreen
         uiRenderer.DrawButton(string.Empty, listBounds, new Color(38, 48, 56), Color.White);
         uiRenderer.DrawButton(string.Empty, detailBounds, new Color(38, 48, 56), Color.White);
         var selectedPlayers = GetSelectedPlayersForActions();
-        var selectedLabel = selectedPlayers.Count > 1 ? $"Organization Roster ({selectedPlayers.Count} selected)" : "Organization Roster";
+        var rosterViewLabel = GetRosterViewLabel();
+        var selectedLabel = selectedPlayers.Count > 1 ? $"{rosterViewLabel} ({selectedPlayers.Count} selected)" : rosterViewLabel;
         uiRenderer.DrawTextInBounds(selectedLabel, new Rectangle(listBounds.X + 12, listBounds.Y + 8, listBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
         uiRenderer.DrawTextInBounds(_detailPanelMode == DetailPanelMode.Player ? "Player Details" : "Roster Counts", new Rectangle(detailBounds.X + 12, detailBounds.Y + 8, detailBounds.Width - 24, 18), Color.Gold, uiRenderer.UiSmallFont);
         DrawDetailPanelButtons(uiRenderer, mousePosition);
 
         if (players.Count == 0)
         {
-            uiRenderer.DrawWrappedTextInBounds("No roster players match the current filter.", new Rectangle(listBounds.X + 12, listBounds.Y + 40, listBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
+            uiRenderer.DrawWrappedTextInBounds(GetEmptyRosterMessage(), new Rectangle(listBounds.X + 12, listBounds.Y + 40, listBounds.Width - 24, 60), Color.White, uiRenderer.UiSmallFont, 3);
             if (_detailPanelMode == DetailPanelMode.Counts)
             {
-                DrawRosterComposition(uiRenderer, _franchiseSession.GetSelectedTeamRosterComposition(_compositionMode));
+                DrawRosterComposition(uiRenderer, GetCurrentRosterComposition());
             }
             else
             {
@@ -260,7 +318,7 @@ public sealed class RosterScreen : GameScreen
             DrawPlayerList(uiRenderer, players, mousePosition);
             if (_detailPanelMode == DetailPanelMode.Counts)
             {
-                DrawRosterComposition(uiRenderer, _franchiseSession.GetSelectedTeamRosterComposition(_compositionMode));
+                DrawRosterComposition(uiRenderer, GetCurrentRosterComposition());
             }
             else if (selectedPlayers.Count > 1)
             {
@@ -274,9 +332,14 @@ public sealed class RosterScreen : GameScreen
 
         DrawButtons(uiRenderer, mousePosition, selectedPlayer);
 
-        if (_showFilterDropdown)
+        if (_showTeamFilterDropdown)
         {
-            DrawFilterDropdown(uiRenderer);
+            DrawTeamFilterDropdown(uiRenderer);
+        }
+
+        if (_showPositionFilterDropdown)
+        {
+            DrawPositionFilterDropdown(uiRenderer);
         }
 
         _playerContextOverlay.Draw(uiRenderer, mousePosition, _viewport);
@@ -355,27 +418,40 @@ public sealed class RosterScreen : GameScreen
             : "Veteran import: affiliate and 40-man moves are enabled here; option years are not tracked yet.";
         uiRenderer.DrawTextInBounds(optionsLabel, new Rectangle(content.X, content.Y + 348, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
 
-        uiRenderer.DrawTextInBounds($"Medical: {medicalStatus}", new Rectangle(content.X, content.Y + 380, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(medicalReport, new Rectangle(content.X, content.Y + 402, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+        var automationLabel = player.AffiliateLevel.HasValue
+            ? player.IsMinorLeagueAssignmentLocked
+                ? "Minor-League AI: User locked to this affiliate tier."
+                : "Minor-League AI: Eligible for automatic affiliate promotion or demotion."
+            : "Minor-League AI: Active only for players already assigned to AAA, AA, or A.";
+        uiRenderer.DrawTextInBounds(automationLabel, new Rectangle(content.X, content.Y + 364, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
 
-        uiRenderer.DrawTextInBounds("Scout Note", new Rectangle(content.X, content.Y + 462, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(scoutNote, new Rectangle(content.X, content.Y + 484, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+        uiRenderer.DrawTextInBounds($"Medical: {medicalStatus}", new Rectangle(content.X, content.Y + 388, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(medicalReport, new Rectangle(content.X, content.Y + 410, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+
+        uiRenderer.DrawTextInBounds("Scout Note", new Rectangle(content.X, content.Y + 470, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds(scoutNote, new Rectangle(content.X, content.Y + 492, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
     }
 
     private void DrawSelectionSummary(UiRenderer uiRenderer, IReadOnlyList<OrganizationRosterPlayerView> selectedPlayers)
     {
         var content = GetDetailBodyBounds();
         var firstTeamCount = selectedPlayers.Count(player => player.IsOnFirstTeam);
-        var affiliateCount = selectedPlayers.Count(player => player.TeamStatusLabel == "Affiliate");
+        var affiliateCount = selectedPlayers.Count(player => player.AffiliateLevel.HasValue);
+        var tripleACount = selectedPlayers.Count(player => player.AffiliateLevel == MinorLeagueAffiliateLevel.TripleA);
+        var doubleACount = selectedPlayers.Count(player => player.AffiliateLevel == MinorLeagueAffiliateLevel.DoubleA);
+        var singleACount = selectedPlayers.Count(player => player.AffiliateLevel == MinorLeagueAffiliateLevel.SingleA);
+        var lockedCount = selectedPlayers.Count(player => player.IsMinorLeagueAssignmentLocked);
         var depthCount = selectedPlayers.Count(player => player.TeamStatusLabel == "Organization Depth");
         var fortyManCount = selectedPlayers.Count(player => player.IsOnFortyMan);
 
         uiRenderer.DrawTextInBounds($"{selectedPlayers.Count} Players Selected", new Rectangle(content.X, content.Y, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
         uiRenderer.DrawTextInBounds($"First Team {firstTeamCount} | Depth {depthCount} | Affiliate {affiliateCount}", new Rectangle(content.X, content.Y + 24, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"40-Man {fortyManCount} | Non-40-Man {selectedPlayers.Count - fortyManCount}", new Rectangle(content.X, content.Y + 48, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds("Use the roster action buttons to apply moves to the full selection. Click a checkbox to add or remove players from the batch, or use Clear Select to reset.", new Rectangle(content.X, content.Y + 82, content.Width, 60), Color.White, uiRenderer.UiSmallFont, 3);
+        uiRenderer.DrawTextInBounds($"AAA {tripleACount} | AA {doubleACount} | A {singleACount}", new Rectangle(content.X, content.Y + 48, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"Manual Locks {lockedCount} | AI Managed {selectedPlayers.Count - lockedCount}", new Rectangle(content.X, content.Y + 72, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds($"40-Man {fortyManCount} | Non-40-Man {selectedPlayers.Count - fortyManCount}", new Rectangle(content.X, content.Y + 96, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawWrappedTextInBounds("Use the roster action buttons to apply moves to the full selection. Manual affiliate assignments lock a player to that tier until you return him to AI control.", new Rectangle(content.X, content.Y + 130, content.Width, 60), Color.White, uiRenderer.UiSmallFont, 3);
 
-        var listY = content.Y + 156;
+        var listY = content.Y + 204;
         foreach (var player in selectedPlayers.Take(8))
         {
             uiRenderer.DrawTextInBounds($"{player.PlayerName} | {player.PrimaryPosition}/{player.SecondaryPosition}".TrimEnd('/'), new Rectangle(content.X, listY, content.Width, 16), player.IsOnFirstTeam ? Color.Gold : Color.White, uiRenderer.UiSmallFont);
@@ -439,67 +515,101 @@ public sealed class RosterScreen : GameScreen
         var suppressHover = IsOverlayCapturingMouse();
         var detailModeBounds = GetDetailModeBounds();
         var compositionModeBounds = GetCompositionModeBounds();
+        var minorLeagueAutomationBounds = GetMinorLeagueAutomationBounds();
         uiRenderer.DrawButton(_detailModeButton.Label, detailModeBounds, !suppressHover && detailModeBounds.Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
         uiRenderer.DrawButton(_compositionModeButton.Label, compositionModeBounds, !suppressHover && compositionModeBounds.Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+        uiRenderer.DrawButton(_minorLeagueAutomationButton.Label, minorLeagueAutomationBounds, !suppressHover && minorLeagueAutomationBounds.Contains(mousePosition) ? Color.DarkOliveGreen : (_franchiseSession.IsSelectedTeamMinorLeagueAutomationEnabled() ? Color.OliveDrab : new Color(110, 88, 34)), Color.White);
     }
 
     private void DrawButtons(UiRenderer uiRenderer, Point mousePosition, OrganizationRosterPlayerView? selectedPlayer)
     {
-        var suppressHover = _showFilterDropdown;
+        var suppressHover = _showTeamFilterDropdown || _showPositionFilterDropdown;
         uiRenderer.DrawButton(_backButton.Label, GetBackButtonBounds(), !suppressHover && GetBackButtonBounds().Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
-        uiRenderer.DrawButton(_filterButton.Label, GetFilterButtonBounds(), GetFilterButtonBounds().Contains(mousePosition) || _showFilterDropdown ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
+        uiRenderer.DrawButton(_teamFilterButton.Label, GetTeamFilterButtonBounds(), GetTeamFilterButtonBounds().Contains(mousePosition) || _showTeamFilterDropdown ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
+        uiRenderer.DrawButton(_positionFilterButton.Label, GetPositionFilterButtonBounds(), GetPositionFilterButtonBounds().Contains(mousePosition) || _showPositionFilterDropdown ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
         uiRenderer.DrawButton(_sortButton.Label, GetSortButtonBounds(), !suppressHover && GetSortButtonBounds().Contains(mousePosition) ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
         uiRenderer.DrawButton(_clearSelectionButton.Label, GetClearSelectionBounds(), _selectedPlayerIds.Count > 0 && !suppressHover && GetClearSelectionBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (_selectedPlayerIds.Count > 0 ? Color.SlateBlue : new Color(76, 76, 76)), _selectedPlayerIds.Count > 0 ? Color.White : new Color(188, 188, 188));
 
         var actionTargets = GetSelectedPlayersForActions();
         var canAssignToFortyMan = actionTargets.Any(player => player.CanAssignToFortyMan);
-        var canAssignToAffiliate = actionTargets.Any(player => player.CanAssignToAffiliate);
+        var canAssignToAffiliate = actionTargets.Any(player => player.AffiliateLevel != _affiliateAssignmentTarget);
+        var canReturnToAuto = actionTargets.Any(player => player.CanReturnToAutomaticAffiliate);
         var canRemoveFromFortyMan = actionTargets.Any(player => player.IsOnFortyMan);
         var canRelease = selectedPlayer?.CanRelease == true;
+        uiRenderer.DrawButton(_returnToAutoButton.Label, GetReturnToAutoBounds(), canReturnToAuto && !suppressHover && GetReturnToAutoBounds().Contains(mousePosition) ? Color.DarkOliveGreen : (canReturnToAuto ? Color.OliveDrab : new Color(76, 76, 76)), canReturnToAuto ? Color.White : new Color(188, 188, 188));
         uiRenderer.DrawButton(_assign40ManButton.Label, GetAssign40ManBounds(), canAssignToFortyMan && !suppressHover && GetAssign40ManBounds().Contains(mousePosition) ? Color.DarkOliveGreen : (canAssignToFortyMan ? Color.OliveDrab : new Color(76, 76, 76)), canAssignToFortyMan ? Color.White : new Color(188, 188, 188));
+        uiRenderer.DrawButton(_affiliateTargetButton.Label, GetAffiliateTargetBounds(), !suppressHover && GetAffiliateTargetBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
         uiRenderer.DrawButton(_assignAffiliateButton.Label, GetAssignAffiliateBounds(), canAssignToAffiliate && !suppressHover && GetAssignAffiliateBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canAssignToAffiliate ? Color.SlateBlue : new Color(76, 76, 76)), canAssignToAffiliate ? Color.White : new Color(188, 188, 188));
         uiRenderer.DrawButton(_removeFromFortyManButton.Label, GetRemoveFromFortyManBounds(), canRemoveFromFortyMan && !suppressHover && GetRemoveFromFortyManBounds().Contains(mousePosition) ? Color.DarkSlateBlue : (canRemoveFromFortyMan ? Color.SlateBlue : new Color(76, 76, 76)), canRemoveFromFortyMan ? Color.White : new Color(188, 188, 188));
         uiRenderer.DrawButton(_releaseButton.Label, GetReleaseButtonBounds(), canRelease && !suppressHover && GetReleaseButtonBounds().Contains(mousePosition) ? Color.DarkRed : (canRelease ? Color.Firebrick : new Color(76, 76, 76)), canRelease ? Color.White : new Color(188, 188, 188));
     }
 
-    private void DrawFilterDropdown(UiRenderer uiRenderer)
+    private void DrawTeamFilterDropdown(UiRenderer uiRenderer)
     {
-        var options = GetFilterOptions();
+        var options = GetTeamFilterOptions();
         for (var i = 0; i < options.Count; i++)
         {
             var option = options[i];
-            var bounds = GetFilterOptionBounds(i);
+            var bounds = GetTeamFilterOptionBounds(i);
             var isHovered = bounds.Contains(Mouse.GetState().Position);
-            var isSelected = option == _filterMode;
+            var isSelected = option == _teamFilterMode;
             var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
-            uiRenderer.DrawButton(GetFilterLabel(option), bounds, color, Color.White);
+            uiRenderer.DrawButton(GetTeamFilterLabel(option), bounds, color, Color.White);
+        }
+    }
+
+    private void DrawPositionFilterDropdown(UiRenderer uiRenderer)
+    {
+        var options = GetPositionFilterOptions();
+        for (var i = 0; i < options.Count; i++)
+        {
+            var option = options[i];
+            var bounds = GetPositionFilterOptionBounds(i);
+            var isHovered = bounds.Contains(Mouse.GetState().Position);
+            var isSelected = option == _positionFilterMode;
+            var color = isSelected ? Color.DarkOliveGreen : (isHovered ? Color.DarkSlateBlue : Color.SlateGray);
+            uiRenderer.DrawButton(GetPositionFilterLabel(option), bounds, color, Color.White);
         }
     }
 
     private IReadOnlyList<OrganizationRosterPlayerView> GetVisiblePlayers()
     {
-        var players = _franchiseSession.GetSelectedTeamOrganizationRoster();
-        IEnumerable<OrganizationRosterPlayerView> filtered = _filterMode switch
+        if (!_visibleRosterDirty)
         {
-            RosterFilterMode.FortyMan => players.Where(player => player.IsOnFortyMan),
-            RosterFilterMode.Affiliate => players.Where(player => string.Equals(player.TeamStatusLabel, "Affiliate", StringComparison.OrdinalIgnoreCase)),
-            RosterFilterMode.Hitters => players.Where(player => !IsPitcher(player.PrimaryPosition)),
-            RosterFilterMode.Pitchers => players.Where(player => IsPitcher(player.PrimaryPosition)),
-            RosterFilterMode.Catcher => players.Where(player => MatchesRosterPositionFilter(player, "C")),
-            RosterFilterMode.FirstBase => players.Where(player => MatchesRosterPositionFilter(player, "1B")),
-            RosterFilterMode.SecondBase => players.Where(player => MatchesRosterPositionFilter(player, "2B")),
-            RosterFilterMode.ThirdBase => players.Where(player => MatchesRosterPositionFilter(player, "3B")),
-            RosterFilterMode.Shortstop => players.Where(player => MatchesRosterPositionFilter(player, "SS")),
-            RosterFilterMode.LeftField => players.Where(player => MatchesRosterPositionFilter(player, "LF")),
-            RosterFilterMode.CenterField => players.Where(player => MatchesRosterPositionFilter(player, "CF")),
-            RosterFilterMode.RightField => players.Where(player => MatchesRosterPositionFilter(player, "RF")),
-            RosterFilterMode.DesignatedHitter => players.Where(player => MatchesRosterPositionFilter(player, "DH")),
-            RosterFilterMode.StartingPitcher => players.Where(player => MatchesRosterPositionFilter(player, "SP")),
-            RosterFilterMode.ReliefPitcher => players.Where(player => MatchesRosterPositionFilter(player, "RP")),
+            return _cachedVisiblePlayers;
+        }
+
+        var players = GetOrganizationPlayers();
+        IEnumerable<OrganizationRosterPlayerView> filtered = _teamFilterMode switch
+        {
+            RosterTeamFilterMode.FirstTeam => players.Where(player => player.IsOnFirstTeam),
+            RosterTeamFilterMode.FortyMan => players.Where(player => player.IsOnFortyMan),
+            RosterTeamFilterMode.Affiliate => players.Where(player => player.AffiliateLevel.HasValue),
+            RosterTeamFilterMode.TripleA => players.Where(player => player.AffiliateLevel == MinorLeagueAffiliateLevel.TripleA),
+            RosterTeamFilterMode.DoubleA => players.Where(player => player.AffiliateLevel == MinorLeagueAffiliateLevel.DoubleA),
+            RosterTeamFilterMode.SingleA => players.Where(player => player.AffiliateLevel == MinorLeagueAffiliateLevel.SingleA),
             _ => players
         };
 
-        return _sortMode switch
+        filtered = _positionFilterMode switch
+        {
+            RosterPositionFilterMode.Hitters => filtered.Where(player => !IsPitcher(player.PrimaryPosition)),
+            RosterPositionFilterMode.Pitchers => filtered.Where(player => IsPitcher(player.PrimaryPosition)),
+            RosterPositionFilterMode.Catcher => filtered.Where(player => MatchesRosterPositionFilter(player, "C")),
+            RosterPositionFilterMode.FirstBase => filtered.Where(player => MatchesRosterPositionFilter(player, "1B")),
+            RosterPositionFilterMode.SecondBase => filtered.Where(player => MatchesRosterPositionFilter(player, "2B")),
+            RosterPositionFilterMode.ThirdBase => filtered.Where(player => MatchesRosterPositionFilter(player, "3B")),
+            RosterPositionFilterMode.Shortstop => filtered.Where(player => MatchesRosterPositionFilter(player, "SS")),
+            RosterPositionFilterMode.LeftField => filtered.Where(player => MatchesRosterPositionFilter(player, "LF")),
+            RosterPositionFilterMode.CenterField => filtered.Where(player => MatchesRosterPositionFilter(player, "CF")),
+            RosterPositionFilterMode.RightField => filtered.Where(player => MatchesRosterPositionFilter(player, "RF")),
+            RosterPositionFilterMode.DesignatedHitter => filtered.Where(player => MatchesRosterPositionFilter(player, "DH")),
+            RosterPositionFilterMode.StartingPitcher => filtered.Where(player => MatchesRosterPositionFilter(player, "SP")),
+            RosterPositionFilterMode.ReliefPitcher => filtered.Where(player => MatchesRosterPositionFilter(player, "RP")),
+            _ => filtered
+        };
+
+        _cachedVisiblePlayers = _sortMode switch
         {
             RosterSortMode.Name => filtered.OrderBy(player => player.PlayerName).ToList(),
             RosterSortMode.Position => filtered.OrderBy(player => player.PrimaryPosition).ThenBy(player => player.PlayerName).ToList(),
@@ -509,6 +619,9 @@ public sealed class RosterScreen : GameScreen
                 .ThenBy(player => player.PlayerName)
                 .ToList()
         };
+
+        _visibleRosterDirty = false;
+        return _cachedVisiblePlayers;
     }
 
     private void EnsureSelectionIsValid(IReadOnlyList<OrganizationRosterPlayerView> players)
@@ -584,9 +697,22 @@ public sealed class RosterScreen : GameScreen
         _selectedPlayerId = playerId;
     }
 
-    private void ToggleFilterDropdown()
+    private void ToggleTeamFilterDropdown()
     {
-        _showFilterDropdown = !_showFilterDropdown;
+        _showTeamFilterDropdown = !_showTeamFilterDropdown;
+        if (_showTeamFilterDropdown)
+        {
+            _showPositionFilterDropdown = false;
+        }
+    }
+
+    private void TogglePositionFilterDropdown()
+    {
+        _showPositionFilterDropdown = !_showPositionFilterDropdown;
+        if (_showPositionFilterDropdown)
+        {
+            _showTeamFilterDropdown = false;
+        }
     }
 
     private void CycleSort()
@@ -599,6 +725,7 @@ public sealed class RosterScreen : GameScreen
         };
         _pageIndex = 0;
         ClearSelection();
+        InvalidateVisibleRosterCache();
     }
 
     private void ToggleDetailPanelMode()
@@ -618,6 +745,22 @@ public sealed class RosterScreen : GameScreen
         };
     }
 
+    private void CycleAffiliateAssignmentTarget()
+    {
+        _affiliateAssignmentTarget = _affiliateAssignmentTarget switch
+        {
+            MinorLeagueAffiliateLevel.TripleA => MinorLeagueAffiliateLevel.DoubleA,
+            MinorLeagueAffiliateLevel.DoubleA => MinorLeagueAffiliateLevel.SingleA,
+            _ => MinorLeagueAffiliateLevel.TripleA
+        };
+    }
+
+    private void ToggleMinorLeagueAutomation()
+    {
+        _statusMessage = _franchiseSession.ToggleSelectedTeamMinorLeagueAutomation();
+        SyncSelectionAfterRosterMove();
+    }
+
     private void AssignToFortyMan()
     {
         var selectedPlayers = GetSelectedPlayersForActions();
@@ -634,14 +777,20 @@ public sealed class RosterScreen : GameScreen
 
     private void AssignToAffiliate()
     {
+        AssignToAffiliate(_affiliateAssignmentTarget);
+    }
+
+    private void AssignToAffiliate(MinorLeagueAffiliateLevel affiliateLevel)
+    {
         var selectedPlayers = GetSelectedPlayersForActions();
         if (selectedPlayers.Count == 0)
         {
-            _statusMessage = "Select at least one player before sending players to the affiliate.";
+            _statusMessage = $"Select at least one player before sending players to {GetAffiliateTargetLabel(affiliateLevel)}.";
             return;
         }
 
-        _franchiseSession.AssignSelectedTeamPlayersToAffiliate(selectedPlayers.Select(player => player.PlayerId).ToList(), out var message);
+        _affiliateAssignmentTarget = affiliateLevel;
+        _franchiseSession.AssignSelectedTeamPlayersToAffiliate(selectedPlayers.Select(player => player.PlayerId).ToList(), affiliateLevel, out var message);
         _statusMessage = message;
         SyncSelectionAfterRosterMove();
     }
@@ -656,6 +805,20 @@ public sealed class RosterScreen : GameScreen
         }
 
         _franchiseSession.RemoveSelectedTeamPlayersFromFortyMan(selectedPlayers.Select(player => player.PlayerId).ToList(), out var message);
+        _statusMessage = message;
+        SyncSelectionAfterRosterMove();
+    }
+
+    private void ReturnSelectedPlayersToAuto()
+    {
+        var selectedPlayers = GetSelectedPlayersForActions();
+        if (selectedPlayers.Count == 0)
+        {
+            _statusMessage = "Select at least one player before returning players to AI control.";
+            return;
+        }
+
+        _franchiseSession.ReturnSelectedTeamPlayersToAutomaticAffiliate(selectedPlayers.Select(player => player.PlayerId).ToList(), out var message);
         _statusMessage = message;
         SyncSelectionAfterRosterMove();
     }
@@ -689,10 +852,11 @@ public sealed class RosterScreen : GameScreen
         }
 
         _selectedPlayerId = playerId;
-        if (_filterMode == RosterFilterMode.FortyMan)
+        if (_teamFilterMode == RosterTeamFilterMode.FortyMan)
         {
-            _filterMode = RosterFilterMode.All;
+            _teamFilterMode = RosterTeamFilterMode.All;
             _pageIndex = 0;
+            InvalidateVisibleRosterCache();
         }
     }
 
@@ -732,70 +896,117 @@ public sealed class RosterScreen : GameScreen
         return $"Last {stats.SampleGames} G: {stats.BattingAverageDisplay} AVG, {stats.HomeRuns} HR, {stats.OpsDisplay} OPS";
     }
 
-    private static string GetFilterLabel(RosterFilterMode filterMode)
+    private static string GetTeamFilterLabel(RosterTeamFilterMode filterMode)
     {
         return filterMode switch
         {
-            RosterFilterMode.FortyMan => "40-Man",
-            RosterFilterMode.Affiliate => "Affiliate",
-            RosterFilterMode.Hitters => "Hitters",
-            RosterFilterMode.Pitchers => "Pitchers",
-            RosterFilterMode.Catcher => "C",
-            RosterFilterMode.FirstBase => "1B",
-            RosterFilterMode.SecondBase => "2B",
-            RosterFilterMode.ThirdBase => "3B",
-            RosterFilterMode.Shortstop => "SS",
-            RosterFilterMode.LeftField => "LF",
-            RosterFilterMode.CenterField => "CF",
-            RosterFilterMode.RightField => "RF",
-            RosterFilterMode.DesignatedHitter => "DH",
-            RosterFilterMode.StartingPitcher => "SP",
-            RosterFilterMode.ReliefPitcher => "RP",
+            RosterTeamFilterMode.FirstTeam => "First Team",
+            RosterTeamFilterMode.FortyMan => "40-Man",
+            RosterTeamFilterMode.Affiliate => "Affiliate",
+            RosterTeamFilterMode.TripleA => "AAA",
+            RosterTeamFilterMode.DoubleA => "AA",
+            RosterTeamFilterMode.SingleA => "A",
             _ => "All"
         };
     }
 
-    private static IReadOnlyList<RosterFilterMode> GetFilterOptions()
+    private static string GetPositionFilterLabel(RosterPositionFilterMode filterMode)
+    {
+        return filterMode switch
+        {
+            RosterPositionFilterMode.Hitters => "Hitters",
+            RosterPositionFilterMode.Pitchers => "Pitchers",
+            RosterPositionFilterMode.Catcher => "C",
+            RosterPositionFilterMode.FirstBase => "1B",
+            RosterPositionFilterMode.SecondBase => "2B",
+            RosterPositionFilterMode.ThirdBase => "3B",
+            RosterPositionFilterMode.Shortstop => "SS",
+            RosterPositionFilterMode.LeftField => "LF",
+            RosterPositionFilterMode.CenterField => "CF",
+            RosterPositionFilterMode.RightField => "RF",
+            RosterPositionFilterMode.DesignatedHitter => "DH",
+            RosterPositionFilterMode.StartingPitcher => "SP",
+            RosterPositionFilterMode.ReliefPitcher => "RP",
+            _ => "All"
+        };
+    }
+
+    private static IReadOnlyList<RosterTeamFilterMode> GetTeamFilterOptions()
     {
         return
         [
-            RosterFilterMode.All,
-            RosterFilterMode.FortyMan,
-            RosterFilterMode.Affiliate,
-            RosterFilterMode.Hitters,
-            RosterFilterMode.Pitchers,
-            RosterFilterMode.Catcher,
-            RosterFilterMode.FirstBase,
-            RosterFilterMode.SecondBase,
-            RosterFilterMode.ThirdBase,
-            RosterFilterMode.Shortstop,
-            RosterFilterMode.LeftField,
-            RosterFilterMode.CenterField,
-            RosterFilterMode.RightField,
-            RosterFilterMode.DesignatedHitter,
-            RosterFilterMode.StartingPitcher,
-            RosterFilterMode.ReliefPitcher
+            RosterTeamFilterMode.All,
+            RosterTeamFilterMode.FirstTeam,
+            RosterTeamFilterMode.FortyMan,
+            RosterTeamFilterMode.Affiliate,
+            RosterTeamFilterMode.TripleA,
+            RosterTeamFilterMode.DoubleA,
+            RosterTeamFilterMode.SingleA
         ];
     }
 
-    private bool TrySelectFilterOption(Point mousePosition)
+    private static IReadOnlyList<RosterPositionFilterMode> GetPositionFilterOptions()
     {
-        var options = GetFilterOptions();
+        return
+        [
+            RosterPositionFilterMode.All,
+            RosterPositionFilterMode.Hitters,
+            RosterPositionFilterMode.Pitchers,
+            RosterPositionFilterMode.Catcher,
+            RosterPositionFilterMode.FirstBase,
+            RosterPositionFilterMode.SecondBase,
+            RosterPositionFilterMode.ThirdBase,
+            RosterPositionFilterMode.Shortstop,
+            RosterPositionFilterMode.LeftField,
+            RosterPositionFilterMode.CenterField,
+            RosterPositionFilterMode.RightField,
+            RosterPositionFilterMode.DesignatedHitter,
+            RosterPositionFilterMode.StartingPitcher,
+            RosterPositionFilterMode.ReliefPitcher
+        ];
+    }
+
+    private bool TrySelectTeamFilterOption(Point mousePosition)
+    {
+        var options = GetTeamFilterOptions();
         for (var i = 0; i < options.Count; i++)
         {
-            if (!GetFilterOptionBounds(i).Contains(mousePosition))
+            if (!GetTeamFilterOptionBounds(i).Contains(mousePosition))
             {
                 continue;
             }
 
-            _filterMode = options[i];
+            _teamFilterMode = options[i];
             _pageIndex = 0;
-            _showFilterDropdown = false;
+            _showTeamFilterDropdown = false;
             ClearSelection();
+            InvalidateVisibleRosterCache();
             return true;
         }
 
-        _showFilterDropdown = false;
+        _showTeamFilterDropdown = false;
+        return false;
+    }
+
+    private bool TrySelectPositionFilterOption(Point mousePosition)
+    {
+        var options = GetPositionFilterOptions();
+        for (var i = 0; i < options.Count; i++)
+        {
+            if (!GetPositionFilterOptionBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            _positionFilterMode = options[i];
+            _pageIndex = 0;
+            _showPositionFilterDropdown = false;
+            ClearSelection();
+            InvalidateVisibleRosterCache();
+            return true;
+        }
+
+        _showPositionFilterDropdown = false;
         return false;
     }
 
@@ -817,7 +1028,43 @@ public sealed class RosterScreen : GameScreen
 
     private bool IsOverlayCapturingMouse()
     {
-        return _showFilterDropdown || _playerContextOverlay.IsCapturingMouse;
+        return _showTeamFilterDropdown || _showPositionFilterDropdown || _playerContextOverlay.IsCapturingMouse;
+    }
+
+    private OrganizationRosterCompositionView GetCurrentRosterComposition()
+    {
+        return _teamFilterMode switch
+        {
+            RosterTeamFilterMode.TripleA => _franchiseSession.GetSelectedTeamAffiliateRosterComposition(MinorLeagueAffiliateLevel.TripleA),
+            RosterTeamFilterMode.DoubleA => _franchiseSession.GetSelectedTeamAffiliateRosterComposition(MinorLeagueAffiliateLevel.DoubleA),
+            RosterTeamFilterMode.SingleA => _franchiseSession.GetSelectedTeamAffiliateRosterComposition(MinorLeagueAffiliateLevel.SingleA),
+            _ => _franchiseSession.GetSelectedTeamRosterComposition(_compositionMode)
+        };
+    }
+
+    private string GetRosterViewLabel()
+    {
+        return _teamFilterMode switch
+        {
+            RosterTeamFilterMode.TripleA => $"{_franchiseSession.SelectedTeamName} AAA Roster",
+            RosterTeamFilterMode.DoubleA => $"{_franchiseSession.SelectedTeamName} AA Roster",
+            RosterTeamFilterMode.SingleA => $"{_franchiseSession.SelectedTeamName} A Roster",
+            RosterTeamFilterMode.FirstTeam => $"{_franchiseSession.SelectedTeamName} First Team",
+            RosterTeamFilterMode.FortyMan => $"{_franchiseSession.SelectedTeamName} 40-Man",
+            _ => "Organization Roster"
+        };
+    }
+
+    private string GetEmptyRosterMessage()
+    {
+        return _teamFilterMode switch
+        {
+            RosterTeamFilterMode.TripleA => "No players are currently assigned to AAA.",
+            RosterTeamFilterMode.DoubleA => "No players are currently assigned to AA.",
+            RosterTeamFilterMode.SingleA => "No players are currently assigned to A.",
+            RosterTeamFilterMode.FirstTeam => "No players are currently on the first team.",
+            _ => "No roster players match the current filter."
+        };
     }
 
     private bool TryOpenPlayerContextMenu(Point mousePosition, IReadOnlyList<OrganizationRosterPlayerView> players)
@@ -841,7 +1088,10 @@ public sealed class RosterScreen : GameScreen
             var rosterActions = new List<PlayerContextActionView>
             {
                 new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", player.CanAssignToFortyMan),
-                new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", player.CanAssignToAffiliate),
+                new(PlayerContextAction.AssignToTripleA, "Send To AAA", player.AffiliateLevel != MinorLeagueAffiliateLevel.TripleA),
+                new(PlayerContextAction.AssignToDoubleA, "Send To AA", player.AffiliateLevel != MinorLeagueAffiliateLevel.DoubleA),
+                new(PlayerContextAction.AssignToSingleA, "Send To A", player.AffiliateLevel != MinorLeagueAffiliateLevel.SingleA),
+                new(PlayerContextAction.ReturnToAutomaticAffiliate, "Return To AI", player.CanReturnToAutomaticAffiliate),
                 new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", player.IsOnFortyMan),
                 new(PlayerContextAction.ReleasePlayer, "Release", player.CanRelease)
             };
@@ -866,8 +1116,17 @@ public sealed class RosterScreen : GameScreen
             case PlayerContextAction.AssignToFortyMan:
                 AssignToFortyMan();
                 break;
-            case PlayerContextAction.AssignToAffiliate:
-                AssignToAffiliate();
+            case PlayerContextAction.AssignToTripleA:
+                AssignToAffiliate(MinorLeagueAffiliateLevel.TripleA);
+                break;
+            case PlayerContextAction.AssignToDoubleA:
+                AssignToAffiliate(MinorLeagueAffiliateLevel.DoubleA);
+                break;
+            case PlayerContextAction.AssignToSingleA:
+                AssignToAffiliate(MinorLeagueAffiliateLevel.SingleA);
+                break;
+            case PlayerContextAction.ReturnToAutomaticAffiliate:
+                ReturnSelectedPlayersToAuto();
                 break;
             case PlayerContextAction.RemoveFromFortyMan:
                 RemoveFromFortyMan();
@@ -893,14 +1152,24 @@ public sealed class RosterScreen : GameScreen
         return mode switch
         {
             OrganizationRosterCompositionMode.Depth => "Depth",
-            OrganizationRosterCompositionMode.Affiliate => "Affiliate",
+            OrganizationRosterCompositionMode.Affiliate => "Affiliates",
             _ => "First Team"
+        };
+    }
+
+    private static string GetAffiliateTargetLabel(MinorLeagueAffiliateLevel affiliateLevel)
+    {
+        return affiliateLevel switch
+        {
+            MinorLeagueAffiliateLevel.DoubleA => "AA",
+            MinorLeagueAffiliateLevel.SingleA => "A",
+            _ => "AAA"
         };
     }
 
     private IReadOnlyList<OrganizationRosterPlayerView> GetSelectedPlayersForActions()
     {
-        var organizationPlayers = _franchiseSession.GetSelectedTeamOrganizationRoster();
+        var organizationPlayers = GetOrganizationPlayers();
         var selectedPlayers = organizationPlayers
             .Where(player => _selectedPlayerIds.Contains(player.PlayerId))
             .ToList();
@@ -921,7 +1190,8 @@ public sealed class RosterScreen : GameScreen
 
     private void SyncSelectionAfterRosterMove()
     {
-        var organizationPlayers = _franchiseSession.GetSelectedTeamOrganizationRoster();
+        InvalidateRosterCaches();
+        var organizationPlayers = GetOrganizationPlayers();
         var organizationPlayerIds = organizationPlayers.Select(player => player.PlayerId).ToHashSet();
         _selectedPlayerIds.RemoveWhere(playerId => !organizationPlayerIds.Contains(playerId));
 
@@ -930,11 +1200,50 @@ public sealed class RosterScreen : GameScreen
             _selectedPlayerId = null;
         }
 
-        if (_filterMode == RosterFilterMode.FortyMan && _selectedPlayerIds.Any(playerId => organizationPlayers.All(player => player.PlayerId != playerId || !player.IsOnFortyMan)))
+        if (_teamFilterMode == RosterTeamFilterMode.FortyMan && _selectedPlayerIds.Any(playerId => organizationPlayers.All(player => player.PlayerId != playerId || !player.IsOnFortyMan)))
         {
-            _filterMode = RosterFilterMode.All;
+            _teamFilterMode = RosterTeamFilterMode.All;
             _pageIndex = 0;
+            InvalidateVisibleRosterCache();
         }
+    }
+
+    private IReadOnlyList<OrganizationRosterPlayerView> GetOrganizationPlayers()
+    {
+        if (_organizationRosterDirty)
+        {
+            _cachedOrganizationPlayers = _franchiseSession.GetSelectedTeamOrganizationRoster();
+            _organizationRosterDirty = false;
+            _visibleRosterDirty = true;
+            _contractsDirty = true;
+        }
+
+        return _cachedOrganizationPlayers;
+    }
+
+    private IReadOnlyDictionary<Guid, Contract> GetContractsByPlayerId()
+    {
+        if (_contractsDirty)
+        {
+            _cachedContractsByPlayerId = _franchiseSession.GetSelectedTeamEconomy()
+                .PlayerContracts
+                .ToDictionary(contract => contract.SubjectId, contract => contract);
+            _contractsDirty = false;
+        }
+
+        return _cachedContractsByPlayerId;
+    }
+
+    private void InvalidateRosterCaches()
+    {
+        _organizationRosterDirty = true;
+        _visibleRosterDirty = true;
+        _contractsDirty = true;
+    }
+
+    private void InvalidateVisibleRosterCache()
+    {
+        _visibleRosterDirty = true;
     }
 
     private static bool IsPitcher(string position)
@@ -954,17 +1263,25 @@ public sealed class RosterScreen : GameScreen
 
     private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
 
-    private Rectangle GetFilterButtonBounds() => new(48, _viewport.Y - 58, 150, 34);
+    private Rectangle GetTeamFilterButtonBounds() => new(48, _viewport.Y - 58, 150, 34);
 
-    private Rectangle GetFilterOptionBounds(int index)
+    private Rectangle GetTeamFilterOptionBounds(int index)
     {
-        var buttonBounds = GetFilterButtonBounds();
+        var buttonBounds = GetTeamFilterButtonBounds();
         return new Rectangle(buttonBounds.X, buttonBounds.Y - 4 - ((index + 1) * 30), 150, 26);
     }
 
-    private Rectangle GetSortButtonBounds() => new(210, _viewport.Y - 58, 140, 34);
+    private Rectangle GetPositionFilterButtonBounds() => new(210, _viewport.Y - 58, 140, 34);
 
-    private Rectangle GetClearSelectionBounds() => new(362, _viewport.Y - 58, 130, 34);
+    private Rectangle GetPositionFilterOptionBounds(int index)
+    {
+        var buttonBounds = GetPositionFilterButtonBounds();
+        return new Rectangle(buttonBounds.X, buttonBounds.Y - 4 - ((index + 1) * 30), 140, 26);
+    }
+
+    private Rectangle GetSortButtonBounds() => new(362, _viewport.Y - 58, 140, 34);
+
+    private Rectangle GetClearSelectionBounds() => new(514, _viewport.Y - 58, 130, 34);
 
     private Rectangle GetReleaseButtonBounds() => new(Math.Max(360, _viewport.X - 120), _viewport.Y - 58, 100, 34);
 
@@ -977,13 +1294,25 @@ public sealed class RosterScreen : GameScreen
     private Rectangle GetAssignAffiliateBounds()
     {
         var removeBounds = GetRemoveFromFortyManBounds();
-        return new Rectangle(removeBounds.X - 162, removeBounds.Y, 150, 34);
+        return new Rectangle(removeBounds.X - 148, removeBounds.Y, 136, 34);
+    }
+
+    private Rectangle GetAffiliateTargetBounds()
+    {
+        var affiliateBounds = GetAssignAffiliateBounds();
+        return new Rectangle(affiliateBounds.X - 128, affiliateBounds.Y, 116, 34);
     }
 
     private Rectangle GetAssign40ManBounds()
     {
-        var affiliateBounds = GetAssignAffiliateBounds();
-        return new Rectangle(affiliateBounds.X - 152, affiliateBounds.Y, 140, 34);
+        var affiliateTargetBounds = GetAffiliateTargetBounds();
+        return new Rectangle(affiliateTargetBounds.X - 152, affiliateTargetBounds.Y, 140, 34);
+    }
+
+    private Rectangle GetReturnToAutoBounds()
+    {
+        var assignFortyManBounds = GetAssign40ManBounds();
+        return new Rectangle(assignFortyManBounds.X - 144, assignFortyManBounds.Y, 132, 34);
     }
 
     private Rectangle GetDetailModeBounds()
@@ -996,6 +1325,12 @@ public sealed class RosterScreen : GameScreen
     {
         var detailModeBounds = GetDetailModeBounds();
         return new Rectangle(detailModeBounds.Right + 10, detailModeBounds.Y, 148, detailModeBounds.Height);
+    }
+
+    private Rectangle GetMinorLeagueAutomationBounds()
+    {
+        var compositionModeBounds = GetCompositionModeBounds();
+        return new Rectangle(compositionModeBounds.Right + 10, compositionModeBounds.Y, 136, compositionModeBounds.Height);
     }
 
     private Rectangle GetDetailBodyBounds()

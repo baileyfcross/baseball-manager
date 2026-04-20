@@ -1,6 +1,7 @@
 [
   {
     "Name": "Nashville Foxes",
+    "HexColor": "#485C53",
     "Abbreviation": "NAF",
     "League": "American",
     "Division": "East",
@@ -8,6 +9,7 @@
   },
   {
     "Name": "St. Louis Owls",
+    "HexColor": "#BF8284",
     "Abbreviation": "STO",
     "League": "American",
     "Division": "East",
@@ -15,6 +17,7 @@
   },
   {
     "Name": "Portland Captains",
+    "HexColor": "#BF5940",
     "Abbreviation": "POC",
     "League": "American",
     "Division": "East",
@@ -22,6 +25,7 @@
   },
   {
     "Name": "Baltimore Pilots",
+    "HexColor": "#4C485C",
     "Abbreviation": "BAP",
     "League": "American",
     "Division": "East",
@@ -29,6 +33,7 @@
   },
   {
     "Name": "Austin Stars",
+    "HexColor": "#8279A2",
     "Abbreviation": "AUS",
     "League": "American",
     "Division": "East",
@@ -36,6 +41,7 @@
   },
   {
     "Name": "Toronto Lions",
+    "HexColor": "#4D48A8",
     "Abbreviation": "TOL",
     "League": "American",
     "Division": "Central",
@@ -43,6 +49,7 @@
   },
   {
     "Name": "Pittsburgh Bears",
+    "HexColor": "#58357E",
     "Abbreviation": "PIB",
     "League": "American",
     "Division": "Central",
@@ -50,6 +57,7 @@
   },
   {
     "Name": "Charlotte Storm",
+    "HexColor": "#5372A0",
     "Abbreviation": "CHS",
     "League": "American",
     "Division": "Central",
@@ -57,6 +65,7 @@
   },
   {
     "Name": "Denver Comets",
+    "HexColor": "#588898",
     "Abbreviation": "DEC",
     "League": "American",
     "Division": "Central",
@@ -64,6 +73,7 @@
   },
   {
     "Name": "Houston Knights",
+    "HexColor": "#3559B7",
     "Abbreviation": "HOK",
     "League": "American",
     "Division": "Central",
@@ -71,6 +81,7 @@
   },
   {
     "Name": "Indianapolis Anchors",
+    "HexColor": "#947C82",
     "Abbreviation": "INA",
     "League": "American",
     "Division": "West",
@@ -78,6 +89,7 @@
   },
   {
     "Name": "Milwaukee Giants",
+    "HexColor": "#6AB390",
     "Abbreviation": "MIG",
     "League": "American",
     "Division": "West",
@@ -85,6 +97,7 @@
   },
   {
     "Name": "Chicago Dragons",
+    "HexColor": "#895189",
     "Abbreviation": "CHD",
     "League": "American",
     "Division": "West",
@@ -92,6 +105,7 @@
   },
   {
     "Name": "Los Angeles Sharks",
+    "HexColor": "#6D4DA1",
     "Abbreviation": "LOS",
     "League": "American",
     "Division": "West",
@@ -99,6 +113,7 @@
   },
   {
     "Name": "Miami Aces",
+    "HexColor": "#6A8A77",
     "Abbreviation": "MIA",
     "League": "American",
     "Division": "West",
@@ -106,6 +121,7 @@
   },
   {
     "Name": "Phoenix Hawks",
+    "HexColor": "#51B086",
     "Abbreviation": "PHH",
     "League": "National",
     "Division": "East",
@@ -113,6 +129,7 @@
   },
   {
     "Name": "Kansas City Wolves",
+    "HexColor": "#946771",
     "Abbreviation": "KAW",
     "League": "National",
     "Division": "East",
@@ -120,6 +137,7 @@
   },
   {
     "Name": "Dallas Rockets",
+    "HexColor": "#A57E47",
     "Abbreviation": "DAR",
     "League": "National",
     "Division": "East",
@@ -127,6 +145,7 @@
   },
   {
     "Name": "Minneapolis Guardians",
+    "HexColor": "#8565A3",
     "Abbreviation": "MI1",
     "League": "National",
     "Division": "East",
@@ -134,6 +153,7 @@
   },
   {
     "Name": "Boston Falcons",
+    "HexColor": "#8FB9BD",
     "Abbreviation": "BOF",
     "League": "National",
     "Division": "East",
@@ -141,6 +161,7 @@
   },
   {
     "Name": "Seattle Storm 2",
+    "HexColor": "#55873A",
     "Abbreviation": "SES",
     "League": "National",
     "Division": "Central",
@@ -148,6 +169,7 @@
   },
   {
     "Name": "Philadelphia Knights 2",
+    "HexColor": "#B76C73",
     "Abbreviation": "PHK",
     "League": "National",
     "Division": "Central",
@@ -155,6 +177,7 @@
   },
   {
     "Name": "Atlanta Captains 2",
+    "HexColor": "#4A4831",
     "Abbreviation": "ATC",
     "League": "National",
     "Division": "Central",
@@ -162,6 +185,7 @@
   },
   {
     "Name": "San Diego Falcons 2",
+    "HexColor": "#825089",
     "Abbreviation": "SAF",
     "League": "National",
     "Division": "Central",
@@ -169,6 +193,7 @@
   },
   {
     "Name": "Tampa Pilots 2",
+    "HexColor": "#303038",
     "Abbreviation": "TAP",
     "League": "National",
     "Division": "Central",
@@ -176,6 +201,7 @@
   },
   {
     "Name": "Cleveland Sharks 2",
+    "HexColor": "#8D3D5F",
     "Abbreviation": "CLS",
     "League": "National",
     "Division": "West",
@@ -183,6 +209,7 @@
   },
   {
     "Name": "Detroit Bears 2",
+    "HexColor": "#96BAB5",
     "Abbreviation": "DEB",
     "League": "National",
     "Division": "West",
@@ -190,6 +217,7 @@
   },
   {
     "Name": "New York Hawks 2",
+    "HexColor": "#B96C59",
     "Abbreviation": "NEH",
     "League": "National",
     "Division": "West",
@@ -197,6 +225,7 @@
   },
   {
     "Name": "San Francisco Owls 2",
+    "HexColor": "#4132B8",
     "Abbreviation": "SAO",
     "League": "National",
     "Division": "West",
@@ -204,6 +233,7 @@
   },
   {
     "Name": "Washington Aces 2",
+    "HexColor": "#738BA2",
     "Abbreviation": "WAA",
     "League": "National",
     "Division": "West",

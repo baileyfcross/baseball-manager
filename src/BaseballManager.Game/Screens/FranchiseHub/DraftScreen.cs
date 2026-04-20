@@ -533,7 +533,9 @@ public sealed class DraftScreen : GameScreen
             var rosterActions = new List<PlayerContextActionView>
             {
                 new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", rosterPlayer?.CanAssignToFortyMan == true),
-                new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", rosterPlayer?.CanAssignToAffiliate == true),
+                new(PlayerContextAction.AssignToTripleA, "Send To AAA", rosterPlayer != null && rosterPlayer.AffiliateLevel != MinorLeagueAffiliateLevel.TripleA),
+                new(PlayerContextAction.AssignToDoubleA, "Send To AA", rosterPlayer != null && rosterPlayer.AffiliateLevel != MinorLeagueAffiliateLevel.DoubleA),
+                new(PlayerContextAction.AssignToSingleA, "Send To A", rosterPlayer != null && rosterPlayer.AffiliateLevel != MinorLeagueAffiliateLevel.SingleA),
                 new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", rosterPlayer?.IsOnFortyMan == true),
                 new(PlayerContextAction.ReleasePlayer, "Release", rosterPlayer?.CanRelease == true)
             };
@@ -569,8 +571,14 @@ public sealed class DraftScreen : GameScreen
                 case PlayerContextAction.AssignToFortyMan:
                     _franchiseSession.AssignDraftPlayerTo40Man(playerId, out _statusMessage);
                     break;
-                case PlayerContextAction.AssignToAffiliate:
-                    _franchiseSession.AssignDraftPlayerToAffiliate(playerId, out _statusMessage);
+                case PlayerContextAction.AssignToTripleA:
+                    _franchiseSession.AssignDraftPlayerToAffiliate(playerId, MinorLeagueAffiliateLevel.TripleA, out _statusMessage);
+                    break;
+                case PlayerContextAction.AssignToDoubleA:
+                    _franchiseSession.AssignDraftPlayerToAffiliate(playerId, MinorLeagueAffiliateLevel.DoubleA, out _statusMessage);
+                    break;
+                case PlayerContextAction.AssignToSingleA:
+                    _franchiseSession.AssignDraftPlayerToAffiliate(playerId, MinorLeagueAffiliateLevel.SingleA, out _statusMessage);
                     break;
                 case PlayerContextAction.RemoveFromFortyMan:
                     _franchiseSession.RemoveSelectedTeamPlayerFromFortyMan(playerId, out _statusMessage);

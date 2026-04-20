@@ -27,7 +27,19 @@ public sealed class FranchiseStateStore
         }
 
         var json = File.ReadAllText(_filePath);
-        return JsonSerializer.Deserialize<FranchiseSaveState>(json, JsonOptions) ?? new FranchiseSaveState();
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return new FranchiseSaveState();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<FranchiseSaveState>(json, JsonOptions) ?? new FranchiseSaveState();
+        }
+        catch (JsonException)
+        {
+            return new FranchiseSaveState();
+        }
     }
 
     public void Save(FranchiseSaveState saveState)
@@ -41,7 +53,17 @@ public sealed class FranchiseStateStore
             }
 
             var json = JsonSerializer.Serialize(saveState, JsonOptions);
-            File.WriteAllText(_filePath, json);
+            var tempFilePath = _filePath + ".tmp";
+            File.WriteAllText(tempFilePath, json);
+
+            if (File.Exists(_filePath))
+            {
+                File.Copy(tempFilePath, _filePath, overwrite: true);
+                File.Delete(tempFilePath);
+                return;
+            }
+
+            File.Move(tempFilePath, _filePath);
         }
     }
 }
