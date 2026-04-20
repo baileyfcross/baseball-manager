@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -19,10 +20,10 @@ public sealed class TransfersScreen : GameScreen
     private readonly ButtonControl _filterButton;
     private readonly ButtonControl _marketPreviousButton;
     private readonly ButtonControl _marketNextButton;
-    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private readonly PlayerContextOverlay _playerContextOverlay = new();
     private MouseState _previousMouseState = default;
     private Point _viewport = new(1280, 720);
+    private Rectangle BackButtonBounds => ScreenLayout.BackButtonBounds(_viewport);
     private bool _ignoreClicksUntilRelease = true;
     private int _marketPageIndex;
     private bool _showFilterDropdown;
@@ -148,7 +149,7 @@ public sealed class TransfersScreen : GameScreen
                 return;
             }
 
-            if (_backButtonBounds.Contains(mousePosition))
+            if (BackButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
@@ -232,7 +233,7 @@ public sealed class TransfersScreen : GameScreen
         var statusBounds = new Rectangle(40, _viewport.Y - 62, Math.Max(480, _viewport.X - 420), 52);
         uiRenderer.DrawButton(string.Empty, statusBounds, new Color(38, 48, 56), Color.White);
         uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 10, statusBounds.Y + 8, statusBounds.Width - 20, statusBounds.Height - 16), Color.White, uiRenderer.UiSmallFont, 2);
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !suppressHover && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_backButton.Label, BackButtonBounds, !suppressHover && BackButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
         var tradeButtonColor = _showTransactionMenu ? Color.DarkSlateBlue : Color.OliveDrab;
         uiRenderer.DrawButton(_tradeButton.Label, tradeButtonBounds, !suppressHover && tradeButtonBounds.Contains(mousePosition) ? Color.DarkOliveGreen : tradeButtonColor, Color.White);
 

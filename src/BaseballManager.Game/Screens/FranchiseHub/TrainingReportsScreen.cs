@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -312,9 +313,9 @@ public sealed class TrainingReportsScreen : GameScreen
         _pageIndex = 0;
     }
 
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+    private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
 
-    private Rectangle GetReportsTabBounds() => new(48, 154, 110, 28);
+    private Rectangle GetReportsTabBounds() => new(48, ScreenLayout.ContentTop(_viewport) - 6, 110, 28);
 
     private Rectangle GetHistoryTabBounds()
     {
@@ -322,7 +323,7 @@ public sealed class TrainingReportsScreen : GameScreen
         return new Rectangle(reportsTabBounds.Right + 10, reportsTabBounds.Y, 150, reportsTabBounds.Height);
     }
 
-    private Rectangle GetListPanelBounds() => new(48, 190, Math.Clamp(_viewport.X / 3, 320, 420), Math.Max(330, _viewport.Y - 250));
+    private Rectangle GetListPanelBounds() => new(48, ScreenLayout.ContentTop(_viewport) + 28, Math.Clamp(_viewport.X / 3, 320, 420), Math.Max(330, _viewport.Y - 250));
 
     private Rectangle GetDetailPanelBounds()
     {

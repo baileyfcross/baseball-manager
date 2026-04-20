@@ -3,6 +3,7 @@ using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using BaseballManager.Game.UI.Widgets;
 using BaseballManager.Core.Economy;
 using Microsoft.Xna.Framework;
@@ -53,6 +54,8 @@ public sealed class RosterScreen : GameScreen
         Name,
         Position
     }
+
+    private readonly record struct DetailActionLayout(Rectangle DetailModeBounds, Rectangle CompositionModeBounds, Rectangle AutomationModeBounds);
 
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
@@ -283,8 +286,16 @@ public sealed class RosterScreen : GameScreen
         _detailModeButton.Label = _detailPanelMode == DetailPanelMode.Player ? "View: Player" : "View: Counts";
         _compositionModeButton.Label = $"Scope: {GetCompositionModeLabel(_compositionMode)}";
         _minorLeagueAutomationButton.Label = _franchiseSession.IsSelectedTeamMinorLeagueAutomationEnabled() ? "Minor AI: On" : "Minor AI: Off";
-        _affiliateTargetButton.Label = $"Target: {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}";
-        _assignAffiliateButton.Label = $"Send To {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}";
+        var compactActionLabels = _viewport.X < 1380;
+        _returnToAutoButton.Label = compactActionLabels ? "Return AI" : "Return To AI";
+        _assign40ManButton.Label = compactActionLabels ? "Add 40-Man" : "Add To 40-Man";
+        _affiliateTargetButton.Label = compactActionLabels
+            ? $"Target {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}"
+            : $"Target: {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}";
+        _assignAffiliateButton.Label = compactActionLabels
+            ? $"To {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}"
+            : $"Send To {GetAffiliateTargetLabel(_affiliateAssignmentTarget)}";
+        _removeFromFortyManButton.Label = compactActionLabels ? "Remove 40-Man" : "Remove From 40-Man";
 
         uiRenderer.DrawText("Roster", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, 360, 22), Color.Gold, uiRenderer.UiSmallFont);
@@ -390,46 +401,129 @@ public sealed class RosterScreen : GameScreen
         contractsByPlayerId.TryGetValue(player.PlayerId, out var contract);
 
         var content = GetDetailBodyBounds();
-        uiRenderer.DrawTextInBounds(player.PlayerName, new Rectangle(content.X, content.Y, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"{player.PrimaryPosition}/{player.SecondaryPosition} | Age {player.Age} | {player.AssignmentLabel}", new Rectangle(content.X, content.Y + 24, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"40-Man Spots Used: {_franchiseSession.GetSelectedTeam40ManCount()}/40", new Rectangle(content.X, content.Y + 48, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        var cursorY = content.Y;
+
+        bool TryDrawLine(string text, Color color)
+        {
+            var bounds = new Rectangle(content.X, cursorY, content.Width, 18);
+            if (!FitsWithin(content, bounds))
+            {
+                return false;
+            }
+
+            uiRenderer.DrawTextInBounds(text, bounds, color, uiRenderer.UiSmallFont);
+            cursorY += 24;
+            return true;
+        }
+
+        bool TryDrawWrapped(string text, int maxLines)
+        {
+            var height = maxLines <= 2 ? 36 : 52;
+            var bounds = new Rectangle(content.X, cursorY, content.Width, height);
+            if (!FitsWithin(content, bounds))
+            {
+                return false;
+            }
+
+            uiRenderer.DrawWrappedTextInBounds(text, bounds, Color.White, uiRenderer.UiSmallFont, maxLines);
+            cursorY += height + 8;
+            return true;
+        }
+
+        bool TryDrawSection(string title, string body, int maxLines)
+        {
+            if (!TryDrawLine(title, Color.Gold))
+            {
+                return false;
+            }
+
+            return TryDrawWrapped(body, maxLines);
+        }
+
+        if (!TryDrawLine(player.PlayerName, Color.White))
+        {
+            return;
+        }
+
+        if (!TryDrawLine($"{player.PrimaryPosition}/{player.SecondaryPosition} | Age {player.Age} | {player.AssignmentLabel}", Color.Gold))
+        {
+            return;
+        }
+
+        if (!TryDrawLine($"40-Man Spots Used: {_franchiseSession.GetSelectedTeam40ManCount()}/40", Color.White))
+        {
+            return;
+        }
 
         var slotLabel = player.RotationSlot.HasValue
             ? $"Rotation Slot: {player.RotationSlot.Value}"
             : player.LineupSlot.HasValue
                 ? $"Lineup Slot: {player.LineupSlot.Value}"
                 : "Not in current lineup or rotation";
-        uiRenderer.DrawTextInBounds(slotLabel, new Rectangle(content.X, content.Y + 72, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        if (!TryDrawLine(slotLabel, Color.White))
+        {
+            return;
+        }
 
-        uiRenderer.DrawTextInBounds("Current Season", new Rectangle(content.X, content.Y + 104, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(FormatSeasonLine(player.PrimaryPosition, currentStats), new Rectangle(content.X, content.Y + 126, content.Width, 36), Color.White, uiRenderer.UiSmallFont, 2);
+        if (!TryDrawSection("Current Season", FormatSeasonLine(player.PrimaryPosition, currentStats), 2))
+        {
+            return;
+        }
 
-        uiRenderer.DrawTextInBounds("Last Season", new Rectangle(content.X, content.Y + 170, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(FormatSeasonLine(player.PrimaryPosition, lastSeasonStats), new Rectangle(content.X, content.Y + 192, content.Width, 36), Color.White, uiRenderer.UiSmallFont, 2);
+        if (!TryDrawSection("Last Season", FormatSeasonLine(player.PrimaryPosition, lastSeasonStats), 2))
+        {
+            return;
+        }
 
-        uiRenderer.DrawTextInBounds("Recent Form", new Rectangle(content.X, content.Y + 236, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(FormatRecentLine(player.PrimaryPosition, recentStats), new Rectangle(content.X, content.Y + 258, content.Width, 36), Color.White, uiRenderer.UiSmallFont, 2);
+        if (!TryDrawSection("Recent Form", FormatRecentLine(player.PrimaryPosition, recentStats), 2))
+        {
+            return;
+        }
 
-        uiRenderer.DrawTextInBounds("Contract", new Rectangle(content.X, content.Y + 302, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds(contract == null ? "No active contract on file." : $"{FormatSalary(contract.AnnualSalary)} for {contract.YearsRemaining} year(s) remaining.", new Rectangle(content.X, content.Y + 324, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        if (!TryDrawLine("Contract", Color.Gold))
+        {
+            return;
+        }
+
+        if (!TryDrawLine(contract == null ? "No active contract on file." : $"{FormatSalary(contract.AnnualSalary)} for {contract.YearsRemaining} year(s) remaining.", Color.White))
+        {
+            return;
+        }
 
         var optionsLabel = player.IsDraftedPlayer
             ? $"Minor-League Options Remaining: {player.MinorLeagueOptionsRemaining}"
             : "Veteran import: affiliate and 40-man moves are enabled here; option years are not tracked yet.";
-        uiRenderer.DrawTextInBounds(optionsLabel, new Rectangle(content.X, content.Y + 348, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        if (!TryDrawWrapped(optionsLabel, 2))
+        {
+            return;
+        }
 
         var automationLabel = player.AffiliateLevel.HasValue
             ? player.IsMinorLeagueAssignmentLocked
                 ? "Minor-League AI: User locked to this affiliate tier."
                 : "Minor-League AI: Eligible for automatic affiliate promotion or demotion."
             : "Minor-League AI: Active only for players already assigned to AAA, AA, or A.";
-        uiRenderer.DrawTextInBounds(automationLabel, new Rectangle(content.X, content.Y + 364, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        if (!TryDrawWrapped(automationLabel, 2))
+        {
+            return;
+        }
 
-        uiRenderer.DrawTextInBounds($"Medical: {medicalStatus}", new Rectangle(content.X, content.Y + 388, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(medicalReport, new Rectangle(content.X, content.Y + 410, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+        if (!TryDrawLine($"Medical: {medicalStatus}", Color.Gold))
+        {
+            return;
+        }
 
-        uiRenderer.DrawTextInBounds("Scout Note", new Rectangle(content.X, content.Y + 470, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(scoutNote, new Rectangle(content.X, content.Y + 492, content.Width, 52), Color.White, uiRenderer.UiSmallFont, 3);
+        if (!TryDrawWrapped(medicalReport, 3))
+        {
+            return;
+        }
+
+        if (!TryDrawLine("Scout Note", Color.Gold))
+        {
+            return;
+        }
+
+        _ = TryDrawWrapped(scoutNote, 3);
     }
 
     private void DrawSelectionSummary(UiRenderer uiRenderer, IReadOnlyList<OrganizationRosterPlayerView> selectedPlayers)
@@ -444,18 +538,65 @@ public sealed class RosterScreen : GameScreen
         var depthCount = selectedPlayers.Count(player => player.TeamStatusLabel == "Organization Depth");
         var fortyManCount = selectedPlayers.Count(player => player.IsOnFortyMan);
 
-        uiRenderer.DrawTextInBounds($"{selectedPlayers.Count} Players Selected", new Rectangle(content.X, content.Y, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"First Team {firstTeamCount} | Depth {depthCount} | Affiliate {affiliateCount}", new Rectangle(content.X, content.Y + 24, content.Width, 18), Color.Gold, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"AAA {tripleACount} | AA {doubleACount} | A {singleACount}", new Rectangle(content.X, content.Y + 48, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"Manual Locks {lockedCount} | AI Managed {selectedPlayers.Count - lockedCount}", new Rectangle(content.X, content.Y + 72, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawTextInBounds($"40-Man {fortyManCount} | Non-40-Man {selectedPlayers.Count - fortyManCount}", new Rectangle(content.X, content.Y + 96, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds("Use the roster action buttons to apply moves to the full selection. Manual affiliate assignments lock a player to that tier until you return him to AI control.", new Rectangle(content.X, content.Y + 130, content.Width, 60), Color.White, uiRenderer.UiSmallFont, 3);
+        var cursorY = content.Y;
 
-        var listY = content.Y + 204;
+        bool TryDrawLine(string text, Color color)
+        {
+            var bounds = new Rectangle(content.X, cursorY, content.Width, 18);
+            if (!FitsWithin(content, bounds))
+            {
+                return false;
+            }
+
+            uiRenderer.DrawTextInBounds(text, bounds, color, uiRenderer.UiSmallFont);
+            cursorY += 24;
+            return true;
+        }
+
+        if (!TryDrawLine($"{selectedPlayers.Count} Players Selected", Color.White))
+        {
+            return;
+        }
+
+        if (!TryDrawLine($"First Team {firstTeamCount} | Depth {depthCount} | Affiliate {affiliateCount}", Color.Gold))
+        {
+            return;
+        }
+
+        if (!TryDrawLine($"AAA {tripleACount} | AA {doubleACount} | A {singleACount}", Color.White))
+        {
+            return;
+        }
+
+        if (!TryDrawLine($"Manual Locks {lockedCount} | AI Managed {selectedPlayers.Count - lockedCount}", Color.White))
+        {
+            return;
+        }
+
+        if (!TryDrawLine($"40-Man {fortyManCount} | Non-40-Man {selectedPlayers.Count - fortyManCount}", Color.White))
+        {
+            return;
+        }
+
+        var guidanceBounds = new Rectangle(content.X, cursorY + 2, content.Width, 60);
+        if (FitsWithin(content, guidanceBounds))
+        {
+            uiRenderer.DrawWrappedTextInBounds("Use the roster action buttons to apply moves to the full selection. Manual affiliate assignments lock a player to that tier until you return him to AI control.", guidanceBounds, Color.White, uiRenderer.UiSmallFont, 3);
+            cursorY = guidanceBounds.Bottom + 12;
+        }
+
+        var listY = cursorY;
         foreach (var player in selectedPlayers.Take(8))
         {
+            var nameBounds = new Rectangle(content.X, listY, content.Width, 16);
+            var detailBounds = new Rectangle(content.X + 8, listY + 16, content.Width - 8, 16);
+            if (!FitsWithin(content, detailBounds))
+            {
+                break;
+            }
+
             uiRenderer.DrawTextInBounds($"{player.PlayerName} | {player.PrimaryPosition}/{player.SecondaryPosition}".TrimEnd('/'), new Rectangle(content.X, listY, content.Width, 16), player.IsOnFirstTeam ? Color.Gold : Color.White, uiRenderer.UiSmallFont);
-            uiRenderer.DrawTextInBounds($"{player.TeamStatusLabel} | {player.AssignmentLabel}", new Rectangle(content.X + 8, listY + 16, content.Width - 8, 16), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds($"{player.TeamStatusLabel} | {player.AssignmentLabel}", detailBounds, Color.White, uiRenderer.UiSmallFont);
             listY += 40;
         }
     }
@@ -464,13 +605,33 @@ public sealed class RosterScreen : GameScreen
     {
         var bounds = GetDetailPanelBounds();
         var content = new Rectangle(bounds.X + 12, bounds.Y + 72, bounds.Width - 24, bounds.Height - 84);
-        uiRenderer.DrawTextInBounds(composition.Title, new Rectangle(content.X, content.Y, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
-        uiRenderer.DrawWrappedTextInBounds(composition.Summary, new Rectangle(content.X, content.Y + 22, content.Width, 54), Color.Gold, uiRenderer.UiSmallFont, 3);
+        var titleBounds = new Rectangle(content.X, content.Y, content.Width, 18);
+        if (!FitsWithin(content, titleBounds))
+        {
+            return;
+        }
+
+        uiRenderer.DrawTextInBounds(composition.Title, titleBounds, Color.White, uiRenderer.UiSmallFont);
+
+        var summaryLineCount = content.Height >= 260 ? 3 : 2;
+        var summaryBounds = new Rectangle(content.X, content.Y + 22, content.Width, summaryLineCount == 3 ? 54 : 36);
+        if (FitsWithin(content, summaryBounds))
+        {
+            uiRenderer.DrawWrappedTextInBounds(composition.Summary, summaryBounds, Color.Gold, uiRenderer.UiSmallFont, summaryLineCount);
+        }
 
         var totalLabel = composition.TargetCount.HasValue
             ? $"Total: {composition.TotalCount}/{composition.TargetCount.Value}"
             : $"Total: {composition.TotalCount}";
-        uiRenderer.DrawTextInBounds(totalLabel, new Rectangle(content.X, content.Y + 84, content.Width, 18), Color.White, uiRenderer.UiSmallFont);
+        var totalBounds = new Rectangle(content.X, content.Y + (summaryLineCount == 3 ? 84 : 66), content.Width, 18);
+        if (!FitsWithin(content, totalBounds))
+        {
+            return;
+        }
+
+        uiRenderer.DrawTextInBounds(totalLabel, totalBounds, Color.White, uiRenderer.UiSmallFont);
+
+        var rowsStartY = totalBounds.Bottom + 20;
 
         for (var i = 0; i < composition.Buckets.Count; i++)
         {
@@ -478,8 +639,13 @@ public sealed class RosterScreen : GameScreen
             var valueLabel = bucket.TargetCount.HasValue
                 ? $"{bucket.Count}/{bucket.TargetCount.Value}"
                 : bucket.Count.ToString();
-            var rowTop = content.Y + 122 + GetCompositionRowOffset(composition.Buckets, i);
+            var rowTop = rowsStartY + GetCompositionRowOffset(composition.Buckets, i);
             var rowBounds = new Rectangle(content.X, rowTop, content.Width, 18);
+            if (!FitsWithin(content, rowBounds))
+            {
+                break;
+            }
+
             uiRenderer.DrawTextInBounds(bucket.Label, new Rectangle(rowBounds.X, rowBounds.Y, rowBounds.Width - 84, rowBounds.Height), Color.White, uiRenderer.UiSmallFont);
             uiRenderer.DrawTextInBounds(valueLabel, new Rectangle(rowBounds.Right - 84, rowBounds.Y, 84, rowBounds.Height), Color.Gold, uiRenderer.UiSmallFont, centerHorizontally: true);
 
@@ -492,10 +658,20 @@ public sealed class RosterScreen : GameScreen
             {
                 var detail = bucket.Details[detailIndex];
                 var detailBounds = new Rectangle(content.X + 18, rowBounds.Bottom + 4 + (detailIndex * 22), content.Width - 18, 16);
+                if (!FitsWithin(content, detailBounds))
+                {
+                    break;
+                }
+
                 uiRenderer.DrawTextInBounds(detail.Label, new Rectangle(detailBounds.X, detailBounds.Y, detailBounds.Width - 84, detailBounds.Height), Color.LightGray, uiRenderer.UiSmallFont);
                 uiRenderer.DrawTextInBounds(detail.Count.ToString(), new Rectangle(detailBounds.Right - 84, detailBounds.Y, 84, detailBounds.Height), Color.White, uiRenderer.UiSmallFont, centerHorizontally: true);
             }
         }
+    }
+
+    private static bool FitsWithin(Rectangle container, Rectangle candidate)
+    {
+        return candidate.Y >= container.Y && candidate.Bottom <= container.Bottom;
     }
 
     private static int GetCompositionRowOffset(IReadOnlyList<OrganizationRosterCompositionBucketView> buckets, int index)
@@ -1261,85 +1437,112 @@ public sealed class RosterScreen : GameScreen
         return salary >= 1_000_000m ? $"${salary / 1_000_000m:0.0}M" : $"${salary / 1_000m:0}K";
     }
 
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+    private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
 
-    private Rectangle GetTeamFilterButtonBounds() => new(48, _viewport.Y - 58, 150, 34);
+    private Rectangle GetTeamFilterButtonBounds()
+    {
+        var (teamWidth, _, _, _, _, _, _, _, _, _, _, _) = GetToolbarLayoutMetrics();
+        return new Rectangle(48, ScreenLayout.ToolbarY(_viewport), teamWidth, ScreenLayout.ToolbarButtonHeight(_viewport));
+    }
 
     private Rectangle GetTeamFilterOptionBounds(int index)
     {
         var buttonBounds = GetTeamFilterButtonBounds();
-        return new Rectangle(buttonBounds.X, buttonBounds.Y - 4 - ((index + 1) * 30), 150, 26);
+        return new Rectangle(buttonBounds.X, buttonBounds.Y - 4 - ((index + 1) * 30), buttonBounds.Width, 26);
     }
 
-    private Rectangle GetPositionFilterButtonBounds() => new(210, _viewport.Y - 58, 140, 34);
+    private Rectangle GetPositionFilterButtonBounds()
+    {
+        var (_, teamGap, _, positionWidth, _, _, _, _, _, _, _, _) = GetToolbarLayoutMetrics();
+        var teamBounds = GetTeamFilterButtonBounds();
+        return new Rectangle(teamBounds.Right + teamGap, ScreenLayout.ToolbarY(_viewport), positionWidth, ScreenLayout.ToolbarButtonHeight(_viewport));
+    }
 
     private Rectangle GetPositionFilterOptionBounds(int index)
     {
         var buttonBounds = GetPositionFilterButtonBounds();
-        return new Rectangle(buttonBounds.X, buttonBounds.Y - 4 - ((index + 1) * 30), 140, 26);
+        return new Rectangle(buttonBounds.X, buttonBounds.Y - 4 - ((index + 1) * 30), buttonBounds.Width, 26);
     }
 
-    private Rectangle GetSortButtonBounds() => new(362, _viewport.Y - 58, 140, 34);
+    private Rectangle GetSortButtonBounds()
+    {
+        var (_, _, positionGap, _, sortWidth, _, _, _, _, _, _, _) = GetToolbarLayoutMetrics();
+        var positionBounds = GetPositionFilterButtonBounds();
+        return new Rectangle(positionBounds.Right + positionGap, ScreenLayout.ToolbarY(_viewport), sortWidth, ScreenLayout.ToolbarButtonHeight(_viewport));
+    }
 
-    private Rectangle GetClearSelectionBounds() => new(514, _viewport.Y - 58, 130, 34);
+    private Rectangle GetClearSelectionBounds()
+    {
+        var (_, _, _, _, _, sortGap, clearWidth, _, _, _, _, _) = GetToolbarLayoutMetrics();
+        var sortBounds = GetSortButtonBounds();
+        return new Rectangle(sortBounds.Right + sortGap, ScreenLayout.ToolbarY(_viewport), clearWidth, ScreenLayout.ToolbarButtonHeight(_viewport));
+    }
 
-    private Rectangle GetReleaseButtonBounds() => new(Math.Max(360, _viewport.X - 120), _viewport.Y - 58, 100, 34);
+    private Rectangle GetReleaseButtonBounds()
+    {
+        var removeBounds = GetRemoveFromFortyManBounds();
+        var (_, _, _, _, _, _, _, _, _, _, _, releaseWidth) = GetToolbarLayoutMetrics();
+        var x = removeBounds.Right + GetSecondaryToolbarGap();
+        return new Rectangle(x, GetSecondaryToolbarY(), releaseWidth, ScreenLayout.ToolbarButtonHeight(_viewport));
+    }
 
     private Rectangle GetRemoveFromFortyManBounds()
     {
-        var releaseBounds = GetReleaseButtonBounds();
-        return new Rectangle(releaseBounds.X - 182, releaseBounds.Y, 170, 34);
+        var (_, _, _, _, _, _, _, secondaryStartX, returnToAutoWidth, assign40ManWidth, affiliateTargetWidth, _) = GetToolbarLayoutMetrics();
+        var x = GetSecondaryToolbarXOffset(secondaryStartX) + returnToAutoWidth + GetSecondaryToolbarGap() + assign40ManWidth + GetSecondaryToolbarGap() + affiliateTargetWidth + GetSecondaryToolbarGap() + GetAssignAffiliateWidth() + GetSecondaryToolbarGap();
+        return new Rectangle(x, GetSecondaryToolbarY(), GetRemoveFromFortyManWidth(), ScreenLayout.ToolbarButtonHeight(_viewport));
     }
 
     private Rectangle GetAssignAffiliateBounds()
     {
-        var removeBounds = GetRemoveFromFortyManBounds();
-        return new Rectangle(removeBounds.X - 148, removeBounds.Y, 136, 34);
+        var (_, _, _, _, _, _, _, secondaryStartX, returnToAutoWidth, assign40ManWidth, affiliateTargetWidth, _) = GetToolbarLayoutMetrics();
+        var x = GetSecondaryToolbarXOffset(secondaryStartX) + returnToAutoWidth + GetSecondaryToolbarGap() + assign40ManWidth + GetSecondaryToolbarGap() + affiliateTargetWidth + GetSecondaryToolbarGap();
+        return new Rectangle(x, GetSecondaryToolbarY(), GetAssignAffiliateWidth(), ScreenLayout.ToolbarButtonHeight(_viewport));
     }
 
     private Rectangle GetAffiliateTargetBounds()
     {
-        var affiliateBounds = GetAssignAffiliateBounds();
-        return new Rectangle(affiliateBounds.X - 128, affiliateBounds.Y, 116, 34);
+        var (_, _, _, _, _, _, _, secondaryStartX, returnToAutoWidth, assign40ManWidth, _, _) = GetToolbarLayoutMetrics();
+        var x = GetSecondaryToolbarXOffset(secondaryStartX) + returnToAutoWidth + GetSecondaryToolbarGap() + assign40ManWidth + GetSecondaryToolbarGap();
+        return new Rectangle(x, GetSecondaryToolbarY(), GetAffiliateTargetWidth(), ScreenLayout.ToolbarButtonHeight(_viewport));
     }
 
     private Rectangle GetAssign40ManBounds()
     {
-        var affiliateTargetBounds = GetAffiliateTargetBounds();
-        return new Rectangle(affiliateTargetBounds.X - 152, affiliateTargetBounds.Y, 140, 34);
+        var (_, _, _, _, _, _, _, secondaryStartX, returnToAutoWidth, _, _, _) = GetToolbarLayoutMetrics();
+        var x = GetSecondaryToolbarXOffset(secondaryStartX) + returnToAutoWidth + GetSecondaryToolbarGap();
+        return new Rectangle(x, GetSecondaryToolbarY(), GetAssign40ManWidth(), ScreenLayout.ToolbarButtonHeight(_viewport));
     }
 
     private Rectangle GetReturnToAutoBounds()
     {
-        var assignFortyManBounds = GetAssign40ManBounds();
-        return new Rectangle(assignFortyManBounds.X - 144, assignFortyManBounds.Y, 132, 34);
+        var (_, _, _, _, _, _, _, secondaryStartX, returnToAutoWidth, _, _, _) = GetToolbarLayoutMetrics();
+        return new Rectangle(GetSecondaryToolbarXOffset(secondaryStartX), GetSecondaryToolbarY(), returnToAutoWidth, ScreenLayout.ToolbarButtonHeight(_viewport));
     }
 
-    private Rectangle GetDetailModeBounds()
-    {
-        var detailBounds = GetDetailPanelBounds();
-        return new Rectangle(detailBounds.X + 12, detailBounds.Y + 32, 116, 28);
-    }
+    private Rectangle GetDetailModeBounds() => GetDetailActionLayout().DetailModeBounds;
 
-    private Rectangle GetCompositionModeBounds()
-    {
-        var detailModeBounds = GetDetailModeBounds();
-        return new Rectangle(detailModeBounds.Right + 10, detailModeBounds.Y, 148, detailModeBounds.Height);
-    }
+    private Rectangle GetCompositionModeBounds() => GetDetailActionLayout().CompositionModeBounds;
 
-    private Rectangle GetMinorLeagueAutomationBounds()
-    {
-        var compositionModeBounds = GetCompositionModeBounds();
-        return new Rectangle(compositionModeBounds.Right + 10, compositionModeBounds.Y, 136, compositionModeBounds.Height);
-    }
+    private Rectangle GetMinorLeagueAutomationBounds() => GetDetailActionLayout().AutomationModeBounds;
 
     private Rectangle GetDetailBodyBounds()
     {
         var bounds = GetDetailPanelBounds();
-        return new Rectangle(bounds.X + 12, bounds.Y + 68, bounds.Width - 24, bounds.Height - 80);
+        var actionLayout = GetDetailActionLayout();
+        var controlsBottom = Math.Max(actionLayout.DetailModeBounds.Bottom, Math.Max(actionLayout.CompositionModeBounds.Bottom, actionLayout.AutomationModeBounds.Bottom));
+        var bodyY = controlsBottom + 8;
+        var bodyHeight = Math.Max(120, bounds.Bottom - bodyY - 12);
+        return new Rectangle(bounds.X + 12, bodyY, bounds.Width - 24, bodyHeight);
     }
 
-    private Rectangle GetListPanelBounds() => new(48, 168, Math.Max(560, _viewport.X - 540), Math.Max(360, _viewport.Y - 250));
+    private Rectangle GetListPanelBounds()
+    {
+        var y = ScreenLayout.ContentTop(_viewport);
+        var availableHeight = GetSecondaryToolbarY() - y - 16;
+        var height = Math.Max(280, availableHeight);
+        return new Rectangle(48, y, Math.Max(560, _viewport.X - 540), height);
+    }
 
     private Rectangle GetDetailPanelBounds()
     {
@@ -1374,5 +1577,117 @@ public sealed class RosterScreen : GameScreen
     {
         var previous = GetPreviousPageBounds();
         return new Rectangle(previous.Right + 126, previous.Y, 60, 28);
+    }
+
+    private int GetSecondaryToolbarY()
+    {
+        return ScreenLayout.ToolbarY(_viewport) - ScreenLayout.ToolbarButtonHeight(_viewport) - 8;
+    }
+
+    private int GetSecondaryToolbarGap()
+    {
+        return Math.Clamp(_viewport.X / 120, 4, 12);
+    }
+
+    private int GetAssignAffiliateWidth()
+    {
+        return Math.Max(96, (int)(136 * GetToolbarScale()));
+    }
+
+    private int GetRemoveFromFortyManWidth()
+    {
+        return Math.Max(120, (int)(170 * GetToolbarScale()));
+    }
+
+    private int GetAffiliateTargetWidth()
+    {
+        return Math.Max(88, (int)(116 * GetToolbarScale()));
+    }
+
+    private int GetAssign40ManWidth()
+    {
+        return Math.Max(110, (int)(140 * GetToolbarScale()));
+    }
+
+    private float GetToolbarScale()
+    {
+        var baseSecondaryWidths = 132 + 140 + 116 + 136 + 170 + 100;
+        var available = Math.Max(520, _viewport.X - 96);
+        var gapTotal = GetSecondaryToolbarGap() * 5;
+        var scale = (available - gapTotal) / (float)baseSecondaryWidths;
+        return Math.Clamp(scale, 0.72f, 1f);
+    }
+
+    private int GetSecondaryToolbarXOffset(int secondaryWidth)
+    {
+        // Keep both bottom button rows aligned to the same left margin.
+        // Width scaling already guarantees the secondary row fits in the viewport.
+        _ = secondaryWidth;
+        return GetTeamFilterButtonBounds().X;
+    }
+
+    private (int TeamWidth, int TeamGap, int PositionGap, int PositionWidth, int SortWidth, int SortGap, int ClearWidth, int SecondaryWidth, int ReturnToAutoWidth, int Assign40ManWidth, int AffiliateTargetWidth, int ReleaseWidth) GetToolbarLayoutMetrics()
+    {
+        var primaryGap = Math.Clamp(_viewport.X / 160, 6, 12);
+        var secondaryGap = GetSecondaryToolbarGap();
+        var scale = GetToolbarScale();
+
+        var teamWidth = Math.Max(128, (int)(150 * scale));
+        var positionWidth = Math.Max(120, (int)(140 * scale));
+        var sortWidth = Math.Max(120, (int)(140 * scale));
+        var clearWidth = Math.Max(112, (int)(130 * scale));
+
+        var returnToAutoWidth = Math.Max(110, (int)(132 * scale));
+        var assign40ManWidth = GetAssign40ManWidth();
+        var affiliateTargetWidth = GetAffiliateTargetWidth();
+        var assignAffiliateWidth = GetAssignAffiliateWidth();
+        var removeFromFortyManWidth = GetRemoveFromFortyManWidth();
+        var releaseWidth = Math.Max(84, (int)(100 * scale));
+
+        var secondaryWidth =
+            returnToAutoWidth + secondaryGap +
+            assign40ManWidth + secondaryGap +
+            affiliateTargetWidth + secondaryGap +
+            assignAffiliateWidth + secondaryGap +
+            removeFromFortyManWidth + secondaryGap +
+            releaseWidth;
+
+        return (teamWidth, primaryGap, primaryGap, positionWidth, sortWidth, primaryGap, clearWidth, secondaryWidth, returnToAutoWidth, assign40ManWidth, affiliateTargetWidth, releaseWidth);
+    }
+
+    private DetailActionLayout GetDetailActionLayout()
+    {
+        var detailBounds = GetDetailPanelBounds();
+        var x = detailBounds.X + 12;
+        var y = detailBounds.Y + 32;
+        var rowHeight = 28;
+        var gap = 10;
+        var available = Math.Max(220, detailBounds.Width - 24);
+
+        if (available >= 420)
+        {
+            var detailMode = new Rectangle(x, y, 116, rowHeight);
+            var composition = new Rectangle(detailMode.Right + gap, y, 148, rowHeight);
+            var automation = new Rectangle(composition.Right + gap, y, 136, rowHeight);
+            return new DetailActionLayout(detailMode, composition, automation);
+        }
+
+        if (available >= 340)
+        {
+            var scale = available / 420f;
+            var detailWidth = Math.Max(92, (int)(116 * scale));
+            var compositionWidth = Math.Max(110, (int)(148 * scale));
+            var automationWidth = Math.Max(96, available - detailWidth - compositionWidth - (gap * 2));
+            var detailMode = new Rectangle(x, y, detailWidth, rowHeight);
+            var composition = new Rectangle(detailMode.Right + gap, y, compositionWidth, rowHeight);
+            var automation = new Rectangle(composition.Right + gap, y, automationWidth, rowHeight);
+            return new DetailActionLayout(detailMode, composition, automation);
+        }
+
+        var firstRowWidth = (available - gap) / 2;
+        var detailRow = new Rectangle(x, y, Math.Max(96, firstRowWidth), rowHeight);
+        var compositionRow = new Rectangle(detailRow.Right + gap, y, Math.Max(110, available - detailRow.Width - gap), rowHeight);
+        var automationRow = new Rectangle(x, y + rowHeight + 6, available, rowHeight);
+        return new DetailActionLayout(detailRow, compositionRow, automationRow);
     }
 }

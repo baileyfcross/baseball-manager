@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.MainMenu;
+using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -511,9 +512,16 @@ public sealed class OptionsScreen : GameScreen
 
     private int GetLayoutVerticalOffset()
     {
-        var targetBottom = _viewport.Y - LayoutBottomPadding;
-        var layoutBottom = BaseStatusY + StatusHeight;
-        return Math.Min(0, targetBottom - layoutBottom);
+        // Center the content block vertically in the space below the header.
+        // At the reference height (720 px) this keeps items near their original
+        // positions; on taller displays it pushes everything down so there is
+        // equal whitespace above and below the group.
+        const int contentBlockHeight = BaseStatusY + StatusHeight - BaseWindowModeY; // ~546 px at reference
+        var headerEnd = 120;
+        var available = _viewport.Y - LayoutBottomPadding - headerEnd;
+        var topMargin = Math.Max(24, (available - contentBlockHeight) / 2);
+        var contentBlockY = headerEnd + topMargin;
+        return contentBlockY - BaseWindowModeY;
     }
 
     private static int GetSelectorRowY(int rowIndex, LayoutMetrics layout)
@@ -564,7 +572,7 @@ public sealed class OptionsScreen : GameScreen
         return new Rectangle(layout.ContentLeft, BaseStatusY + layout.VerticalOffset, layout.ContentWidth, StatusHeight);
     }
 
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+    private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
 
     private readonly record struct LayoutMetrics(int ContentLeft, int ContentWidth, int VerticalOffset, int ClusterLeft, int SelectorValueWidth);
 }

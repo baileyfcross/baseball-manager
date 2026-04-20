@@ -6,6 +6,7 @@ using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens.GameDay;
 using BaseballManager.Game.Screens.PostGame;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -766,7 +767,7 @@ public sealed class ScheduleScreen : GameScreen
         }
     }
 
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+    private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
 
     private bool UseCompactTopControlMode()
     {

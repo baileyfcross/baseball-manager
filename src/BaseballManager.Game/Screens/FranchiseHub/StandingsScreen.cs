@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -235,9 +236,9 @@ public sealed class StandingsScreen : GameScreen
             : 0;
     }
 
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+    private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
 
-    private Rectangle GetPanelBounds() => new(48, 160, Math.Max(640, _viewport.X - 96), Math.Max(360, _viewport.Y - 240));
+    private Rectangle GetPanelBounds() => new(48, ScreenLayout.ContentTop(_viewport), Math.Max(640, _viewport.X - 96), Math.Max(360, _viewport.Y - 240));
 
     private int GetPageSize() => Math.Max(8, (GetPanelBounds().Height - 76) / 30);
 

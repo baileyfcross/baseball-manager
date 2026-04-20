@@ -6,6 +6,7 @@ using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens.MainMenu;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -127,7 +128,7 @@ public sealed class TeamSelectionScreen : GameScreen
         return null;
     }
 
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+    private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
 
     private Rectangle GetTeamButtonBounds(int index)
     {

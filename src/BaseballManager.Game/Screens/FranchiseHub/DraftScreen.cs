@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -620,21 +621,21 @@ public sealed class DraftScreen : GameScreen
         _pageIndex = Math.Clamp(_pageIndex, 0, Math.Max(0, (int)Math.Ceiling(count / (double)GetPageSize()) - 1));
     }
 
-    private Rectangle GetBackButtonBounds() => new(24, 34, 120, 36);
+    private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
 
-    private Rectangle GetStartDraftButtonBounds() => new(48, _viewport.Y - 58, 120, 34);
+    private Rectangle GetStartDraftButtonBounds() => new(48, ScreenLayout.ToolbarY(_viewport), 120, ScreenLayout.ToolbarButtonHeight(_viewport));
 
-    private Rectangle GetNextPickButtonBounds() => new(180, _viewport.Y - 58, 120, 34);
+    private Rectangle GetNextPickButtonBounds() => new(180, ScreenLayout.ToolbarY(_viewport), 120, ScreenLayout.ToolbarButtonHeight(_viewport));
 
-    private Rectangle GetSimRoundButtonBounds() => new(312, _viewport.Y - 58, 120, 34);
+    private Rectangle GetSimRoundButtonBounds() => new(312, ScreenLayout.ToolbarY(_viewport), 120, ScreenLayout.ToolbarButtonHeight(_viewport));
 
-    private Rectangle GetSimDraftButtonBounds() => new(444, _viewport.Y - 58, 120, 34);
+    private Rectangle GetSimDraftButtonBounds() => new(444, ScreenLayout.ToolbarY(_viewport), 120, ScreenLayout.ToolbarButtonHeight(_viewport));
 
-    private Rectangle GetMakePickButtonBounds() => new(576, _viewport.Y - 58, 120, 34);
+    private Rectangle GetMakePickButtonBounds() => new(576, ScreenLayout.ToolbarY(_viewport), 120, ScreenLayout.ToolbarButtonHeight(_viewport));
 
-    private Rectangle GetSortButtonBounds() => new(708, _viewport.Y - 58, 110, 34);
+    private Rectangle GetSortButtonBounds() => new(708, ScreenLayout.ToolbarY(_viewport), 110, ScreenLayout.ToolbarButtonHeight(_viewport));
 
-    private Rectangle GetProspectPanelBounds() => new(48, 168, Math.Max(640, _viewport.X - 420), Math.Max(360, _viewport.Y - 250));
+    private Rectangle GetProspectPanelBounds() => new(48, ScreenLayout.ContentTop(_viewport), Math.Max(640, _viewport.X - 420), Math.Max(360, _viewport.Y - 250));
 
     private Rectangle GetSummaryPanelBounds()
     {

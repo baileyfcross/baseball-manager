@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -12,13 +13,13 @@ public sealed class CoachingStaffScreen : GameScreen
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
     private string _selectedRole = "Manager";
     private string _statusMessage = "Select a role, then drag a coach from the list onto that role to make the change.";
     private bool _isDraggingCandidate;
     private Point _viewport = new(1280, 720);
+    private Rectangle BackButtonBounds => ScreenLayout.BackButtonBounds(_viewport);
     private CoachProfileView? _draggedCandidate;
     private Point _dragPosition;
 
@@ -74,7 +75,7 @@ public sealed class CoachingStaffScreen : GameScreen
 
         if (isPress)
         {
-            if (_backButtonBounds.Contains(mousePosition))
+            if (BackButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
@@ -176,7 +177,7 @@ public sealed class CoachingStaffScreen : GameScreen
         uiRenderer.DrawTextInBounds("Staff Update", new Rectangle(statusBounds.X + 12, statusBounds.Y + 6, 180, 16), Color.Gold, uiRenderer.UiSmallFont);
         uiRenderer.DrawWrappedTextInBounds(_statusMessage, new Rectangle(statusBounds.X + 12, statusBounds.Y + 24, statusBounds.Width - 24, statusBounds.Height - 28), Color.White, uiRenderer.UiSmallFont, 2);
 
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_backButton.Label, BackButtonBounds, BackButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
 
         if (_isDraggingCandidate && _draggedCandidate != null)
         {

@@ -3,6 +3,7 @@ using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -13,7 +14,6 @@ public sealed class RotationScreen : GameScreen
 {
     private readonly FranchiseSession _franchiseSession;
     private readonly ButtonControl _backButton;
-    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
     private readonly ButtonControl _clearSlotButton;
@@ -27,6 +27,7 @@ public sealed class RotationScreen : GameScreen
     private Point _dragPosition;
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
+    private Rectangle BackButtonBounds => ScreenLayout.BackButtonBounds(_viewport);
     private readonly PlayerContextOverlay _playerContextOverlay = new();
 
     public RotationScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
@@ -110,7 +111,7 @@ public sealed class RotationScreen : GameScreen
                 return;
             }
 
-            if (_backButtonBounds.Contains(mousePosition))
+            if (BackButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
@@ -222,9 +223,9 @@ public sealed class RotationScreen : GameScreen
             uiRenderer.DrawButton(_clearSlotButton.Label, clearBounds, clearBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
         }
 
-        var isHovered = _backButtonBounds.Contains(Mouse.GetState().Position);
+        var isHovered = BackButtonBounds.Contains(Mouse.GetState().Position);
         var bgColor = isHovered ? Color.DarkGray : Color.Gray;
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, bgColor, Color.White);
+        uiRenderer.DrawButton(_backButton.Label, BackButtonBounds, bgColor, Color.White);
 
         if (_isDragging)
         {

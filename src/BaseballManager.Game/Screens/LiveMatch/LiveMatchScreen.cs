@@ -6,6 +6,7 @@ using BaseballManager.Game.Screens.PostGame;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.Screens.MainMenu;
 using BaseballManager.Game.Screens;
+using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -16,9 +17,10 @@ public sealed class LiveMatchScreen : GameScreen
     private readonly ScreenManager _screenManager;
     private readonly FranchiseSession _franchiseSession;
     private readonly LiveMatchPresenter _presenter;
-    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private readonly LiveMatchHudRenderer _hudRenderer = new();
     private FieldRenderer? _fieldRenderer;
+    private Point _viewport = new(1280, 720);
+    private Rectangle BackButtonBounds => ScreenLayout.BackButtonBounds(_viewport);
     private KeyboardState _previousKeyboardState = default;
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
@@ -73,7 +75,7 @@ public sealed class LiveMatchScreen : GameScreen
         }
         else if (_previousMouseState.LeftButton == ButtonState.Released &&
                  currentMouseState.LeftButton == ButtonState.Pressed &&
-                 _backButtonBounds.Contains(currentMouseState.Position))
+                 BackButtonBounds.Contains(currentMouseState.Position))
         {
             ReturnToPreviousScreen();
         }
@@ -162,7 +164,8 @@ public sealed class LiveMatchScreen : GameScreen
 
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
-        var isHovered = _backButtonBounds.Contains(Mouse.GetState().Position);
+        _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+        var isHovered = BackButtonBounds.Contains(Mouse.GetState().Position);
 
         if (_fatalErrorMessage == null)
         {
@@ -186,7 +189,7 @@ public sealed class LiveMatchScreen : GameScreen
             uiRenderer.DrawTextInBounds("Press Esc or click Back to return.", new Rectangle(168, 220, 360, 20), Color.White, uiRenderer.UiSmallFont);
         }
 
-        uiRenderer.DrawButton("Back", _backButtonBounds, isHovered ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
+        uiRenderer.DrawButton("Back", BackButtonBounds, isHovered ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
     }
 
     public void UpdateFieldLayer(GameTime gameTime)

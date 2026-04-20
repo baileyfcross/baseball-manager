@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Layout;
 using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
@@ -42,10 +43,10 @@ public sealed class ScoutingScreen : GameScreen
     private readonly ButtonControl _marketNextButton;
     private readonly ButtonControl _offerPreviousButton;
     private readonly ButtonControl _offerNextButton;
-    private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
     private readonly PlayerContextOverlay _playerContextOverlay = new();
     private MouseState _previousMouseState = default;
     private Point _viewport = new(1280, 720);
+    private Rectangle BackButtonBounds => ScreenLayout.BackButtonBounds(_viewport);
     private bool _ignoreClicksUntilRelease = true;
     private int _marketPageIndex;
     private int _offerPageIndex;
@@ -315,7 +316,7 @@ public sealed class ScoutingScreen : GameScreen
                 return;
             }
 
-            if (_backButtonBounds.Contains(mousePosition))
+            if (BackButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
             }
@@ -422,7 +423,7 @@ public sealed class ScoutingScreen : GameScreen
         DrawAmateurScouting(uiRenderer);
 
         var mousePosition = Mouse.GetState().Position;
-        uiRenderer.DrawButton(_backButton.Label, _backButtonBounds, !IsOverlayCapturingMouse() && _backButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
+        uiRenderer.DrawButton(_backButton.Label, BackButtonBounds, !IsOverlayCapturingMouse() && BackButtonBounds.Contains(mousePosition) ? Color.DarkGray : Color.Gray, Color.White);
 
         if (_showScoutHirePopup)
         {
