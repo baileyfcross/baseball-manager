@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -30,6 +31,7 @@ public sealed class DraftScreen : GameScreen
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
+    private readonly PlayerContextOverlay _playerContextOverlay = new();
     private int _selectedIndex;
     private int _pageIndex;
     private DraftSortMode _sortMode = DraftSortMode.Report;
@@ -55,6 +57,7 @@ public sealed class DraftScreen : GameScreen
         _ignoreClicksUntilRelease = true;
         _selectedIndex = 0;
         _pageIndex = 0;
+        _playerContextOverlay.Close();
         _statusMessage = _franchiseSession.HasActiveDraft()
             ? "Review the board, draft manually when you are on the clock, or use Next Pick, Sim Round, and Sim Draft to fast-forward the room."
             : _franchiseSession.CanStartDraft()
@@ -80,9 +83,23 @@ public sealed class DraftScreen : GameScreen
             return;
         }
 
-        if (_previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed)
+        var isLeftPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
+        var isRightPress = _previousMouseState.RightButton == ButtonState.Released && currentMouseState.RightButton == ButtonState.Pressed;
+
+        if (isLeftPress)
         {
             var mousePosition = currentMouseState.Position;
+            if (_playerContextOverlay.HandleLeftClick(mousePosition, _viewport, out var contextAction))
+            {
+                if (contextAction.HasValue)
+                {
+                    ExecuteContextAction(contextAction.Value);
+                }
+
+                _previousMouseState = currentMouseState;
+                return;
+            }
+
             if (GetBackButtonBounds().Contains(mousePosition))
             {
                 _backButton.Click();
@@ -130,6 +147,15 @@ public sealed class DraftScreen : GameScreen
             else if (hasOrganizationPlayers)
             {
                 TrySelectDraftedPlayer(mousePosition);
+            }
+        }
+
+        if (isRightPress)
+        {
+            var mousePosition = currentMouseState.Position;
+            if (!TryOpenPlayerContextMenu(mousePosition))
+            {
+                _playerContextOverlay.Close();
             }
         }
 
@@ -183,6 +209,7 @@ public sealed class DraftScreen : GameScreen
         }
 
         DrawButtons(uiRenderer, mousePosition, board);
+        _playerContextOverlay.Draw(uiRenderer, mousePosition, _viewport);
     }
 
     private void DrawProspectList(UiRenderer uiRenderer, IReadOnlyList<DraftProspectView> prospects, Point mousePosition)
@@ -456,6 +483,120 @@ public sealed class DraftScreen : GameScreen
         }
 
         return false;
+    }
+
+    private bool TryOpenPlayerContextMenu(Point mousePosition)
+    {
+        var board = _franchiseSession.GetDraftBoard();
+        if (board.HasActiveDraft)
+        {
+            var prospects = GetSortedProspects(board.AvailableProspects);
+            var pageSize = GetPageSize();
+            var startIndex = _pageIndex * pageSize;
+            var visibleCount = Math.Min(pageSize, Math.Max(0, prospects.Count - startIndex));
+            for (var i = 0; i < visibleCount; i++)
+            {
+                if (!GetProspectRowBounds(i).Contains(mousePosition))
+                {
+                    continue;
+                }
+
+                var prospect = prospects[startIndex + i];
+                _selectedIndex = startIndex + i;
+                _playerContextOverlay.Open(
+                    mousePosition,
+                    prospect.PlayerName,
+                    [new PlayerContextActionView(PlayerContextAction.OpenProfile, "Profile")],
+                    [],
+                    BuildDraftProspectProfile(prospect));
+                return true;
+            }
+
+            return false;
+        }
+
+        var players = GetSortedOrganizationPlayers(_franchiseSession.GetDraftOrganizationPlayers());
+        var orgRosterById = _franchiseSession.GetSelectedTeamOrganizationRoster().ToDictionary(player => player.PlayerId, player => player);
+        var pageSizeForPlayers = GetPageSize();
+        var startPlayerIndex = _pageIndex * pageSizeForPlayers;
+        var visiblePlayerCount = Math.Min(pageSizeForPlayers, Math.Max(0, players.Count - startPlayerIndex));
+        for (var i = 0; i < visiblePlayerCount; i++)
+        {
+            if (!GetProspectRowBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            var player = players[startPlayerIndex + i];
+            _selectedIndex = startPlayerIndex + i;
+            orgRosterById.TryGetValue(player.PlayerId, out var rosterPlayer);
+            var rosterActions = new List<PlayerContextActionView>
+            {
+                new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", rosterPlayer?.CanAssignToFortyMan == true),
+                new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", rosterPlayer?.CanAssignToAffiliate == true),
+                new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", rosterPlayer?.IsOnFortyMan == true),
+                new(PlayerContextAction.ReleasePlayer, "Release", rosterPlayer?.CanRelease == true)
+            };
+            _playerContextOverlay.Open(
+                mousePosition,
+                player.PlayerName,
+                [
+                    new PlayerContextActionView(PlayerContextAction.OpenRosterAssignments, "Roster", rosterActions.Any(action => action.IsEnabled)),
+                    new PlayerContextActionView(PlayerContextAction.OpenProfile, "Profile")
+                ],
+                rosterActions,
+                _franchiseSession.GetPlayerProfile(player.PlayerId));
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ExecuteContextAction(PlayerContextAction action)
+    {
+        var board = _franchiseSession.GetDraftBoard();
+        if (!board.HasActiveDraft)
+        {
+            var players = GetSortedOrganizationPlayers(_franchiseSession.GetDraftOrganizationPlayers());
+            if (_selectedIndex < 0 || _selectedIndex >= players.Count)
+            {
+                return;
+            }
+
+            var playerId = players[_selectedIndex].PlayerId;
+            switch (action)
+            {
+                case PlayerContextAction.AssignToFortyMan:
+                    _franchiseSession.AssignDraftPlayerTo40Man(playerId, out _statusMessage);
+                    break;
+                case PlayerContextAction.AssignToAffiliate:
+                    _franchiseSession.AssignDraftPlayerToAffiliate(playerId, out _statusMessage);
+                    break;
+                case PlayerContextAction.RemoveFromFortyMan:
+                    _franchiseSession.RemoveSelectedTeamPlayerFromFortyMan(playerId, out _statusMessage);
+                    break;
+                case PlayerContextAction.ReleasePlayer:
+                    _franchiseSession.ReleaseSelectedTeamPlayer(playerId, out _statusMessage);
+                    break;
+            }
+        }
+    }
+
+    private static PlayerProfileView BuildDraftProspectProfile(DraftProspectView prospect)
+    {
+        return new PlayerProfileView(
+            prospect.PlayerName,
+            $"{prospect.PrimaryPosition}/{prospect.SecondaryPosition} | Age {prospect.Age} | {prospect.Source}",
+            [
+                $"Scout rank {prospect.ScoutRank} | Potential rank {prospect.PotentialRank}",
+                $"Ceiling: {prospect.PotentialSummary}",
+                $"Source team: {prospect.SourceTeamName}",
+                prospect.ScoutSummary
+            ],
+            [
+                prospect.Summary,
+                prospect.SourceStatsSummary
+            ]);
     }
 
     private void EnsureSelectionIsValid(int count)

@@ -3,6 +3,7 @@ using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -63,6 +64,7 @@ public sealed class RosterScreen : GameScreen
     private Point _viewport = new(1280, 720);
     private Guid? _selectedPlayerId;
     private readonly HashSet<Guid> _selectedPlayerIds = [];
+    private readonly PlayerContextOverlay _playerContextOverlay = new();
     private int _pageIndex;
     private DetailPanelMode _detailPanelMode = DetailPanelMode.Player;
     private OrganizationRosterCompositionMode _compositionMode = OrganizationRosterCompositionMode.FirstTeam;
@@ -99,6 +101,7 @@ public sealed class RosterScreen : GameScreen
         _showFilterDropdown = false;
         _selectedPlayerId = null;
         _selectedPlayerIds.Clear();
+        _playerContextOverlay.Close();
         _statusMessage = "Review player stats, add or remove players from the 40-man roster, keep them in the organization, move them to the affiliate, or switch to Counts to review the 26-man and affiliate mix.";
     }
 
@@ -119,9 +122,23 @@ public sealed class RosterScreen : GameScreen
             return;
         }
 
-        if (_previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed)
+        var isLeftPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
+        var isRightPress = _previousMouseState.RightButton == ButtonState.Released && currentMouseState.RightButton == ButtonState.Pressed;
+
+        if (isLeftPress)
         {
             var mousePosition = currentMouseState.Position;
+            if (_playerContextOverlay.HandleLeftClick(mousePosition, _viewport, out var contextAction))
+            {
+                if (contextAction.HasValue)
+                {
+                    ExecuteContextAction(contextAction.Value);
+                }
+
+                _previousMouseState = currentMouseState;
+                return;
+            }
+
             if (GetBackButtonBounds().Contains(mousePosition))
             {
                 _backButton.Click();
@@ -181,6 +198,15 @@ public sealed class RosterScreen : GameScreen
             else
             {
                 TrySelectPlayer(mousePosition, players);
+            }
+        }
+
+        if (isRightPress)
+        {
+            var mousePosition = currentMouseState.Position;
+            if (!TryOpenPlayerContextMenu(mousePosition, players))
+            {
+                _playerContextOverlay.Close();
             }
         }
 
@@ -252,6 +278,8 @@ public sealed class RosterScreen : GameScreen
         {
             DrawFilterDropdown(uiRenderer);
         }
+
+        _playerContextOverlay.Draw(uiRenderer, mousePosition, _viewport);
     }
 
     private void DrawPlayerList(UiRenderer uiRenderer, IReadOnlyList<OrganizationRosterPlayerView> players, Point mousePosition)
@@ -789,7 +817,65 @@ public sealed class RosterScreen : GameScreen
 
     private bool IsOverlayCapturingMouse()
     {
-        return _showFilterDropdown;
+        return _showFilterDropdown || _playerContextOverlay.IsCapturingMouse;
+    }
+
+    private bool TryOpenPlayerContextMenu(Point mousePosition, IReadOnlyList<OrganizationRosterPlayerView> players)
+    {
+        var pageSize = GetPageSize();
+        var startIndex = _pageIndex * pageSize;
+        var visibleCount = Math.Min(pageSize, Math.Max(0, players.Count - startIndex));
+
+        for (var i = 0; i < visibleCount; i++)
+        {
+            if (!GetPlayerRowBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            var player = players[startIndex + i];
+            _selectedPlayerId = player.PlayerId;
+            _selectedPlayerIds.Clear();
+            _selectedPlayerIds.Add(player.PlayerId);
+
+            var rosterActions = new List<PlayerContextActionView>
+            {
+                new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", player.CanAssignToFortyMan),
+                new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", player.CanAssignToAffiliate),
+                new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", player.IsOnFortyMan),
+                new(PlayerContextAction.ReleasePlayer, "Release", player.CanRelease)
+            };
+
+            var primaryActions = new List<PlayerContextActionView>
+            {
+                new(PlayerContextAction.OpenRosterAssignments, "Roster", rosterActions.Any(action => action.IsEnabled)),
+                new(PlayerContextAction.OpenProfile, "Profile", true)
+            };
+
+            _playerContextOverlay.Open(mousePosition, player.PlayerName, primaryActions, rosterActions, _franchiseSession.GetPlayerProfile(player.PlayerId));
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ExecuteContextAction(PlayerContextAction action)
+    {
+        switch (action)
+        {
+            case PlayerContextAction.AssignToFortyMan:
+                AssignToFortyMan();
+                break;
+            case PlayerContextAction.AssignToAffiliate:
+                AssignToAffiliate();
+                break;
+            case PlayerContextAction.RemoveFromFortyMan:
+                RemoveFromFortyMan();
+                break;
+            case PlayerContextAction.ReleasePlayer:
+                ReleasePlayer();
+                break;
+        }
     }
 
     private static string GetSortLabel(RosterSortMode sortMode)

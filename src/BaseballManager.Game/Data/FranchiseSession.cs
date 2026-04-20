@@ -51,7 +51,7 @@ public sealed class FranchiseSession
     private static readonly string[] ScoutingCountryOptions = ["U.S. High School", "Dominican Republic", "Venezuela", "Japan", "South Korea", "Mexico", "Canada", "Cuba", "Puerto Rico"];
     private static readonly string[] ScoutingPositionOptions = ["Any", "C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"];
     private static readonly string[] ScoutingTraitOptions = ["Best Athlete", "Power Hitter", "Contact Hitter", "Disciplined Hitter", "Speed / Defense", "Power Pitcher", "Location Pitcher", "Workhorse Starter", "Late-Inning Arm"];
-    private static readonly string[] ScoutAssignmentModeOptions = ["Unassigned", "Region Search", "Player Follow"];
+    private static readonly string[] ScoutAssignmentModeOptions = ["Unassigned", "Region Search", "Player Follow", "Auto Need Search"];
     private static readonly string[] ProspectFirstNames = ["Mason", "Jace", "Noah", "Liam", "Elijah", "Carter", "Diego", "Luis", "Mateo", "Yuki", "Hiro", "Seong", "Min", "Adrian", "Roman", "Trey"];
     private static readonly string[] ProspectLastNames = ["Johnson", "Miller", "Clark", "Ramirez", "De La Cruz", "Santos", "Kim", "Park", "Tanaka", "Sato", "Rivera", "Torres", "Gonzalez", "Lee", "Martinez", "Flores"];
     private readonly ImportedLeagueData _leagueData;
@@ -73,6 +73,8 @@ public sealed class FranchiseSession
     private readonly ManagerAi _managerAi = new();
     private readonly HireCoachUseCase _hireCoachUseCase = new();
     private readonly Dictionary<Guid, PlayerSeasonStatsState> _lastSeasonStatsCache = new();
+    private Guid? _pendingTransfersFocusPlayerId;
+    private Guid? _pendingScoutingFocusPlayerId;
     private bool _preferLiveBoxScore;
 
     public FranchiseSession(ImportedLeagueData leagueData, FranchiseStateStore stateStore)
@@ -1562,6 +1564,94 @@ public sealed class FranchiseSession
         return generated;
     }
 
+    public PlayerProfileView? GetPlayerProfile(Guid playerId)
+    {
+        var player = FindPlayerImport(playerId);
+        if (player == null)
+        {
+            return null;
+        }
+
+        var assignedTeamName = GetAssignedTeamName(playerId, player.TeamName);
+        var ratings = GetPlayerRatings(playerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var currentStats = GetPlayerSeasonStats(playerId);
+        var lastSeasonStats = GetLastSeasonStats(playerId, player.FullName, player.PrimaryPosition, player.SecondaryPosition, player.Age);
+        var recentStats = GetRecentPlayerStats(playerId, 10);
+        var health = GetPlayerHealth(playerId);
+        var contractsByPlayerId = GetContractsByPlayerId();
+        var contract = contractsByPlayerId.TryGetValue(playerId, out var resolvedContract) ? resolvedContract : null;
+        var isPitcher = player.PrimaryPosition is "SP" or "RP";
+
+        var detailLines = new List<string>
+        {
+            $"{player.PrimaryPosition}/{player.SecondaryPosition}".TrimEnd('/').TrimEnd(),
+            $"Team: {assignedTeamName} | Age {player.Age}",
+            isPitcher
+                ? $"OVR {ratings.OverallRating} | Pitch {ratings.EffectivePitchingRating} | Stamina {ratings.EffectiveStaminaRating} | Durability {ratings.EffectiveDurabilityRating}"
+                : $"OVR {ratings.OverallRating} | Contact {ratings.EffectiveContactRating} | Power {ratings.EffectivePowerRating} | Discipline {ratings.EffectiveDisciplineRating}",
+            isPitcher
+                ? $"Arm {ratings.EffectiveArmRating} | Field {ratings.EffectiveFieldingRating} | Speed {ratings.EffectiveSpeedRating}"
+                : $"Speed {ratings.EffectiveSpeedRating} | Field {ratings.EffectiveFieldingRating} | Arm {ratings.EffectiveArmRating}",
+            health.InjuryDaysRemaining > 0
+                ? $"Medical: {health.InjuryDescription} | {health.InjuryDaysRemaining} day(s) remaining"
+                : health.DaysUntilAvailable > 0
+                    ? $"Medical: recovery day | {health.DaysUntilAvailable} day(s) until available"
+                    : $"Medical: available | Fatigue {health.Fatigue}",
+            contract == null
+                ? "Contract: no active deal on file"
+                : $"Contract: {GetBudgetDisplay(contract.AnnualSalary)} | {contract.YearsRemaining} year(s) remaining"
+        };
+
+        var summaryLines = new List<string>
+        {
+            $"Current season: {FormatPlayerSeasonLine(player.PrimaryPosition, currentStats)}",
+            $"Last season: {FormatPlayerSeasonLine(player.PrimaryPosition, lastSeasonStats)}",
+            $"Last 10 games: {FormatRecentStatsLine(player.PrimaryPosition, recentStats)}"
+        };
+
+        return new PlayerProfileView(
+            player.FullName,
+            $"{player.PrimaryPosition}/{player.SecondaryPosition} | {assignedTeamName}",
+            detailLines,
+            summaryLines);
+    }
+
+    public void QueueTransfersFocus(Guid playerId)
+    {
+        _pendingTransfersFocusPlayerId = playerId;
+    }
+
+    public bool TryConsumeTransfersFocus(out Guid playerId)
+    {
+        if (_pendingTransfersFocusPlayerId.HasValue)
+        {
+            playerId = _pendingTransfersFocusPlayerId.Value;
+            _pendingTransfersFocusPlayerId = null;
+            return true;
+        }
+
+        playerId = Guid.Empty;
+        return false;
+    }
+
+    public void QueueScoutingFocus(Guid playerId)
+    {
+        _pendingScoutingFocusPlayerId = playerId;
+    }
+
+    public bool TryConsumeScoutingFocus(out Guid playerId)
+    {
+        if (_pendingScoutingFocusPlayerId.HasValue)
+        {
+            playerId = _pendingScoutingFocusPlayerId.Value;
+            _pendingScoutingFocusPlayerId = null;
+            return true;
+        }
+
+        playerId = Guid.Empty;
+        return false;
+    }
+
     public PlayerSeasonStatsState GetPlayerSeasonStats(Guid playerId)
     {
         if (_saveState.PlayerSeasonStats.TryGetValue(playerId, out var stats))
@@ -2087,6 +2177,30 @@ public sealed class FranchiseSession
         scout.DaysUntilNextDiscovery = Math.Max(2, GetScoutDiscoveryDays(SelectedTeam.Name, scout));
         Save();
         return $"{scout.Name} is now scouting {scout.Country} for {GetScoutFocusText(scout.PositionFocus, scout.TraitFocus)}. First report in {scout.DaysUntilNextDiscovery} day(s).";
+    }
+
+    public string AssignScoutToAutoNeedSearch(int slotIndex)
+    {
+        if (SelectedTeam == null)
+        {
+            return "Select a team before assigning your scouts.";
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        EnsureScoutDepartmentInitialized(teamState, SelectedTeam.Name);
+        var scout = teamState.AssistantScouts.FirstOrDefault(entry => entry.SlotIndex == slotIndex);
+        if (scout == null || string.IsNullOrWhiteSpace(scout.Name))
+        {
+            return $"Hire Scout {slotIndex + 1} before enabling auto scouting.";
+        }
+
+        ClearScoutPlayerAssignment(teamState, slotIndex);
+        scout.AssignmentMode = "Auto Need Search";
+        ApplyAutoScoutNeedPlan(SelectedTeam.Name, scout);
+        scout.DaysUntilNextDiscovery = Math.Max(2, GetScoutDiscoveryDays(SelectedTeam.Name, scout));
+        Save();
+
+        return $"{scout.Name} is now in auto mode, scouting {scout.Country} for {GetScoutFocusText(scout.PositionFocus, scout.TraitFocus)} based on the club's current needs. First report in {scout.DaysUntilNextDiscovery} day(s).";
     }
 
     public string AssignScoutToScoutedPlayer(int slotIndex, string prospectKey)
@@ -2927,6 +3041,20 @@ public sealed class FranchiseSession
             sample.Sum(log => log.Walks),
             sample.Sum(log => log.Strikeouts),
             sample.Sum(log => log.PitcherStrikeouts));
+    }
+
+    private string FormatPlayerSeasonLine(string primaryPosition, PlayerSeasonStatsState stats)
+    {
+        return primaryPosition is "SP" or "RP"
+            ? $"{stats.EarnedRunAverageDisplay} ERA | {stats.WinLossDisplay} | {stats.StrikeoutsPitched} K in {stats.GamesPitched} G"
+            : $"{stats.BattingAverageDisplay} AVG | {stats.HomeRuns} HR | {stats.RunsBattedIn} RBI | {stats.OpsDisplay} OPS in {stats.GamesPlayed} G";
+    }
+
+    private static string FormatRecentStatsLine(string primaryPosition, RecentPlayerStatsView stats)
+    {
+        return primaryPosition is "SP" or "RP"
+            ? $"{stats.EraDisplay} ERA | {stats.PitcherStrikeouts} K | {stats.Wins}-{stats.Losses} in {stats.GamesPlayed} G"
+            : $"{stats.BattingAverageDisplay} AVG | {stats.HomeRuns} HR | {stats.OpsDisplay} OPS in {stats.GamesPlayed} G";
     }
 
     private List<ScheduleImportDto> GetRemainingScheduledGamesForDate(DateTime date)
@@ -5442,6 +5570,11 @@ public sealed class FranchiseSession
             scout.AssignmentTarget = $"{scout.Country}|{scout.PositionFocus}|{scout.TraitFocus}";
             scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(SelectedTeam.Name, scout);
         }
+        else if (string.Equals(scout.AssignmentMode, "Auto Need Search", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyAutoScoutNeedPlan(SelectedTeam.Name, scout);
+            scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(SelectedTeam.Name, scout);
+        }
         Save();
 
         var scoutLabel = string.IsNullOrWhiteSpace(scout.Name) ? $"Scout {slotIndex + 1}" : scout.Name;
@@ -5479,6 +5612,11 @@ public sealed class FranchiseSession
         if (string.Equals(scout.AssignmentMode, "Region Search", StringComparison.OrdinalIgnoreCase))
         {
             scout.AssignmentTarget = $"{scout.Country}|{scout.PositionFocus}|{scout.TraitFocus}";
+            scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(SelectedTeam.Name, scout);
+        }
+        else if (string.Equals(scout.AssignmentMode, "Auto Need Search", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyAutoScoutNeedPlan(SelectedTeam.Name, scout);
             scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(SelectedTeam.Name, scout);
         }
         Save();
@@ -5540,8 +5678,46 @@ public sealed class FranchiseSession
         return scout.AssignmentMode switch
         {
             "Region Search" => $"{scout.Country} / {scout.PositionFocus} / {scout.TraitFocus}",
+            "Auto Need Search" => $"Auto: {scout.Country} / {scout.PositionFocus} / {scout.TraitFocus}",
             "Player Follow" => teamState.ScoutedPlayers.FirstOrDefault(player => string.Equals(player.ProspectKey, scout.AssignmentTarget, StringComparison.OrdinalIgnoreCase))?.PlayerName ?? "Selected player",
             _ => "Not assigned"
+        };
+    }
+
+    private void ApplyAutoScoutNeedPlan(string teamName, AssistantScoutState scout)
+    {
+        var neededPosition = GetMostNeededPosition(teamName);
+        scout.PositionFocus = NormalizeAutoScoutPositionFocus(neededPosition);
+        scout.TraitFocus = GetAutoScoutTraitFocus(scout.PositionFocus);
+        if (string.IsNullOrWhiteSpace(scout.Country))
+        {
+            scout.Country = "U.S. High School";
+        }
+
+        scout.AssignmentTarget = $"{scout.Country}|{scout.PositionFocus}|{scout.TraitFocus}";
+    }
+
+    private static string NormalizeAutoScoutPositionFocus(string neededPosition)
+    {
+        return neededPosition switch
+        {
+            "LF" or "CF" or "RF" => "OF",
+            "DH" => "Any",
+            _ when string.IsNullOrWhiteSpace(neededPosition) => "Any",
+            _ => neededPosition
+        };
+    }
+
+    private static string GetAutoScoutTraitFocus(string positionFocus)
+    {
+        return positionFocus switch
+        {
+            "SP" => "Workhorse Starter",
+            "RP" => "Late-Inning Arm",
+            "C" => "Disciplined Hitter",
+            "2B" or "SS" => "Speed / Defense",
+            "1B" or "3B" or "OF" => "Power Hitter",
+            _ => "Best Athlete"
         };
     }
 
@@ -5594,6 +5770,24 @@ public sealed class FranchiseSession
                     {
                         var discoveryIndex = teamState.ScoutedPlayers.Count(player => player.FoundByScoutSlotIndex == scout.SlotIndex);
                         teamState.ScoutedPlayers.Add(BuildScoutedPlayerDiscovery(teamName, scout, scoutingDate, discoveryIndex));
+                        scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(teamName, scout);
+                    }
+                    break;
+
+                case "Auto Need Search":
+                    ApplyAutoScoutNeedPlan(teamName, scout);
+                    if (scout.DaysUntilNextDiscovery <= 0)
+                    {
+                        scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(teamName, scout);
+                    }
+
+                    scout.DaysUntilNextDiscovery--;
+                    if (scout.DaysUntilNextDiscovery <= 0)
+                    {
+                        ApplyAutoScoutNeedPlan(teamName, scout);
+                        var discoveryIndex = teamState.ScoutedPlayers.Count(player => player.FoundByScoutSlotIndex == scout.SlotIndex);
+                        teamState.ScoutedPlayers.Add(BuildScoutedPlayerDiscovery(teamName, scout, scoutingDate, discoveryIndex));
+                        ApplyAutoScoutNeedPlan(teamName, scout);
                         scout.DaysUntilNextDiscovery = GetScoutDiscoveryDays(teamName, scout);
                     }
                     break;

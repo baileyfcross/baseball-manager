@@ -3,6 +3,7 @@ using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.Screens.FranchiseHub;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -26,6 +27,7 @@ public sealed class LineupScreen : GameScreen
     private Point _dragPosition;
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
+    private readonly PlayerContextOverlay _playerContextOverlay = new();
 
     public LineupScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -68,6 +70,7 @@ public sealed class LineupScreen : GameScreen
         _draggedPlayerId = null;
         _draggedPlayerName = string.Empty;
         _ignoreClicksUntilRelease = true;
+        _playerContextOverlay.Close();
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -76,6 +79,7 @@ public sealed class LineupScreen : GameScreen
         var mousePosition = currentMouseState.Position;
         var isPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
         var isRelease = _previousMouseState.LeftButton == ButtonState.Pressed && currentMouseState.LeftButton == ButtonState.Released;
+        var isRightPress = _previousMouseState.RightButton == ButtonState.Released && currentMouseState.RightButton == ButtonState.Pressed;
 
         if (_ignoreClicksUntilRelease)
         {
@@ -95,6 +99,17 @@ public sealed class LineupScreen : GameScreen
 
         if (isPress)
         {
+            if (_playerContextOverlay.HandleLeftClick(mousePosition, _viewport, out var contextAction))
+            {
+                if (contextAction.HasValue)
+                {
+                    ExecuteContextAction(contextAction.Value);
+                }
+
+                _previousMouseState = currentMouseState;
+                return;
+            }
+
             if (_backButtonBounds.Contains(mousePosition))
             {
                 _backButton.Click();
@@ -122,6 +137,14 @@ public sealed class LineupScreen : GameScreen
             }
             else if (TryStartDragFromBench(mousePosition))
             {
+            }
+        }
+
+        if (isRightPress && !_isDragging)
+        {
+            if (!TryOpenPlayerContextMenu(mousePosition))
+            {
+                _playerContextOverlay.Close();
             }
         }
 
@@ -207,6 +230,8 @@ public sealed class LineupScreen : GameScreen
         {
             uiRenderer.DrawText($"Dragging: {Truncate(_draggedPlayerName, 22)}", new Vector2(_dragPosition.X + 16, _dragPosition.Y + 16), Color.Yellow);
         }
+
+        _playerContextOverlay.Draw(uiRenderer, Mouse.GetState().Position, _viewport);
     }
 
     private void DrawPagingButtons(UiRenderer uiRenderer, int totalRows, int pageSize)
@@ -357,6 +382,89 @@ public sealed class LineupScreen : GameScreen
         _draggedPlayerName = playerName;
         _dragPosition = position;
         _isDragging = true;
+    }
+
+    private bool TryOpenPlayerContextMenu(Point position)
+    {
+        var orgRosterById = _franchiseSession.GetSelectedTeamOrganizationRoster().ToDictionary(player => player.PlayerId, player => player);
+
+        for (var slot = 1; slot <= 9; slot++)
+        {
+            if (!GetLineupSlotBounds(slot).Contains(position))
+            {
+                continue;
+            }
+
+            var slotPlayer = GetLineupRows().FirstOrDefault(entry => entry.LineupSlot == slot);
+            if (slotPlayer != null && orgRosterById.TryGetValue(slotPlayer.PlayerId, out var rosterPlayer))
+            {
+                OpenPlayerContext(position, rosterPlayer);
+                return true;
+            }
+        }
+
+        var pageSize = GetBenchPageSize();
+        var visibleRows = GetBenchRows().Skip(_pageIndex * pageSize).Take(pageSize).ToList();
+        for (var i = 0; i < visibleRows.Count; i++)
+        {
+            if (!GetBenchRowBounds(i).Contains(position))
+            {
+                continue;
+            }
+
+            if (orgRosterById.TryGetValue(visibleRows[i].PlayerId, out var rosterPlayer))
+            {
+                OpenPlayerContext(position, rosterPlayer);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private void OpenPlayerContext(Point position, OrganizationRosterPlayerView player)
+    {
+        _selectedPlayerId = player.PlayerId;
+        var rosterActions = new List<PlayerContextActionView>
+        {
+            new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", player.CanAssignToFortyMan),
+            new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", player.CanAssignToAffiliate),
+            new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", player.IsOnFortyMan),
+            new(PlayerContextAction.ReleasePlayer, "Release", player.CanRelease)
+        };
+        _playerContextOverlay.Open(
+            position,
+            player.PlayerName,
+            [
+                new PlayerContextActionView(PlayerContextAction.OpenRosterAssignments, "Roster", rosterActions.Any(action => action.IsEnabled)),
+                new PlayerContextActionView(PlayerContextAction.OpenProfile, "Profile")
+            ],
+            rosterActions,
+            _franchiseSession.GetPlayerProfile(player.PlayerId));
+    }
+
+    private void ExecuteContextAction(PlayerContextAction action)
+    {
+        if (!_selectedPlayerId.HasValue)
+        {
+            return;
+        }
+
+        switch (action)
+        {
+            case PlayerContextAction.AssignToFortyMan:
+                _franchiseSession.AssignSelectedTeamPlayerToFortyMan(_selectedPlayerId.Value, out _);
+                break;
+            case PlayerContextAction.AssignToAffiliate:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, out _);
+                break;
+            case PlayerContextAction.RemoveFromFortyMan:
+                _franchiseSession.RemoveSelectedTeamPlayerFromFortyMan(_selectedPlayerId.Value, out _);
+                break;
+            case PlayerContextAction.ReleasePlayer:
+                _franchiseSession.ReleaseSelectedTeamPlayer(_selectedPlayerId.Value, out _);
+                break;
+        }
     }
 
     private List<LineupDisplayRow> GetLineupRows()

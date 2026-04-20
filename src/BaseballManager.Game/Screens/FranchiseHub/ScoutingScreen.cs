@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -21,6 +22,7 @@ public sealed class ScoutingScreen : GameScreen
     private readonly ButtonControl _hireScoutButton;
     private readonly ButtonControl _releaseScoutButton;
     private readonly ButtonControl _assignRegionButton;
+    private readonly ButtonControl _assignAutoScoutButton;
     private readonly ButtonControl _assignSelectedPlayerButton;
     private readonly ButtonControl _clearAssignmentButton;
     private readonly ButtonControl _scoutedPlayersTabButton;
@@ -41,6 +43,7 @@ public sealed class ScoutingScreen : GameScreen
     private readonly ButtonControl _offerPreviousButton;
     private readonly ButtonControl _offerNextButton;
     private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
+    private readonly PlayerContextOverlay _playerContextOverlay = new();
     private MouseState _previousMouseState = default;
     private Point _viewport = new(1280, 720);
     private bool _ignoreClicksUntilRelease = true;
@@ -103,6 +106,11 @@ public sealed class ScoutingScreen : GameScreen
         {
             Label = "Assign Region Search",
             OnClick = AssignSelectedScoutToRegion
+        };
+        _assignAutoScoutButton = new ButtonControl
+        {
+            Label = "Auto Need Search",
+            OnClick = AssignSelectedScoutToAutoMode
         };
         _assignSelectedPlayerButton = new ButtonControl
         {
@@ -213,6 +221,7 @@ public sealed class ScoutingScreen : GameScreen
         _prospectSortMode = ProspectSortMode.MostScouted;
         _prospectPositionFilter = "All";
         _viewMode = ScoutingViewMode.AmateurInternational;
+        _playerContextOverlay.Close();
         _statusMessage = "Set your scout assignments and review high school / international reports here.";
         RefreshAmateurSelections();
     }
@@ -252,9 +261,23 @@ public sealed class ScoutingScreen : GameScreen
             }
         }
 
-        if (_previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed)
+        var isLeftPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
+        var isRightPress = _previousMouseState.RightButton == ButtonState.Released && currentMouseState.RightButton == ButtonState.Pressed;
+
+        if (isLeftPress)
         {
             var mousePosition = currentMouseState.Position;
+
+            if (_playerContextOverlay.HandleLeftClick(mousePosition, _viewport, out var contextAction))
+            {
+                if (contextAction == PlayerContextAction.ScoutPlayer)
+                {
+                    _showScoutReportPopup = true;
+                }
+
+                _previousMouseState = currentMouseState;
+                return;
+            }
 
             if (_showScoutHirePopup)
             {
@@ -320,6 +343,10 @@ public sealed class ScoutingScreen : GameScreen
             {
                 _assignRegionButton.Click();
             }
+            else if (GetAssignAutoScoutButtonBounds().Contains(mousePosition))
+            {
+                _assignAutoScoutButton.Click();
+            }
             else if (GetAssignSelectedPlayerButtonBounds().Contains(mousePosition))
             {
                 _assignSelectedPlayerButton.Click();
@@ -368,6 +395,14 @@ public sealed class ScoutingScreen : GameScreen
             }
         }
 
+        if (isRightPress && !_showScoutHirePopup && !_showScoutReportPopup && !_showFilterDropdown && _openScoutDropdown == ScoutDropdownType.None)
+        {
+            if (!TryOpenProspectContextMenu(currentMouseState.Position))
+            {
+                _playerContextOverlay.Close();
+            }
+        }
+
         _previousMouseState = currentMouseState;
     }
 
@@ -397,6 +432,8 @@ public sealed class ScoutingScreen : GameScreen
         {
             DrawScoutReportPopup(uiRenderer, mousePosition);
         }
+
+        _playerContextOverlay.Draw(uiRenderer, mousePosition, _viewport);
     }
 
     private void DrawCoaches(UiRenderer uiRenderer, IReadOnlyList<CoachProfileView> coaches)
@@ -650,6 +687,13 @@ public sealed class ScoutingScreen : GameScreen
         RefreshAmateurSelections();
     }
 
+    private void AssignSelectedScoutToAutoMode()
+    {
+        _openScoutDropdown = ScoutDropdownType.None;
+        _statusMessage = _franchiseSession.AssignScoutToAutoNeedSearch(_selectedScoutSlotIndex);
+        RefreshAmateurSelections();
+    }
+
     private void AssignSelectedScoutToSelectedPlayer()
     {
         _openScoutDropdown = ScoutDropdownType.None;
@@ -894,6 +938,7 @@ public sealed class ScoutingScreen : GameScreen
             uiRenderer.DrawButton(GetScoutDropdownLabel("Position", selectedScout.PositionFocus, ScoutDropdownType.Position), GetPositionFocusButtonBounds(), !suppressHover && GetPositionFocusButtonBounds().Contains(mousePosition) || _openScoutDropdown == ScoutDropdownType.Position ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
             uiRenderer.DrawButton(GetScoutDropdownLabel("Trait", selectedScout.TraitFocus, ScoutDropdownType.Trait), GetTraitFocusButtonBounds(), !suppressHover && GetTraitFocusButtonBounds().Contains(mousePosition) || _openScoutDropdown == ScoutDropdownType.Trait ? Color.DarkSlateBlue : Color.SlateGray, Color.White);
             uiRenderer.DrawButton(_assignRegionButton.Label, GetAssignRegionButtonBounds(), !suppressHover && GetAssignRegionButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
+            uiRenderer.DrawButton(_assignAutoScoutButton.Label, GetAssignAutoScoutButtonBounds(), !suppressHover && GetAssignAutoScoutButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : (string.Equals(selectedScout.AssignmentMode, "Auto Need Search", StringComparison.OrdinalIgnoreCase) ? Color.DarkSlateBlue : Color.OliveDrab), Color.White);
             uiRenderer.DrawButton(_assignSelectedPlayerButton.Label, GetAssignSelectedPlayerButtonBounds(), !suppressHover && GetAssignSelectedPlayerButtonBounds().Contains(mousePosition) ? Color.DarkOliveGreen : Color.OliveDrab, Color.White);
             uiRenderer.DrawButton(_clearAssignmentButton.Label, GetClearAssignmentButtonBounds(), !suppressHover && GetClearAssignmentButtonBounds().Contains(mousePosition) ? Color.DarkRed : Color.Firebrick, Color.White);
 
@@ -995,6 +1040,53 @@ public sealed class ScoutingScreen : GameScreen
         return false;
     }
 
+    private bool TryOpenProspectContextMenu(Point mousePosition)
+    {
+        var prospects = GetPagedProspects().ToList();
+        for (var i = 0; i < prospects.Count; i++)
+        {
+            if (!GetProspectRowBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            var prospect = prospects[i];
+            _selectedProspectKey = prospect.ProspectKey;
+            _playerContextOverlay.Open(
+                mousePosition,
+                prospect.PlayerName,
+                [
+                    new PlayerContextActionView(PlayerContextAction.OpenProfile, "Profile"),
+                    new PlayerContextActionView(PlayerContextAction.ScoutPlayer, "Scout Report")
+                ],
+                [],
+                BuildProspectProfile(prospect));
+            return true;
+        }
+
+        return false;
+    }
+
+    private static PlayerProfileView BuildProspectProfile(AmateurProspectView prospect)
+    {
+        return new PlayerProfileView(
+            prospect.PlayerName,
+            $"{prospect.PrimaryPosition} | Age {prospect.Age} | {prospect.Country}",
+            [
+                $"Source: {prospect.Source}",
+                $"Scouting progress: {prospect.ScoutingProgress}%",
+                $"Projection: {prospect.Projection}",
+                $"Found by: {prospect.ScoutName}",
+                $"Assigned scout: {prospect.AssignedScoutName}",
+                $"Bonus: {prospect.EstimatedBonus}"
+            ],
+            [
+                prospect.Summary,
+                $"Trait focus: {prospect.TraitFocus}",
+                prospect.IsOnTargetList ? "Status: on target list." : "Status: not on target list."
+            ]);
+    }
+
     private void RefreshSelections(IReadOnlyList<ScoutingPlayerCard>? marketPlayers = null, IReadOnlyList<ScoutingPlayerCard>? offerPlayers = null, IReadOnlyList<CoachProfileView>? coaches = null)
     {
         coaches ??= _franchiseSession.GetCoachingStaff();
@@ -1033,6 +1125,8 @@ public sealed class ScoutingScreen : GameScreen
 
         return string.Equals(selectedScout.AssignmentMode, "Unassigned", StringComparison.OrdinalIgnoreCase)
             ? $"{selectedScout.Name} is hired but still waiting for an assignment."
+            : string.Equals(selectedScout.AssignmentMode, "Auto Need Search", StringComparison.OrdinalIgnoreCase)
+                ? $"{selectedScout.Name} is auto-scouting against the club's current needs: {selectedScout.AssignmentTarget}."
             : $"{selectedScout.Name} is currently working on {selectedScout.AssignmentTarget}.";
     }
 
@@ -1051,11 +1145,13 @@ public sealed class ScoutingScreen : GameScreen
 
         var timingNote = string.Equals(selectedScout.AssignmentMode, "Region Search", StringComparison.OrdinalIgnoreCase)
             ? $"Next lead is expected in about {selectedScout.DaysUntilNextDiscovery} day(s)."
+            : string.Equals(selectedScout.AssignmentMode, "Auto Need Search", StringComparison.OrdinalIgnoreCase)
+                ? $"Auto mode is active. This scout updates his focus to the club's biggest need, with the next lead expected in about {selectedScout.DaysUntilNextDiscovery} day(s)."
             : string.Equals(selectedScout.AssignmentMode, "Player Follow", StringComparison.OrdinalIgnoreCase)
                 ? "This scout is deepening an existing player file a little more each day."
                 : "This scout is currently idle and waiting for a new assignment.";
 
-        return $"Scout: {selectedScout.Name}\nSpecialty: {selectedScout.Specialty}\nVoice: {selectedScout.Voice}\nStatus: {selectedScout.AssignmentMode}\nTarget: {selectedScout.AssignmentTarget}\n\n{timingNote}\n\nAssign a region to discover new prospects over time, or assign a scout directly to a player to keep pushing that file toward 100%.";
+        return $"Scout: {selectedScout.Name}\nSpecialty: {selectedScout.Specialty}\nVoice: {selectedScout.Voice}\nStatus: {selectedScout.AssignmentMode}\nTarget: {selectedScout.AssignmentTarget}\n\n{timingNote}\n\nAssign a region to discover new prospects over time, turn on auto need search to let the scout chase organizational weaknesses automatically, or assign a scout directly to a player to keep pushing that file toward 100%.";
     }
 
     private void ScrollProspectList(int direction)
@@ -1246,7 +1342,7 @@ public sealed class ScoutingScreen : GameScreen
         var departmentPanel = GetScoutDepartmentPanelBounds();
         var x = departmentPanel.Right + 24;
         var width = Math.Max(180, GetProspectRightColumnWidth() - departmentPanel.Width - 24);
-        return new Rectangle(x, 186, width, 324);
+        return new Rectangle(x, 186, width, 356);
     }
 
     private Rectangle GetAssistantScoutRowBounds(int index)
@@ -1293,16 +1389,22 @@ public sealed class ScoutingScreen : GameScreen
         return new Rectangle(panel.X + 12, panel.Y + 226, panel.Width - 24, 26);
     }
 
-    private Rectangle GetAssignSelectedPlayerButtonBounds()
+    private Rectangle GetAssignAutoScoutButtonBounds()
     {
         var panel = GetScoutAssignmentPanelBounds();
         return new Rectangle(panel.X + 12, panel.Y + 258, panel.Width - 24, 26);
     }
 
-    private Rectangle GetClearAssignmentButtonBounds()
+    private Rectangle GetAssignSelectedPlayerButtonBounds()
     {
         var panel = GetScoutAssignmentPanelBounds();
         return new Rectangle(panel.X + 12, panel.Y + 290, panel.Width - 24, 26);
+    }
+
+    private Rectangle GetClearAssignmentButtonBounds()
+    {
+        var panel = GetScoutAssignmentPanelBounds();
+        return new Rectangle(panel.X + 12, panel.Y + 322, panel.Width - 24, 26);
     }
 
     private Rectangle GetProspectListPanelBounds()
@@ -1478,7 +1580,8 @@ public sealed class ScoutingScreen : GameScreen
         return _showFilterDropdown
             || _showScoutHirePopup
             || _showScoutReportPopup
-            || _openScoutDropdown != ScoutDropdownType.None;
+            || _openScoutDropdown != ScoutDropdownType.None
+            || _playerContextOverlay.IsCapturingMouse;
     }
 
     private Rectangle GetFilterOptionBounds(int index)

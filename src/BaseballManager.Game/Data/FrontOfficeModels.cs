@@ -1,5 +1,28 @@
 namespace BaseballManager.Game.Data;
 
+public enum PlayerContextAction
+{
+    OpenProfile,
+    OpenRosterAssignments,
+    AssignToFortyMan,
+    AssignToAffiliate,
+    RemoveFromFortyMan,
+    ReleasePlayer,
+    TradeForPlayer,
+    ScoutPlayer
+}
+
+public sealed record PlayerContextActionView(
+    PlayerContextAction Action,
+    string Label,
+    bool IsEnabled = true);
+
+public sealed record PlayerProfileView(
+    string Title,
+    string Subtitle,
+    IReadOnlyList<string> DetailLines,
+    IReadOnlyList<string> SummaryLines);
+
 public sealed record CoachProfileView(
     string Role,
     string Name,

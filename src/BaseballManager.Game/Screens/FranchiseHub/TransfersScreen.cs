@@ -2,6 +2,7 @@ using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
 using BaseballManager.Game.UI.Controls;
+using BaseballManager.Game.UI.Widgets;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 
@@ -19,6 +20,7 @@ public sealed class TransfersScreen : GameScreen
     private readonly ButtonControl _marketPreviousButton;
     private readonly ButtonControl _marketNextButton;
     private readonly Rectangle _backButtonBounds = new(24, 34, 120, 36);
+    private readonly PlayerContextOverlay _playerContextOverlay = new();
     private MouseState _previousMouseState = default;
     private Point _viewport = new(1280, 720);
     private bool _ignoreClicksUntilRelease = true;
@@ -80,9 +82,15 @@ public sealed class TransfersScreen : GameScreen
         _showTransactionMenu = false;
         _transactionTargetPlayerId = null;
         _selectedTradeChipIds.Clear();
+        _playerContextOverlay.Close();
         _tradeChipPageIndex = 0;
         MarkAllCachesDirty();
         RefreshSelections();
+
+        if (_franchiseSession.TryConsumeTransfersFocus(out var focusedPlayerId))
+        {
+            _selectedPlayerId = focusedPlayerId;
+        }
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -100,9 +108,23 @@ public sealed class TransfersScreen : GameScreen
             return;
         }
 
-        if (_previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed)
+        var isLeftPress = _previousMouseState.LeftButton == ButtonState.Released && currentMouseState.LeftButton == ButtonState.Pressed;
+        var isRightPress = _previousMouseState.RightButton == ButtonState.Released && currentMouseState.RightButton == ButtonState.Pressed;
+
+        if (isLeftPress)
         {
             var mousePosition = currentMouseState.Position;
+
+            if (_playerContextOverlay.HandleLeftClick(mousePosition, _viewport, out var contextAction))
+            {
+                if (contextAction.HasValue)
+                {
+                    ExecuteContextAction(contextAction.Value);
+                }
+
+                _previousMouseState = currentMouseState;
+                return;
+            }
 
             if (_showTransactionMenu)
             {
@@ -155,6 +177,14 @@ public sealed class TransfersScreen : GameScreen
             }
             else if (TrySelectMarketPlayer(mousePosition))
             {
+            }
+        }
+
+        if (isRightPress && !_showFilterDropdown && !_showTransactionMenu)
+        {
+            if (!TryOpenPlayerContextMenu(currentMouseState.Position))
+            {
+                _playerContextOverlay.Close();
             }
         }
 
@@ -215,6 +245,8 @@ public sealed class TransfersScreen : GameScreen
         {
             DrawTransactionMenu(uiRenderer);
         }
+
+        _playerContextOverlay.Draw(uiRenderer, mousePosition, _viewport);
     }
 
     private void DrawCoaches(UiRenderer uiRenderer, IReadOnlyList<CoachProfileView> coaches)
@@ -453,7 +485,92 @@ public sealed class TransfersScreen : GameScreen
 
     private bool IsOverlayCapturingMouse()
     {
-        return _showFilterDropdown || _showTransactionMenu;
+        return _showFilterDropdown || _showTransactionMenu || _playerContextOverlay.IsCapturingMouse;
+    }
+
+    private bool TryOpenPlayerContextMenu(Point mousePosition)
+    {
+        var visiblePlayers = GetMarketPlayers().Skip(_marketPageIndex * PageSize).Take(PageSize).ToList();
+        var orgRosterById = _franchiseSession.GetSelectedTeamOrganizationRoster().ToDictionary(player => player.PlayerId, player => player);
+        for (var i = 0; i < visiblePlayers.Count; i++)
+        {
+            if (!GetMarketRowBounds(i).Contains(mousePosition))
+            {
+                continue;
+            }
+
+            var player = visiblePlayers[i];
+            _selectedPlayerId = player.PlayerId;
+            orgRosterById.TryGetValue(player.PlayerId, out var rosterPlayer);
+            var rosterActions = rosterPlayer == null
+                ? new List<PlayerContextActionView>()
+                :
+                [
+                    new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", rosterPlayer.CanAssignToFortyMan),
+                    new(PlayerContextAction.AssignToAffiliate, "Send To Affiliate", rosterPlayer.CanAssignToAffiliate),
+                    new(PlayerContextAction.RemoveFromFortyMan, "Remove From 40-Man", rosterPlayer.IsOnFortyMan),
+                    new(PlayerContextAction.ReleasePlayer, "Release", rosterPlayer.CanRelease)
+                ];
+
+            var primaryActions = new List<PlayerContextActionView>
+            {
+                new(PlayerContextAction.OpenRosterAssignments, "Roster", rosterActions.Any(action => action.IsEnabled)),
+                new(PlayerContextAction.OpenProfile, "Profile")
+            };
+
+            if (!player.IsOnSelectedTeam)
+            {
+                primaryActions.Add(new PlayerContextActionView(PlayerContextAction.TradeForPlayer, "Trade For"));
+                primaryActions.Add(new PlayerContextActionView(PlayerContextAction.ScoutPlayer, "Scout"));
+            }
+
+            _playerContextOverlay.Open(mousePosition, player.PlayerName, primaryActions, rosterActions, _franchiseSession.GetPlayerProfile(player.PlayerId));
+            return true;
+        }
+
+        return false;
+    }
+
+    private void ExecuteContextAction(PlayerContextAction action)
+    {
+        if (!_selectedPlayerId.HasValue)
+        {
+            return;
+        }
+
+        switch (action)
+        {
+            case PlayerContextAction.AssignToFortyMan:
+                _franchiseSession.AssignSelectedTeamPlayerToFortyMan(_selectedPlayerId.Value, out _statusMessage);
+                MarkAllCachesDirty();
+                RefreshSelections();
+                break;
+            case PlayerContextAction.AssignToAffiliate:
+                _franchiseSession.AssignSelectedTeamPlayerToAffiliate(_selectedPlayerId.Value, out _statusMessage);
+                MarkAllCachesDirty();
+                RefreshSelections();
+                break;
+            case PlayerContextAction.RemoveFromFortyMan:
+                _franchiseSession.RemoveSelectedTeamPlayerFromFortyMan(_selectedPlayerId.Value, out _statusMessage);
+                MarkAllCachesDirty();
+                RefreshSelections();
+                break;
+            case PlayerContextAction.ReleasePlayer:
+                _franchiseSession.ReleaseSelectedTeamPlayer(_selectedPlayerId.Value, out _statusMessage);
+                MarkAllCachesDirty();
+                RefreshSelections();
+                break;
+            case PlayerContextAction.TradeForPlayer:
+                OpenTransactionMenu();
+                break;
+            case PlayerContextAction.ScoutPlayer:
+                var focusedPlayer = GetMarketPlayers().FirstOrDefault(player => player.PlayerId == _selectedPlayerId.Value);
+                if (focusedPlayer != null)
+                {
+                    _statusMessage = $"{focusedPlayer.PlayerName} is highlighted. Review the coach scouting report on the right for the current read.";
+                }
+                break;
+        }
     }
 
     private void CompleteTransactionPurchase()
