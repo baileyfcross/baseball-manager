@@ -28,6 +28,7 @@ public sealed class LineupScreen : GameScreen
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
     private readonly PlayerContextOverlay _playerContextOverlay = new();
+    private string _statusMessage = "A valid lineup needs coverage for C, 1B, 2B, 3B, SS, LF, CF, RF, and DH. DH can be any player.";
 
     public LineupScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -56,6 +57,7 @@ public sealed class LineupScreen : GameScreen
                 {
                     _franchiseSession.ClearLineupSlot(_selectedSlot.Value);
                     _selectedPlayerId = null;
+                    _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
                 }
             }
         };
@@ -71,6 +73,7 @@ public sealed class LineupScreen : GameScreen
         _draggedPlayerName = string.Empty;
         _ignoreClicksUntilRelease = true;
         _playerContextOverlay.Close();
+        _statusMessage = "A valid lineup needs coverage for C, 1B, 2B, 3B, SS, LF, CF, RF, and DH. DH can be any player.";
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -168,10 +171,11 @@ public sealed class LineupScreen : GameScreen
 
         var lineupPanelBounds = GetLineupPanelBounds();
         var benchPanelBounds = GetBenchPanelBounds();
-        var headerY = lineupPanelBounds.Y - 34;
+        var headerY = lineupPanelBounds.Y - 28;
 
         var lineupRows = GetLineupRows();
         var benchRows = GetBenchRows();
+        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
 
         if (lineupRows.Count == 0 && benchRows.Count == 0)
         {
@@ -182,6 +186,10 @@ public sealed class LineupScreen : GameScreen
             uiRenderer.DrawWrappedTextInBounds("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Rectangle(100, 126, Math.Max(560, _viewport.X - 220), 24), Color.White, uiRenderer.ScoreboardFont, 1);
             uiRenderer.DrawTextInBounds($"Selected: {GetSelectedPlayerName()}", new Rectangle(100, 154, Math.Max(560, _viewport.X - 220), 22), Color.White, uiRenderer.ScoreboardFont);
             uiRenderer.DrawTextInBounds(GetSelectedPlayerRecentStatsLine(), new Rectangle(100, 180, Math.Max(760, _viewport.X - 220), 22), Color.Gold, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(lineupValidation.Summary, new Rectangle(100, 204, Math.Max(860, _viewport.X - 220), 22), lineupValidation.IsValid ? Color.LightGreen : Color.Orange, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(_statusMessage, new Rectangle(100, 226, Math.Max(860, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+
+            DrawPositionAssignments(uiRenderer, lineupValidation);
 
             uiRenderer.DrawButton(string.Empty, lineupPanelBounds, new Color(38, 48, 56), Color.White);
             uiRenderer.DrawButton(string.Empty, benchPanelBounds, new Color(38, 48, 56), Color.White);
@@ -273,8 +281,8 @@ public sealed class LineupScreen : GameScreen
     private Rectangle GetLineupPanelBounds()
     {
         var width = Math.Max(420, (_viewport.X - 180) / 2);
-        var height = Math.Max(320, _viewport.Y - 320);
-        return new Rectangle(60, 230, width, height);
+        var height = Math.Max(240, _viewport.Y - 454);
+        return new Rectangle(60, 360, width, height);
     }
 
     private Rectangle GetBenchPanelBounds()
@@ -287,7 +295,7 @@ public sealed class LineupScreen : GameScreen
     private static int GetListRowHeight(Rectangle panelBounds, int rowCount)
     {
         const int spacing = 6;
-        const int verticalPadding = 28;
+        const int verticalPadding = 24;
         return Math.Clamp((panelBounds.Height - verticalPadding - ((rowCount - 1) * spacing)) / rowCount, 28, 40);
     }
 
@@ -295,7 +303,7 @@ public sealed class LineupScreen : GameScreen
     {
         const int spacing = 6;
         const int minRowHeight = 28;
-        const int verticalPadding = 28;
+        const int verticalPadding = 24;
         var panel = GetBenchPanelBounds();
         return Math.Max(1, (panel.Height - verticalPadding + spacing) / (minRowHeight + spacing));
     }
@@ -336,6 +344,53 @@ public sealed class LineupScreen : GameScreen
         return false;
     }
 
+    private void DrawPositionAssignments(UiRenderer uiRenderer, LineupValidationView lineupValidation)
+    {
+        var bounds = GetPositionAssignmentsBounds();
+        uiRenderer.DrawButton(string.Empty, bounds, new Color(32, 46, 58), Color.Transparent);
+        uiRenderer.DrawTextInBounds("DEFENSIVE COVERAGE", new Rectangle(bounds.X + 10, bounds.Y + 6, bounds.Width - 20, 18), Color.Gold, uiRenderer.UiSmallFont);
+
+        for (var i = 0; i < lineupValidation.PositionAssignments.Count; i++)
+        {
+            var assignment = lineupValidation.PositionAssignments[i];
+            var assignmentBounds = GetPositionAssignmentCellBounds(i);
+            var isMissing = assignment.PlayerId == null;
+            var background = isMissing ? new Color(90, 62, 34) : new Color(52, 74, 90);
+            var textColor = isMissing ? Color.White : Color.White;
+            var playerLabel = isMissing
+                ? "Missing"
+                : assignment.LineupSlot.HasValue
+                    ? $"#{assignment.LineupSlot} {Truncate(assignment.PlayerName, 12)}"
+                    : Truncate(assignment.PlayerName, 14);
+
+            uiRenderer.DrawButton(string.Empty, assignmentBounds, background, Color.Transparent);
+            uiRenderer.DrawTextInBounds(assignment.Position, new Rectangle(assignmentBounds.X + 6, assignmentBounds.Y + 4, assignmentBounds.Width - 12, 16), Color.Gold, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(playerLabel, new Rectangle(assignmentBounds.X + 6, assignmentBounds.Y + 22, assignmentBounds.Width - 12, assignmentBounds.Height - 26), textColor, uiRenderer.UiSmallFont);
+        }
+    }
+
+    private Rectangle GetPositionAssignmentsBounds()
+    {
+        return new Rectangle(60, 260, Math.Max(780, _viewport.X - 120), 80);
+    }
+
+    private Rectangle GetPositionAssignmentCellBounds(int index)
+    {
+        var bounds = GetPositionAssignmentsBounds();
+        var topRowCount = 5;
+        var isTopRow = index < topRowCount;
+        var rowIndex = isTopRow ? 0 : 1;
+        var columnIndex = isTopRow ? index : index - topRowCount;
+        var columnCount = isTopRow ? topRowCount : 4;
+        var gap = 8;
+        var availableWidth = bounds.Width - 20 - ((columnCount - 1) * gap);
+        var cellWidth = availableWidth / columnCount;
+        var cellHeight = 24;
+        var x = bounds.X + 10 + columnIndex * (cellWidth + gap);
+        var y = bounds.Y + 24 + rowIndex * (cellHeight + 8);
+        return new Rectangle(x, y, cellWidth, cellHeight);
+    }
+
     private bool TryStartDragFromBench(Point position)
     {
         var pageSize = GetBenchPageSize();
@@ -369,6 +424,7 @@ public sealed class LineupScreen : GameScreen
             _selectedSlot = slot;
             _selectedPlayerId = _draggedPlayerId;
             _franchiseSession.AssignLineupSlot(_draggedPlayerId.Value, slot);
+            _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
             return true;
         }
 
@@ -473,6 +529,8 @@ public sealed class LineupScreen : GameScreen
                 _franchiseSession.ReleaseSelectedTeamPlayer(_selectedPlayerId.Value, out _);
                 break;
         }
+
+        _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
     }
 
     private List<LineupDisplayRow> GetLineupRows()

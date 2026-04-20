@@ -200,6 +200,13 @@ public sealed class FranchiseHubScreen : GameScreen
             return;
         }
 
+        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
+        if (!lineupValidation.IsValid)
+        {
+            _statusMessage = lineupValidation.Summary;
+            return;
+        }
+
         _startMatchUseCase.Execute();
         _franchiseSession.PrepareFranchiseMatch();
         _statusMessage = $"Game Day: {nextGame.AwayTeamName} at {nextGame.HomeTeamName} on {nextGame.Date:ddd, MMM d}.";

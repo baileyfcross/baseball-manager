@@ -3889,6 +3889,20 @@ public sealed class FranchiseSession
             .ToList();
     }
 
+    public LineupValidationView GetSelectedTeamLineupValidation()
+    {
+        if (SelectedTeam == null)
+        {
+            return new LineupValidationView(
+                false,
+                "No team is selected.",
+                ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"],
+                BuildEmptyLineupPositionAssignments(["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]));
+        }
+
+        return BuildLineupValidation(GetLineupPlayers());
+    }
+
     public IReadOnlyList<FranchiseRosterEntry> GetBenchPlayers()
     {
         return GetSelectedTeamRoster()
@@ -3986,6 +4000,140 @@ public sealed class FranchiseSession
     public void PrepareFranchiseMatch()
     {
         PendingLiveMatchMode = LiveMatchMode.Franchise;
+    }
+
+    private LineupValidationView BuildLineupValidation(IReadOnlyList<FranchiseRosterEntry> lineupPlayers)
+    {
+        string[] requiredPositions = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"];
+
+        if (lineupPlayers.Count != 9)
+        {
+            var missingPlayerCount = Math.Max(0, 9 - lineupPlayers.Count);
+            var countSummary = missingPlayerCount > 0
+                ? $"Lineup is incomplete: add {missingPlayerCount} more player{(missingPlayerCount == 1 ? string.Empty : "s")} to reach nine starters."
+                : "Lineup has too many assigned players.";
+            return new LineupValidationView(false, countSummary, requiredPositions, BuildEmptyLineupPositionAssignments(requiredPositions));
+        }
+
+        if (lineupPlayers.Select(player => player.PlayerId).Distinct().Count() != lineupPlayers.Count)
+        {
+            return new LineupValidationView(false, "Lineup is invalid: each batting slot must contain a different player.", requiredPositions, BuildEmptyLineupPositionAssignments(requiredPositions));
+        }
+
+        var matchedPlayersByPosition = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        foreach (var player in lineupPlayers)
+        {
+            var visitedPositions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            TryAssignLineupValidationPosition(player, lineupPlayers, requiredPositions, matchedPlayersByPosition, visitedPositions);
+        }
+
+        var missingPositions = requiredPositions
+            .Where(position => !matchedPlayersByPosition.ContainsKey(position))
+            .ToList();
+        var positionAssignments = BuildLineupPositionAssignments(requiredPositions, matchedPlayersByPosition, lineupPlayers);
+
+        if (missingPositions.Count == 0)
+        {
+            return new LineupValidationView(true, "Lineup is valid: all field positions and DH are covered.", [], positionAssignments);
+        }
+
+        return new LineupValidationView(
+            false,
+            $"Lineup is invalid: missing coverage for {string.Join(", ", missingPositions)}.",
+            missingPositions,
+            positionAssignments);
+    }
+
+    private static IReadOnlyList<LineupPositionAssignmentView> BuildEmptyLineupPositionAssignments(IReadOnlyList<string> requiredPositions)
+    {
+        return requiredPositions
+            .Select(position => new LineupPositionAssignmentView(position, null, "Missing", null))
+            .ToList();
+    }
+
+    private static IReadOnlyList<LineupPositionAssignmentView> BuildLineupPositionAssignments(
+        IReadOnlyList<string> requiredPositions,
+        IReadOnlyDictionary<string, Guid> matchedPlayersByPosition,
+        IReadOnlyList<FranchiseRosterEntry> lineupPlayers)
+    {
+        return requiredPositions
+            .Select(position =>
+            {
+                if (!matchedPlayersByPosition.TryGetValue(position, out var playerId))
+                {
+                    return new LineupPositionAssignmentView(position, null, "Missing", null);
+                }
+
+                var player = lineupPlayers.FirstOrDefault(entry => entry.PlayerId == playerId);
+                return player == null
+                    ? new LineupPositionAssignmentView(position, null, "Missing", null)
+                    : new LineupPositionAssignmentView(position, player.PlayerId, player.PlayerName, player.LineupSlot);
+            })
+            .ToList();
+    }
+
+    private static bool TryAssignLineupValidationPosition(
+        FranchiseRosterEntry player,
+        IReadOnlyList<FranchiseRosterEntry> lineupPlayers,
+        IReadOnlyList<string> requiredPositions,
+        Dictionary<string, Guid> matchedPlayersByPosition,
+        HashSet<string> visitedPositions)
+    {
+        foreach (var position in requiredPositions)
+        {
+            if (visitedPositions.Contains(position) || !CanCoverLineupPosition(player, position))
+            {
+                continue;
+            }
+
+            visitedPositions.Add(position);
+
+            if (!matchedPlayersByPosition.TryGetValue(position, out var existingPlayerId))
+            {
+                matchedPlayersByPosition[position] = player.PlayerId;
+                return true;
+            }
+
+            var existingPlayer = lineupPlayers.FirstOrDefault(entry => entry.PlayerId == existingPlayerId);
+            if (existingPlayer != null && TryAssignLineupValidationPosition(existingPlayer, lineupPlayers, requiredPositions, matchedPlayersByPosition, visitedPositions))
+            {
+                matchedPlayersByPosition[position] = player.PlayerId;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool CanCoverLineupPosition(FranchiseRosterEntry player, string position)
+    {
+        if (string.Equals(position, "DH", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return PositionMatchesLineupRole(player.PrimaryPosition, position)
+            || PositionMatchesLineupRole(player.SecondaryPosition, position);
+    }
+
+    private static bool PositionMatchesLineupRole(string playerPosition, string targetPosition)
+    {
+        if (string.IsNullOrWhiteSpace(playerPosition))
+        {
+            return false;
+        }
+
+        if (string.Equals(playerPosition, targetPosition, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return targetPosition switch
+        {
+            "LF" or "CF" or "RF" => string.Equals(playerPosition, "OF", StringComparison.OrdinalIgnoreCase),
+            "1B" or "2B" or "3B" or "SS" => string.Equals(playerPosition, "IF", StringComparison.OrdinalIgnoreCase),
+            _ => false
+        };
     }
 
     public CompletedLiveMatchSummaryState? GetLastCompletedLiveMatchSummary()

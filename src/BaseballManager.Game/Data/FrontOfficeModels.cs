@@ -141,6 +141,18 @@ public sealed record DraftFortyManPlayerView(
     bool IsDraftedPlayer,
     int MinorLeagueOptionsRemaining);
 
+public sealed record LineupPositionAssignmentView(
+    string Position,
+    Guid? PlayerId,
+    string PlayerName,
+    int? LineupSlot);
+
+public sealed record LineupValidationView(
+    bool IsValid,
+    string Summary,
+    IReadOnlyList<string> MissingPositions,
+    IReadOnlyList<LineupPositionAssignmentView> PositionAssignments);
+
 public sealed record OrganizationRosterPlayerView(
     Guid PlayerId,
     string PlayerName,

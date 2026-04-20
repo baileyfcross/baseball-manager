@@ -18,6 +18,7 @@ public sealed class GameDayScreen : GameScreen
     private MouseState _previousMouseState = default;
     private KeyboardState _previousKeyboardState = default;
     private bool _ignoreClicksUntilRelease = true;
+    private string _statusMessage = string.Empty;
 
     private readonly Rectangle _startButtonBounds = new(160, 560, 220, 46);
     private readonly Rectangle _scheduleButtonBounds = new(392, 560, 220, 46);
@@ -32,6 +33,7 @@ public sealed class GameDayScreen : GameScreen
     public override void OnEnter()
     {
         _ignoreClicksUntilRelease = true;
+        _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -88,7 +90,8 @@ public sealed class GameDayScreen : GameScreen
     {
         var viewport = uiRenderer.Viewport;
         var nextGame = _franchiseSession.GetNextScheduledGame();
-        var canStartGame = nextGame != null;
+        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
+        var canStartGame = nextGame != null && lineupValidation.IsValid;
         var panelBounds = new Rectangle(140, 110, Math.Max(900, viewport.Width - 280), Math.Max(520, viewport.Height - 220));
         var cardWidth = (panelBounds.Width - 88) / 2;
         var awayCardBounds = new Rectangle(panelBounds.X + 20, panelBounds.Y + 126, cardWidth, 180);
@@ -140,10 +143,11 @@ public sealed class GameDayScreen : GameScreen
             var scoutingBounds = new Rectangle(panelBounds.X + 20, awayCardBounds.Bottom + 20, panelBounds.Width - 40, 118);
             uiRenderer.DrawButton(string.Empty, scoutingBounds, new Color(32, 46, 58), Color.Transparent);
             uiRenderer.DrawTextInBounds("Pregame Notes", new Rectangle(scoutingBounds.X + 12, scoutingBounds.Y + 8, scoutingBounds.Width - 24, 20), Color.Gold, uiRenderer.UiSmallFont);
-            uiRenderer.DrawWrappedTextInBounds("Start Game enters the live simulation for the next scheduled franchise matchup. On completion, the result is written back into the franchise calendar, standings, and saved state before the postgame flow returns you to the hub.", new Rectangle(scoutingBounds.X + 12, scoutingBounds.Y + 34, scoutingBounds.Width - 24, scoutingBounds.Height - 42), Color.White, uiRenderer.UiSmallFont, 4);
+            uiRenderer.DrawWrappedTextInBounds($"{lineupValidation.Summary} Start Game enters the live simulation for the next scheduled franchise matchup once the lineup is valid.", new Rectangle(scoutingBounds.X + 12, scoutingBounds.Y + 34, scoutingBounds.Width - 24, scoutingBounds.Height - 42), lineupValidation.IsValid ? Color.White : Color.Orange, uiRenderer.UiSmallFont, 4);
         }
 
-        uiRenderer.DrawButton(canStartGame ? "Start Game" : "No Game Scheduled", _startButtonBounds, canStartGame ? (startHovered ? Color.DarkOliveGreen : Color.OliveDrab) : new Color(76, 76, 76), Color.White);
+        var startLabel = nextGame == null ? "No Game Scheduled" : lineupValidation.IsValid ? "Start Game" : "Lineup Invalid";
+        uiRenderer.DrawButton(startLabel, _startButtonBounds, canStartGame ? (startHovered ? Color.DarkOliveGreen : Color.OliveDrab) : new Color(76, 76, 76), Color.White);
         uiRenderer.DrawButton("Schedule", _scheduleButtonBounds, scheduleHovered ? Color.DarkSlateBlue : Color.SlateBlue, Color.White);
         uiRenderer.DrawButton("Back To Hub", _backButtonBounds, backHovered ? Color.DarkSlateGray : Color.SlateGray, Color.White);
     }
@@ -167,6 +171,14 @@ public sealed class GameDayScreen : GameScreen
     {
         if (!_franchiseSession.HasPendingScheduledGame())
         {
+            _statusMessage = "No scheduled game is available.";
+            return;
+        }
+
+        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
+        if (!lineupValidation.IsValid)
+        {
+            _statusMessage = lineupValidation.Summary;
             return;
         }
 
