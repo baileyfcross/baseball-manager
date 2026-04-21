@@ -4803,7 +4803,9 @@ public sealed class FranchiseSession
                 PrimaryPosition = player.PrimaryPosition,
                 SecondaryPosition = player.SecondaryPosition,
                 TeamName = player.TeamName,
-                Age = player.Age
+                Age = player.Age,
+                Throws = player.Throws,
+                BattingStyle = player.BattingStyle
             }))
             .ToList();
     }
@@ -5140,6 +5142,8 @@ public sealed class FranchiseSession
                 PrimaryPosition = prospect.PrimaryPosition,
                 SecondaryPosition = prospect.SecondaryPosition,
                 Age = prospect.Age,
+                Throws = "R",
+                BattingStyle = "R",
                 TeamName = string.Empty,
                 Source = prospect.Source,
                 DraftOverallRating = prospect.OverallRating,
@@ -7906,6 +7910,10 @@ public sealed class FranchiseSession
     private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age)
     {
         var ratings = GetPlayerRatings(playerId, name, primaryPosition, secondaryPosition, age);
+        var importedPlayer = FindPlayerImport(playerId);
+        var throws = BattingProfileFactory.ParseThrows(importedPlayer?.Throws);
+        var battingStyle = BattingProfileFactory.ParseBattingStyle(importedPlayer?.BattingStyle);
+        var battingProfile = BattingProfileFactory.Create(playerId, battingStyle, ratings.EffectiveContactRating, ratings.EffectivePowerRating, ratings.EffectiveDisciplineRating);
 
         return new MatchPlayerSnapshot(
             playerId,
@@ -7922,7 +7930,9 @@ public sealed class FranchiseSession
             ratings.EffectiveArmRating,
             ratings.EffectiveStaminaRating,
             ratings.EffectiveDurabilityRating,
-            ratings.OverallRating);
+                ratings.OverallRating,
+                throws,
+                battingProfile);
     }
 
     private MatchPlayerSnapshot CreatePlaceholderSnapshot(string name, int lineupSlot)

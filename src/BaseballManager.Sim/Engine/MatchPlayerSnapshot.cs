@@ -1,3 +1,5 @@
+using BaseballManager.Core.Players;
+
 namespace BaseballManager.Sim.Engine;
 
 public sealed record MatchPlayerSnapshot(
@@ -15,4 +17,9 @@ public sealed record MatchPlayerSnapshot(
     int ArmRating,
     int StaminaRating,
     int DurabilityRating,
-    int OverallRating);
+    int OverallRating,
+    Handedness Throws = Handedness.Right,
+    BattingProfile? Batting = null)
+{
+    public BattingStyle BattingStyle => (Batting ?? BattingProfile.FromSingleSide(BattingStyle.RightOnly, ContactRating, PowerRating, DisciplineRating)).Style;
+}

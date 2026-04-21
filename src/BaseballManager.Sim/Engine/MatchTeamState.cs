@@ -1,3 +1,5 @@
+using BaseballManager.Core.Players;
+
 namespace BaseballManager.Sim.Engine;
 
 public sealed class MatchTeamState
@@ -207,7 +209,9 @@ public sealed class MatchTeamState
             50,
             stamina,
             55,
-            overall);
+                overall,
+                Handedness.Right,
+                BattingProfile.FromSingleSide(BattingStyle.RightOnly, 52, 50, 50));
     }
 
     private void EnsurePitcherTracked(MatchPlayerSnapshot pitcher)

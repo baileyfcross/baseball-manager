@@ -70,6 +70,10 @@ public sealed class FranchiseCreatedPlayerState
 
     public int Age { get; set; }
 
+    public string Throws { get; set; } = "R";
+
+    public string BattingStyle { get; set; } = "R";
+
     public string TeamName { get; set; } = string.Empty;
 
     public string Source { get; set; } = string.Empty;

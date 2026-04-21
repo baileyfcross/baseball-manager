@@ -21,4 +21,11 @@ public sealed class PlayerImportDto
 
     [CsvHeader("Age")]
     public int Age { get; set; }
+
+    [CsvHeader("Throws")]
+    public string Throws { get; set; } = "R";
+
+    [CsvHeader("Batting Style")]
+    [CsvHeader("Bats")]
+    public string BattingStyle { get; set; } = "R";
 }

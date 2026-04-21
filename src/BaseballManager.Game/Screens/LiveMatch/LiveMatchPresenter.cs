@@ -610,6 +610,10 @@ public sealed class LiveMatchPresenter
     private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age, int lineupSlot, int rotationSlot)
     {
         var ratings = _franchiseSession.GetPlayerRatings(playerId, name, primaryPosition, secondaryPosition, age);
+        var playerData = _leagueData.Players.FirstOrDefault(player => player.PlayerId == playerId);
+        var throws = BattingProfileFactory.ParseThrows(playerData?.Throws);
+        var battingStyle = BattingProfileFactory.ParseBattingStyle(playerData?.BattingStyle);
+        var battingProfile = BattingProfileFactory.Create(playerId, battingStyle, ratings.EffectiveContactRating, ratings.EffectivePowerRating, ratings.EffectiveDisciplineRating);
 
         return new MatchPlayerSnapshot(
             playerId,
@@ -626,7 +630,9 @@ public sealed class LiveMatchPresenter
             ratings.EffectiveArmRating,
             ratings.EffectiveStaminaRating,
             ratings.EffectiveDurabilityRating,
-            ratings.OverallRating);
+                ratings.OverallRating,
+                throws,
+                battingProfile);
     }
 
     private bool ShouldRestPlayer(Guid playerId, string primaryPosition)

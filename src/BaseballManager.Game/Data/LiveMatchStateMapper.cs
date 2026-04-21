@@ -1,3 +1,4 @@
+using BaseballManager.Core.Players;
 using BaseballManager.Sim.Engine;
 using BaseballManager.Sim.Results;
 
@@ -150,6 +151,8 @@ public static class LiveMatchStateMapper
         var overall = snapshot.OverallRating > 0
             ? snapshot.OverallRating
             : Math.Clamp((int)Math.Round((contact + power + discipline + speed + pitching + fielding + arm + stamina + durability) / 9d), 1, 99);
+        var throws = snapshot.Throws;
+        var batting = snapshot.Batting ?? BattingProfileFactory.Create(snapshot.Id, BattingStyle.RightOnly, contact, power, discipline);
 
         return snapshot with
         {
@@ -162,7 +165,9 @@ public static class LiveMatchStateMapper
             ArmRating = arm,
             StaminaRating = stamina,
             DurabilityRating = durability,
-            OverallRating = overall
+            OverallRating = overall,
+            Throws = throws,
+            Batting = batting
         };
     }
 
