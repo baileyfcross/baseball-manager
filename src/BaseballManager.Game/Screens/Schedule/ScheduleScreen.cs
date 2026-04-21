@@ -9,6 +9,7 @@ using BaseballManager.Game.UI.Controls;
 using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
+using System.Threading.Tasks;
 
 namespace BaseballManager.Game.Screens.Schedule;
 
@@ -36,10 +37,14 @@ public sealed class ScheduleScreen : GameScreen
     private DateTime _selectionAnchorDate;
     private readonly HashSet<DateTime> _selectedDates = new();
     private string _statusMessage = "Off-days now include team practices and recovery sessions. Select the next game day to enter Game Day or use Sim Season to fast-forward to the regular-season finish.";
+    private Task<SeasonSimTaskResult>? _seasonSimTask;
+    private AsyncOperationProgressView _seasonSimProgress = AsyncOperationProgressView.Idle;
 
     private const int LayoutMargin = 48;
     private const int CalendarTop = 188;
     private const int CalendarGap = 4;
+
+    private sealed record SeasonSimTaskResult(bool Succeeded, string Message);
 
     public ScheduleScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -107,6 +112,32 @@ public sealed class ScheduleScreen : GameScreen
 
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
+        if (_seasonSimTask != null)
+        {
+            if (!_seasonSimTask.IsCompleted)
+            {
+                return;
+            }
+
+            if (_seasonSimTask.IsFaulted)
+            {
+                _statusMessage = _seasonSimTask.Exception?.GetBaseException().Message ?? "Season sim failed.";
+            }
+            else
+            {
+                var result = _seasonSimTask.Result;
+                _statusMessage = result.Message;
+                if (result.Succeeded)
+                {
+                    SyncCalendarToFranchiseDate();
+                }
+            }
+
+            _seasonSimTask = null;
+            _seasonSimProgress = AsyncOperationProgressView.Idle;
+            return;
+        }
+
         var currentMouseState = inputManager.MouseState;
         var teamGames = GetScheduleRows();
 
@@ -183,6 +214,12 @@ public sealed class ScheduleScreen : GameScreen
     public override void Draw(GameTime gameTime, UiRenderer uiRenderer)
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
+
+        if (_seasonSimTask != null)
+        {
+            LoadingOverlayRenderer.Draw(uiRenderer, _seasonSimProgress, "Regular-season games, practices, and recovery days are being processed in the background.");
+            return;
+        }
 
         var teamGames = GetScheduleRows();
         var mousePosition = Mouse.GetState().Position;
@@ -311,9 +348,12 @@ public sealed class ScheduleScreen : GameScreen
     private void SimToSeasonEnd()
     {
         _showSeasonSimConfirmation = false;
-        _franchiseSession.SimulateToEndOfSeason(out var message);
-        _statusMessage = message;
-        SyncCalendarToFranchiseDate();
+        _seasonSimProgress = new AsyncOperationProgressView("Simming Season", "Preparing the season sim.", 0d);
+        _seasonSimTask = Task.Run(() =>
+        {
+            var succeeded = _franchiseSession.SimulateToEndOfSeason(out var message, progress => _seasonSimProgress = progress);
+            return new SeasonSimTaskResult(succeeded, message);
+        });
     }
 
     private void CancelSeasonSim()

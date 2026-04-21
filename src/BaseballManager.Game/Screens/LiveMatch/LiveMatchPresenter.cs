@@ -391,8 +391,8 @@ public sealed class LiveMatchPresenter
         var (awayTeam, homeTeam) = SelectMatchup();
         var useFranchiseSelectionsForAway = _mode == LiveMatchMode.Franchise && _franchiseSession.SelectedTeam != null && string.Equals(_franchiseSession.SelectedTeam.Name, awayTeam.Name, StringComparison.OrdinalIgnoreCase);
         var useFranchiseSelectionsForHome = _mode == LiveMatchMode.Franchise && _franchiseSession.SelectedTeam != null && string.Equals(_franchiseSession.SelectedTeam.Name, homeTeam.Name, StringComparison.OrdinalIgnoreCase);
-        var awaySnapshot = BuildTeamSnapshot(awayTeam, preferFranchiseSelections: useFranchiseSelectionsForAway);
-        var homeSnapshot = BuildTeamSnapshot(homeTeam, preferFranchiseSelections: useFranchiseSelectionsForHome);
+        var awaySnapshot = BuildTeamSnapshot(awayTeam, homeTeam, preferFranchiseSelections: useFranchiseSelectionsForAway);
+        var homeSnapshot = BuildTeamSnapshot(homeTeam, awayTeam, preferFranchiseSelections: useFranchiseSelectionsForHome);
         return new MatchEngine(awaySnapshot, homeSnapshot);
     }
 
@@ -448,9 +448,9 @@ public sealed class LiveMatchPresenter
         return (_leagueData.Teams[awayIndex], _leagueData.Teams[homeIndex]);
     }
 
-    private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)
+    private MatchTeamState BuildTeamSnapshot(TeamImportDto team, TeamImportDto opposingTeam, bool preferFranchiseSelections)
     {
-        return _franchiseSession.CreateMatchTeamState(team, preferFranchiseSelections);
+        return _franchiseSession.CreateMatchTeamState(team, opposingTeam.Name, preferFranchiseSelections);
     }
 
     private List<MatchPlayerSnapshot> BuildSelectedTeamBench(IReadOnlyList<MatchPlayerSnapshot> lineup)
@@ -484,7 +484,7 @@ public sealed class LiveMatchPresenter
             .Select(roster =>
             {
                 playersById.TryGetValue(roster.PlayerId, out var playerData);
-                return CreatePlayerSnapshot(roster.PlayerId, roster.PlayerName, roster.PrimaryPosition, roster.SecondaryPosition, playerData?.Age ?? 27, roster.LineupSlot ?? 9, roster.RotationSlot ?? 0);
+                return CreatePlayerSnapshot(roster.PlayerId, roster.PlayerName, roster.PrimaryPosition, roster.SecondaryPosition, playerData?.Age ?? 27, roster.LineupSlot ?? 9, roster.RotationSlot ?? 0, roster.DefensivePosition);
             })
             .ToList();
     }
@@ -512,7 +512,7 @@ public sealed class LiveMatchPresenter
         var lineup = _franchiseSession.GetLineupPlayers()
             .Where(player => !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
             .OrderBy(player => player.LineupSlot)
-            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age, player.LineupSlot ?? 9, player.RotationSlot ?? 0))
+            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age, player.LineupSlot ?? 9, player.RotationSlot ?? 0, player.IsDesignatedHitter ? "DH" : player.PrimaryPosition))
             .ToList();
 
         var remainingPlayers = _franchiseSession.GetSelectedTeamRoster()
@@ -567,7 +567,8 @@ public sealed class LiveMatchPresenter
                     roster.SecondaryPosition,
                     playerData?.Age ?? 27,
                     roster.LineupSlot ?? 9,
-                    roster.RotationSlot ?? 0);
+                    roster.RotationSlot ?? 0,
+                    roster.DefensivePosition);
             })
             .ToList();
 
@@ -607,7 +608,7 @@ public sealed class LiveMatchPresenter
         return CreatePlayerSnapshot(pitcherRow.PlayerId, pitcherRow.PlayerName, pitcherRow.PrimaryPosition, pitcherRow.SecondaryPosition, pitcherRow.Age, pitcherRow.LineupSlot ?? 9, pitcherRow.RotationSlot ?? 1);
     }
 
-    private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age, int lineupSlot, int rotationSlot)
+    private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age, int lineupSlot, int rotationSlot, string? defensivePosition = null)
     {
         var ratings = _franchiseSession.GetPlayerRatings(playerId, name, primaryPosition, secondaryPosition, age);
         var playerData = _leagueData.Players.FirstOrDefault(player => player.PlayerId == playerId);
@@ -620,6 +621,7 @@ public sealed class LiveMatchPresenter
             name,
             primaryPosition,
             secondaryPosition,
+            string.IsNullOrWhiteSpace(defensivePosition) ? primaryPosition : defensivePosition,
             age,
             ratings.EffectiveContactRating,
             ratings.EffectivePowerRating,

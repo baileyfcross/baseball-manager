@@ -9,6 +9,7 @@ using BaseballManager.Game.UI.Controls;
 using BaseballManager.Game.UI.Layout;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
+using System.Threading.Tasks;
 
 namespace BaseballManager.Game.Screens.TeamSelection;
 
@@ -22,6 +23,9 @@ public sealed class TeamSelectionScreen : GameScreen
     private MouseState _previousMouseState = default;
     private bool _ignoreClicksUntilRelease = true;
     private Point _viewport = new(1280, 720);
+    private Task? _teamLoadTask;
+    private AsyncOperationProgressView _loadingProgress = AsyncOperationProgressView.Idle;
+    private string _statusMessage = "Select a franchise to begin.";
 
     public TeamSelectionScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -37,6 +41,27 @@ public sealed class TeamSelectionScreen : GameScreen
 
     public override void Update(GameTime gameTime, InputManager inputManager)
     {
+        if (_teamLoadTask != null)
+        {
+            if (!_teamLoadTask.IsCompleted)
+            {
+                return;
+            }
+
+            if (_teamLoadTask.IsFaulted)
+            {
+                _statusMessage = _teamLoadTask.Exception?.GetBaseException().Message ?? "Could not finish loading the franchise.";
+                _teamLoadTask = null;
+                _loadingProgress = AsyncOperationProgressView.Idle;
+                return;
+            }
+
+            _teamLoadTask = null;
+            _loadingProgress = AsyncOperationProgressView.Idle;
+            _screenManager.TransitionTo(nameof(FranchiseHubScreen));
+            return;
+        }
+
         var currentMouseState = inputManager.MouseState;
 
         if (_ignoreClicksUntilRelease)
@@ -62,9 +87,7 @@ public sealed class TeamSelectionScreen : GameScreen
                 var team = GetTeamAtPosition(currentMouseState.Position);
                 if (team != null)
                 {
-                    _franchiseSession.SelectTeam(team);
-                    _startNewFranchiseUseCase.Execute();
-                    _screenManager.TransitionTo(nameof(FranchiseHubScreen));
+                    BeginTeamSelection(team);
                 }
             }
         }
@@ -81,6 +104,12 @@ public sealed class TeamSelectionScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
+        if (_teamLoadTask != null)
+        {
+            LoadingOverlayRenderer.Draw(uiRenderer, _loadingProgress, "This can take a moment when the franchise state is being initialized for a new team.");
+            return;
+        }
+
         uiRenderer.DrawText("Select A Team", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
 
         if (!_leagueData.HasData)
@@ -91,6 +120,7 @@ public sealed class TeamSelectionScreen : GameScreen
         }
 
         uiRenderer.DrawTextInBounds($"Available Teams: {_leagueData.Teams.Count}", new Rectangle(168, 84, 260, 22), Color.White, uiRenderer.UiSmallFont);
+        uiRenderer.DrawTextInBounds(_statusMessage, new Rectangle(168, 108, Math.Max(420, _viewport.X - 260), 22), Color.Gold, uiRenderer.UiSmallFont);
 
         for (var i = 0; i < _leagueData.Teams.Count; i++)
         {
@@ -129,6 +159,17 @@ public sealed class TeamSelectionScreen : GameScreen
     }
 
     private Rectangle GetBackButtonBounds() => ScreenLayout.BackButtonBounds(_viewport);
+
+    private void BeginTeamSelection(TeamImportDto team)
+    {
+        _loadingProgress = new AsyncOperationProgressView("Loading Franchise", $"Preparing {team.Name}.", 0d);
+        _statusMessage = $"Loading {team.Name}...";
+        _teamLoadTask = Task.Run(() =>
+        {
+            _franchiseSession.SelectTeam(team, progress => _loadingProgress = progress);
+            _startNewFranchiseUseCase.Execute();
+        });
+    }
 
     private Rectangle GetTeamButtonBounds(int index)
     {

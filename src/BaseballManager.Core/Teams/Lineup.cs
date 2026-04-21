@@ -7,6 +7,13 @@ public sealed class Lineup
     public Guid TeamId { get; init; }
     public List<Guid> BattingOrder { get; } = new();
 
+    public Lineup Clone()
+    {
+        var copy = new Lineup { TeamId = TeamId };
+        copy.BattingOrder.AddRange(BattingOrder);
+        return copy;
+    }
+
     public bool IsValidForRoster(IEnumerable<Player> roster)
     {
         var rosterIds = roster.Select(player => player.Id).ToHashSet();

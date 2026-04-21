@@ -1,3 +1,4 @@
+using BaseballManager.Core.Teams;
 using BaseballManager.Game.Data;
 using BaseballManager.Game.Graphics.Rendering;
 using BaseballManager.Game.Input;
@@ -17,10 +18,14 @@ public sealed class LineupScreen : GameScreen
     private readonly ButtonControl _previousPageButton;
     private readonly ButtonControl _nextPageButton;
     private readonly ButtonControl _clearSlotButton;
+    private readonly ButtonControl _designateDhButton;
+    private readonly ButtonControl _vsLeftPitcherButton;
+    private readonly ButtonControl _vsRightPitcherButton;
     private MouseState _previousMouseState = default;
     private int _pageIndex;
     private Guid? _selectedPlayerId;
     private int? _selectedSlot;
+    private LineupPresetType _selectedPreset = LineupPresetType.VsRightHandedPitcher;
     private bool _isDragging;
     private Guid? _draggedPlayerId;
     private string _draggedPlayerName = string.Empty;
@@ -29,7 +34,12 @@ public sealed class LineupScreen : GameScreen
     private Point _viewport = new(1280, 720);
     private Rectangle BackButtonBounds => ScreenLayout.BackButtonBounds(_viewport);
     private readonly PlayerContextOverlay _playerContextOverlay = new();
-    private string _statusMessage = "A valid lineup needs coverage for C, 1B, 2B, 3B, SS, LF, CF, RF, and DH. DH can be any player.";
+    private string _statusMessage = "A valid lineup needs coverage for C, 1B, 2B, 3B, SS, LF, CF, RF, and one explicit DH.";
+    private List<LineupDisplayRow> _cachedLineupRows = [];
+    private List<LineupDisplayRow> _cachedBenchRows = [];
+    private IReadOnlyList<FranchiseRosterEntry> _cachedSelectedTeamRoster = [];
+    private LineupValidationView _cachedLineupValidation = new(false, string.Empty, [], []);
+    private string _selectedPlayerRecentStatsLine = "Last 10 G: select a player to view recent batting stats.";
 
     public LineupScreen(ScreenManager screenManager, ImportedLeagueData leagueData, FranchiseSession franchiseSession)
     {
@@ -56,11 +66,33 @@ public sealed class LineupScreen : GameScreen
             {
                 if (_selectedSlot.HasValue)
                 {
-                    _franchiseSession.ClearLineupSlot(_selectedSlot.Value);
+                    _franchiseSession.ClearLineupSlot(_selectedSlot.Value, _selectedPreset);
                     _selectedPlayerId = null;
-                    _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
+                    RefreshViewData();
                 }
             }
+        };
+        _designateDhButton = new ButtonControl
+        {
+            Label = "Mark DH",
+            OnClick = () =>
+            {
+                if (_selectedPlayerId.HasValue)
+                {
+                    _franchiseSession.SetSelectedTeamDesignatedHitter(_selectedPlayerId.Value, _selectedPreset);
+                    RefreshViewData();
+                }
+            }
+        };
+        _vsLeftPitcherButton = new ButtonControl
+        {
+            Label = "Vs LHP",
+            OnClick = () => SwitchLineupPreset(LineupPresetType.VsLeftHandedPitcher)
+        };
+        _vsRightPitcherButton = new ButtonControl
+        {
+            Label = "Vs RHP",
+            OnClick = () => SwitchLineupPreset(LineupPresetType.VsRightHandedPitcher)
         };
     }
 
@@ -72,9 +104,10 @@ public sealed class LineupScreen : GameScreen
         _isDragging = false;
         _draggedPlayerId = null;
         _draggedPlayerName = string.Empty;
+        _selectedPreset = _franchiseSession.GetSelectedTeamPregameLineupPreset();
         _ignoreClicksUntilRelease = true;
         _playerContextOverlay.Close();
-        _statusMessage = "A valid lineup needs coverage for C, 1B, 2B, 3B, SS, LF, CF, RF, and DH. DH can be any player.";
+        RefreshViewData();
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -118,13 +151,21 @@ public sealed class LineupScreen : GameScreen
             {
                 _backButton.Click();
             }
+            else if (GetVsLeftPitcherBounds().Contains(mousePosition))
+            {
+                _vsLeftPitcherButton.Click();
+            }
+            else if (GetVsRightPitcherBounds().Contains(mousePosition))
+            {
+                _vsRightPitcherButton.Click();
+            }
             else if (GetPreviousPageBounds().Contains(mousePosition))
             {
                 _previousPageButton.Click();
             }
             else if (GetNextPageBounds().Contains(mousePosition))
             {
-                var benchRows = GetBenchRows();
+                var benchRows = _cachedBenchRows;
                 var pageSize = GetBenchPageSize();
                 var maxPage = Math.Max(0, (int)Math.Ceiling(benchRows.Count / (double)pageSize) - 1);
                 if (_pageIndex < maxPage)
@@ -135,6 +176,10 @@ public sealed class LineupScreen : GameScreen
             else if (GetClearSlotBounds().Contains(mousePosition))
             {
                 _clearSlotButton.Click();
+            }
+            else if (GetDesignateDhBounds().Contains(mousePosition))
+            {
+                _designateDhButton.Click();
             }
             else if (TryStartDragFromLineupSlot(mousePosition))
             {
@@ -167,16 +212,18 @@ public sealed class LineupScreen : GameScreen
     {
         _viewport = new Point(uiRenderer.Viewport.Width, uiRenderer.Viewport.Height);
 
-        uiRenderer.DrawText("Lineup", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
+        uiRenderer.DrawText("Lineup Presets", new Vector2(168, 42), Color.White, uiRenderer.UiMediumFont);
         uiRenderer.DrawTextInBounds(_franchiseSession.SelectedTeamName, new Rectangle(168, 82, Math.Max(320, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+        DrawPresetButtons(uiRenderer);
+        uiRenderer.DrawTextInBounds($"Editing {GetPresetLabel(_selectedPreset)}. Upcoming game uses {GetPresetLabel(_franchiseSession.GetSelectedTeamPregameLineupPreset())}.", new Rectangle(100, 126, Math.Max(720, _viewport.X - 220), 22), Color.Gold, uiRenderer.UiSmallFont);
 
         var lineupPanelBounds = GetLineupPanelBounds();
         var benchPanelBounds = GetBenchPanelBounds();
         var headerY = lineupPanelBounds.Y - 28;
 
-        var lineupRows = GetLineupRows();
-        var benchRows = GetBenchRows();
-        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
+        var lineupRows = _cachedLineupRows;
+        var benchRows = _cachedBenchRows;
+        var lineupValidation = _cachedLineupValidation;
 
         if (lineupRows.Count == 0 && benchRows.Count == 0)
         {
@@ -184,11 +231,11 @@ public sealed class LineupScreen : GameScreen
         }
         else
         {
-            uiRenderer.DrawWrappedTextInBounds("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Rectangle(100, 126, Math.Max(560, _viewport.X - 220), 24), Color.White, uiRenderer.ScoreboardFont, 1);
-            uiRenderer.DrawTextInBounds($"Selected: {GetSelectedPlayerName()}", new Rectangle(100, 154, Math.Max(560, _viewport.X - 220), 22), Color.White, uiRenderer.ScoreboardFont);
-            uiRenderer.DrawTextInBounds(GetSelectedPlayerRecentStatsLine(), new Rectangle(100, 180, Math.Max(760, _viewport.X - 220), 22), Color.Gold, uiRenderer.UiSmallFont);
-            uiRenderer.DrawTextInBounds(lineupValidation.Summary, new Rectangle(100, 204, Math.Max(860, _viewport.X - 220), 22), lineupValidation.IsValid ? Color.LightGreen : Color.Orange, uiRenderer.UiSmallFont);
-            uiRenderer.DrawTextInBounds(_statusMessage, new Rectangle(100, 226, Math.Max(860, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
+            uiRenderer.DrawWrappedTextInBounds("Drag a player to a lineup slot to assign. Drag from a slot to move players.", new Rectangle(100, 150, Math.Max(560, _viewport.X - 220), 24), Color.White, uiRenderer.ScoreboardFont, 1);
+            uiRenderer.DrawTextInBounds($"Selected: {GetSelectedPlayerName()}", new Rectangle(100, 178, Math.Max(560, _viewport.X - 220), 22), Color.White, uiRenderer.ScoreboardFont);
+            uiRenderer.DrawTextInBounds(_selectedPlayerRecentStatsLine, new Rectangle(100, 204, Math.Max(760, _viewport.X - 220), 22), Color.Gold, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(lineupValidation.Summary, new Rectangle(100, 228, Math.Max(860, _viewport.X - 220), 22), lineupValidation.IsValid ? Color.LightGreen : Color.Orange, uiRenderer.UiSmallFont);
+            uiRenderer.DrawTextInBounds(_statusMessage, new Rectangle(100, 250, Math.Max(860, _viewport.X - 220), 22), Color.White, uiRenderer.UiSmallFont);
 
             DrawPositionAssignments(uiRenderer, lineupValidation);
 
@@ -201,7 +248,7 @@ public sealed class LineupScreen : GameScreen
                 var row = lineupRows.FirstOrDefault(entry => entry.LineupSlot == slot);
                 var label = row == null
                     ? $"{slot}. Empty"
-                    : $"{slot}. {Truncate(row.PlayerName, 18)} {row.PrimaryPosition} Age {row.Age}";
+                    : $"{slot}. {Truncate(row.PlayerName, 18)} {(row.IsDesignatedHitter ? "DH" : row.PrimaryPosition)} Age {row.Age}";
                 var slotHovered = bounds.Contains(Mouse.GetState().Position);
                 var isDropTarget = _isDragging && bounds.Contains(_dragPosition);
                 var isSelected = _selectedSlot == slot;
@@ -229,6 +276,8 @@ public sealed class LineupScreen : GameScreen
             DrawPagingButtons(uiRenderer, benchRows.Count, pageSize);
             var clearBounds = GetClearSlotBounds();
             uiRenderer.DrawButton(_clearSlotButton.Label, clearBounds, clearBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
+            var designateDhBounds = GetDesignateDhBounds();
+            uiRenderer.DrawButton(_designateDhButton.Label, designateDhBounds, designateDhBounds.Contains(Mouse.GetState().Position) ? Color.DarkGray : Color.Gray, Color.White);
         }
 
         var isHovered = BackButtonBounds.Contains(Mouse.GetState().Position);
@@ -279,6 +328,12 @@ public sealed class LineupScreen : GameScreen
         return new Rectangle(lineupPanelBounds.X, lineupPanelBounds.Bottom + 12, 140, 40);
     }
 
+    private Rectangle GetDesignateDhBounds()
+    {
+        var clearBounds = GetClearSlotBounds();
+        return new Rectangle(clearBounds.Right + 12, clearBounds.Y, 140, clearBounds.Height);
+    }
+
     private Rectangle GetLineupPanelBounds()
     {
         var width = Math.Max(420, (_viewport.X - 180) / 2);
@@ -323,6 +378,27 @@ public sealed class LineupScreen : GameScreen
         return new Rectangle(panel.X + 10, panel.Y + 14 + index * (rowHeight + 6), panel.Width - 20, rowHeight);
     }
 
+    private void DrawPresetButtons(UiRenderer uiRenderer)
+    {
+        var vsLeftBounds = GetVsLeftPitcherBounds();
+        var vsRightBounds = GetVsRightPitcherBounds();
+        var leftSelected = _selectedPreset == LineupPresetType.VsLeftHandedPitcher;
+        var rightSelected = _selectedPreset == LineupPresetType.VsRightHandedPitcher;
+
+        uiRenderer.DrawButton(_vsLeftPitcherButton.Label, vsLeftBounds, leftSelected ? Color.DarkOliveGreen : new Color(52, 74, 90), Color.White);
+        uiRenderer.DrawButton(_vsRightPitcherButton.Label, vsRightBounds, rightSelected ? Color.DarkOliveGreen : new Color(52, 74, 90), Color.White);
+    }
+
+    private Rectangle GetVsLeftPitcherBounds()
+    {
+        return new Rectangle(100, 112, 140, 34);
+    }
+
+    private Rectangle GetVsRightPitcherBounds()
+    {
+        return new Rectangle(250, 112, 140, 34);
+    }
+
     private bool TryStartDragFromLineupSlot(Point position)
     {
         for (var slot = 1; slot <= 9; slot++)
@@ -333,7 +409,7 @@ public sealed class LineupScreen : GameScreen
             }
 
             _selectedSlot = slot;
-            var slotPlayer = GetLineupRows().FirstOrDefault(entry => entry.LineupSlot == slot);
+            var slotPlayer = _cachedLineupRows.FirstOrDefault(entry => entry.LineupSlot == slot);
             if (slotPlayer != null)
             {
                 BeginDrag(slotPlayer.PlayerId, slotPlayer.PlayerName, position);
@@ -395,7 +471,7 @@ public sealed class LineupScreen : GameScreen
     private bool TryStartDragFromBench(Point position)
     {
         var pageSize = GetBenchPageSize();
-        var visibleRows = GetBenchRows().Skip(_pageIndex * pageSize).Take(pageSize).ToList();
+        var visibleRows = _cachedBenchRows.Skip(_pageIndex * pageSize).Take(pageSize).ToList();
         for (var i = 0; i < visibleRows.Count; i++)
         {
             if (GetBenchRowBounds(i).Contains(position))
@@ -424,8 +500,8 @@ public sealed class LineupScreen : GameScreen
 
             _selectedSlot = slot;
             _selectedPlayerId = _draggedPlayerId;
-            _franchiseSession.AssignLineupSlot(_draggedPlayerId.Value, slot);
-            _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
+            _franchiseSession.AssignLineupSlot(_draggedPlayerId.Value, slot, _selectedPreset);
+            RefreshViewData();
             return true;
         }
 
@@ -439,6 +515,7 @@ public sealed class LineupScreen : GameScreen
         _draggedPlayerName = playerName;
         _dragPosition = position;
         _isDragging = true;
+        UpdateSelectedPlayerDetails();
     }
 
     private bool TryOpenPlayerContextMenu(Point position)
@@ -452,7 +529,7 @@ public sealed class LineupScreen : GameScreen
                 continue;
             }
 
-            var slotPlayer = GetLineupRows().FirstOrDefault(entry => entry.LineupSlot == slot);
+            var slotPlayer = _cachedLineupRows.FirstOrDefault(entry => entry.LineupSlot == slot);
             if (slotPlayer != null && orgRosterById.TryGetValue(slotPlayer.PlayerId, out var rosterPlayer))
             {
                 OpenPlayerContext(position, rosterPlayer);
@@ -461,7 +538,7 @@ public sealed class LineupScreen : GameScreen
         }
 
         var pageSize = GetBenchPageSize();
-        var visibleRows = GetBenchRows().Skip(_pageIndex * pageSize).Take(pageSize).ToList();
+        var visibleRows = _cachedBenchRows.Skip(_pageIndex * pageSize).Take(pageSize).ToList();
         for (var i = 0; i < visibleRows.Count; i++)
         {
             if (!GetBenchRowBounds(i).Contains(position))
@@ -482,6 +559,7 @@ public sealed class LineupScreen : GameScreen
     private void OpenPlayerContext(Point position, OrganizationRosterPlayerView player)
     {
         _selectedPlayerId = player.PlayerId;
+        UpdateSelectedPlayerDetails();
         var rosterActions = new List<PlayerContextActionView>
         {
             new(PlayerContextAction.AssignToFortyMan, "Add To 40-Man", player.CanAssignToFortyMan),
@@ -531,21 +609,81 @@ public sealed class LineupScreen : GameScreen
                 break;
         }
 
-        _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
+        RefreshViewData();
     }
 
     private List<LineupDisplayRow> GetLineupRows()
     {
-        return _franchiseSession.GetLineupPlayers()
-            .Select(row => new LineupDisplayRow(row.PlayerId, row.LineupSlot ?? 0, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age))
+        return _cachedSelectedTeamRoster
+            .Where(row => row.LineupSlot.HasValue)
+            .OrderBy(row => row.LineupSlot)
+            .ThenBy(row => row.PlayerName)
+            .Select(row => new LineupDisplayRow(row.PlayerId, row.LineupSlot ?? 0, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age, row.IsDesignatedHitter))
             .ToList();
     }
 
     private List<LineupDisplayRow> GetBenchRows()
     {
-        return _franchiseSession.GetBenchPlayers()
-            .Select(row => new LineupDisplayRow(row.PlayerId, 0, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age))
+        return _cachedSelectedTeamRoster
+            .Where(row => !row.LineupSlot.HasValue && row.PrimaryPosition is not "SP" and not "RP")
+            .OrderBy(row => row.PrimaryPosition)
+            .ThenBy(row => row.PlayerName)
+            .Select(row => new LineupDisplayRow(row.PlayerId, 0, row.PlayerName, row.PrimaryPosition, row.SecondaryPosition, row.Age, false))
             .ToList();
+    }
+
+    private void SwitchLineupPreset(LineupPresetType lineupPresetType)
+    {
+        if (_selectedPreset == lineupPresetType)
+        {
+            return;
+        }
+
+        _selectedPreset = lineupPresetType;
+        _pageIndex = 0;
+        _selectedPlayerId = null;
+        _selectedSlot = null;
+        _playerContextOverlay.Close();
+        RefreshViewData();
+    }
+
+    private void RefreshViewData()
+    {
+        _cachedSelectedTeamRoster = _franchiseSession.GetSelectedTeamRoster(_selectedPreset);
+        _cachedLineupRows = GetLineupRows();
+        _cachedBenchRows = GetBenchRows();
+        _cachedLineupValidation = _franchiseSession.GetSelectedTeamLineupValidation(_selectedPreset);
+        UpdateStatusMessage();
+        UpdateSelectedPlayerDetails();
+
+        var pageSize = GetBenchPageSize();
+        var maxPage = Math.Max(0, (int)Math.Ceiling(_cachedBenchRows.Count / (double)pageSize) - 1);
+        _pageIndex = Math.Min(_pageIndex, maxPage);
+    }
+
+    private void UpdateStatusMessage()
+    {
+        var validation = _cachedLineupValidation;
+        var designatedHitter = _franchiseSession.GetSelectedTeamDesignatedHitter(_selectedPreset);
+        var designatedHitterLabel = designatedHitter == null ? "No DH selected" : $"DH: {designatedHitter.PlayerName}";
+        _statusMessage = $"{validation.Summary} {designatedHitterLabel}.";
+    }
+
+    private void UpdateSelectedPlayerDetails()
+    {
+        if (!_selectedPlayerId.HasValue)
+        {
+            _selectedPlayerRecentStatsLine = "Last 10 G: select a player to view recent batting stats.";
+            return;
+        }
+
+        var recent = _franchiseSession.GetRecentPlayerStats(_selectedPlayerId.Value, 10);
+        _selectedPlayerRecentStatsLine = $"Last 10 G: GP {recent.GamesPlayed} | H {recent.Hits} | HR {recent.HomeRuns} | AVG {recent.BattingAverageDisplay} | OPS {recent.OpsDisplay} | SO {recent.Strikeouts}";
+    }
+
+    private static string GetPresetLabel(LineupPresetType lineupPresetType)
+    {
+        return lineupPresetType == LineupPresetType.VsLeftHandedPitcher ? "lineup vs LHP" : "lineup vs RHP";
     }
 
     private string GetSelectedPlayerName()
@@ -555,19 +693,8 @@ public sealed class LineupScreen : GameScreen
             return "None";
         }
 
-        var player = _franchiseSession.GetSelectedTeamRoster().FirstOrDefault(entry => entry.PlayerId == _selectedPlayerId.Value);
+        var player = _cachedSelectedTeamRoster.FirstOrDefault(entry => entry.PlayerId == _selectedPlayerId.Value);
         return player?.PlayerName ?? "None";
-    }
-
-    private string GetSelectedPlayerRecentStatsLine()
-    {
-        if (!_selectedPlayerId.HasValue)
-        {
-            return "Last 10 G: select a player to view recent batting stats.";
-        }
-
-        var recent = _franchiseSession.GetRecentPlayerStats(_selectedPlayerId.Value, 10);
-        return $"Last 10 G: GP {recent.GamesPlayed} | H {recent.Hits} | HR {recent.HomeRuns} | AVG {recent.BattingAverageDisplay} | OPS {recent.OpsDisplay} | SO {recent.Strikeouts}";
     }
 
     private static string Truncate(string value, int maxLength)
@@ -575,5 +702,5 @@ public sealed class LineupScreen : GameScreen
         return value.Length <= maxLength ? value : value[..maxLength];
     }
 
-    private sealed record LineupDisplayRow(Guid PlayerId, int LineupSlot, string PlayerName, string PrimaryPosition, string SecondaryPosition, int Age);
+    private sealed record LineupDisplayRow(Guid PlayerId, int LineupSlot, string PlayerName, string PrimaryPosition, string SecondaryPosition, int Age, bool IsDesignatedHitter);
 }

@@ -7,6 +7,7 @@ public sealed record MatchPlayerSnapshot(
     string FullName,
     string PrimaryPosition,
     string SecondaryPosition,
+    string DefensivePosition,
     int Age,
     int ContactRating,
     int PowerRating,

@@ -351,6 +351,16 @@ public sealed class TeamFranchiseState
 {
     public List<Guid?> LineupSlots { get; set; } = new();
 
+    public Guid? DesignatedHitterPlayerId { get; set; }
+
+    public List<Guid?> VsLeftHandedPitcherLineupSlots { get; set; } = new();
+
+    public Guid? VsLeftHandedPitcherDesignatedHitterPlayerId { get; set; }
+
+    public List<Guid?> VsRightHandedPitcherLineupSlots { get; set; } = new();
+
+    public Guid? VsRightHandedPitcherDesignatedHitterPlayerId { get; set; }
+
     public List<Guid?> RotationSlots { get; set; } = new();
 
     public bool AutoManageMinorLeaguePromotions { get; set; } = true;

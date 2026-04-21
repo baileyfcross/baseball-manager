@@ -28,6 +28,11 @@ public sealed class RosterImportDto
     [CsvHeader("Batting Order")]
     public int? LineupSlot { get; set; }
 
+    [CsvHeader("Defensive Position")]
+    [CsvHeader("Lineup Position")]
+    [CsvHeader("Field Position")]
+    public string DefensivePosition { get; set; } = string.Empty;
+
     [CsvHeader("Rotation Slot")]
     [CsvHeader("Rotation")]
     [CsvHeader("Starter Slot")]

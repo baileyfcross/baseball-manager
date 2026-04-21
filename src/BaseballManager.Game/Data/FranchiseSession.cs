@@ -3,6 +3,8 @@ using BaseballManager.Application.Transactions;
 using BaseballManager.Contracts.ImportDtos;
 using BaseballManager.Core.Drafts;
 using BaseballManager.Core.Economy;
+using BaseballManager.Core.Players;
+using BaseballManager.Core.Teams;
 using BaseballManager.Sim.AI;
 using BaseballManager.Sim.Economy;
 using BaseballManager.Sim.Engine;
@@ -48,6 +50,26 @@ public sealed class FranchiseSession
         Stamina,
         Durability
     }
+
+    private readonly record struct LineupSlotAssignments(
+        int VsLeftHandedPitcherIndex,
+        int VsRightHandedPitcherIndex,
+        bool IsVsLeftHandedPitcherDesignatedHitter,
+        bool IsVsRightHandedPitcherDesignatedHitter);
+
+    private readonly record struct LineupPresetConfiguration(List<Guid?> Slots, Guid? DesignatedHitterPlayerId);
+
+    private sealed record DefaultLineupCandidate(
+        Guid PlayerId,
+        string PlayerName,
+        string PrimaryPosition,
+        string SecondaryPosition,
+        int Age,
+        int OverallRating,
+        int ContactRating,
+        int PowerRating,
+        int DisciplineRating,
+        int SpeedRating);
 
     private static readonly string[] CoachRoleOrder = ["Manager", "Hitting Coach", "Pitching Coach", "Bench Coach", "Scouting Director", "Team Doctor", "Physiologist"];
     private static readonly string[] CoachFirstNames = ["Alex", "Jordan", "Sam", "Casey", "Drew", "Taylor", "Riley", "Morgan", "Cameron", "Jamie", "Hayden", "Avery"];
@@ -1634,19 +1656,25 @@ public sealed class FranchiseSession
         return _preferLiveBoxScore && GetLiveMatchState() is { IsGameOver: false };
     }
 
-    public void SelectTeam(TeamImportDto team)
+    public void SelectTeam(TeamImportDto team, Action<AsyncOperationProgressView>? reportProgress = null)
     {
+        ReportAsyncOperationProgress(reportProgress, "Loading Franchise", $"Loading {team.Name} and restoring franchise state.", 0.05d);
         SelectedTeam = team;
         PendingLiveMatchMode = LiveMatchMode.Franchise;
         _saveState.SelectedTeamName = team.Name;
         _saveState.CurrentSeasonYear = 0;
         _saveState.CurrentFranchiseDate = default;
         _saveState.LastOffseasonSummary = null;
+        ReportAsyncOperationProgress(reportProgress, "Loading Franchise", "Restoring any legacy live match data for the selected club.", 0.2d);
         MigrateLegacyFranchiseMatchIfNeeded(team.Name);
+        ReportAsyncOperationProgress(reportProgress, "Loading Franchise", "Initializing the franchise calendar and season markers.", 0.45d);
         EnsureFranchiseDateInitialized();
         EnsureSeasonYearInitialized();
+        ReportAsyncOperationProgress(reportProgress, "Loading Franchise", "Synchronizing imported players, ratings, and roster mappings.", 0.75d);
         EnsureImportedPlayerMappingsAreSynchronized();
+        ReportAsyncOperationProgress(reportProgress, "Loading Franchise", "Saving the franchise snapshot.", 0.92d);
         _stateStore.Save(_saveState);
+        ReportAsyncOperationProgress(reportProgress, "Loading Franchise", $"{team.Name} is ready.", 1d);
     }
 
     public PlayerHiddenRatingsState GetPlayerRatings(Guid playerId, string fullName, string primaryPosition, string secondaryPosition, int age)
@@ -2475,25 +2503,25 @@ public sealed class FranchiseSession
         InitializeLineupSlots(targetTeamState, targetTeamName);
         InitializeRotationSlots(targetTeamState, targetTeamName);
 
-        var offeredLineupIndex = FindPlayerSlotIndex(selectedTeamState.LineupSlots, offeredPlayerId);
+        var offeredLineupAssignments = CaptureLineupSlotAssignments(selectedTeamState, selectedTeamName, offeredPlayerId);
         var offeredRotationIndex = FindPlayerSlotIndex(selectedTeamState.RotationSlots, offeredPlayerId);
-        var targetLineupIndex = FindPlayerSlotIndex(targetTeamState.LineupSlots, targetPlayerId);
+        var targetLineupAssignments = CaptureLineupSlotAssignments(targetTeamState, targetTeamName, targetPlayerId);
         var targetRotationIndex = FindPlayerSlotIndex(targetTeamState.RotationSlots, targetPlayerId);
 
         _saveState.PlayerAssignments[targetPlayerId] = selectedTeamName;
         _saveState.PlayerAssignments[offeredPlayerId] = targetTeamName;
 
-        ClearPlayerFromSlots(selectedTeamState.LineupSlots, offeredPlayerId);
+        ClearPlayerFromAllLineupSlots(selectedTeamState, selectedTeamName, offeredPlayerId);
         ClearPlayerFromSlots(selectedTeamState.RotationSlots, offeredPlayerId);
-        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(selectedTeamState, selectedTeamName, targetPlayerId);
         ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
-        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(targetTeamState, targetTeamName, targetPlayerId);
         ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
-        ClearPlayerFromSlots(targetTeamState.LineupSlots, offeredPlayerId);
+        ClearPlayerFromAllLineupSlots(targetTeamState, targetTeamName, offeredPlayerId);
         ClearPlayerFromSlots(targetTeamState.RotationSlots, offeredPlayerId);
 
-        TryAssignPlayerToPreviousSlots(selectedTeamState, targetPlayerId, targetPlayer.PrimaryPosition, offeredLineupIndex, offeredRotationIndex);
-        TryAssignPlayerToPreviousSlots(targetTeamState, offeredPlayerId, offeredPlayer.PrimaryPosition, targetLineupIndex, targetRotationIndex);
+        TryAssignPlayerToPreviousSlots(selectedTeamState, selectedTeamName, targetPlayerId, targetPlayer.PrimaryPosition, offeredLineupAssignments, offeredRotationIndex);
+        TryAssignPlayerToPreviousSlots(targetTeamState, targetTeamName, offeredPlayerId, offeredPlayer.PrimaryPosition, targetLineupAssignments, targetRotationIndex);
 
         AddTransferRecord(selectedTeamName, $"Acquired {targetPlayer.FullName} from {targetTeamName} for {offeredPlayer.FullName}.");
         AddTransferRecord(targetTeamName, $"Sent {targetPlayer.FullName} to {selectedTeamName} for {offeredPlayer.FullName}.");
@@ -2558,9 +2586,9 @@ public sealed class FranchiseSession
         InitializeRotationSlots(selectedTeamState, selectedTeamName);
         InitializeLineupSlots(targetTeamState, targetTeamName);
         InitializeRotationSlots(targetTeamState, targetTeamName);
-        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(targetTeamState, targetTeamName, targetPlayerId);
         ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
-        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(selectedTeamState, selectedTeamName, targetPlayerId);
         ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
 
         MovePlayerContract(targetPlayerId, targetTeamState.Economy, selectedTeamState.Economy, targetPlayer.FullName);
@@ -2710,13 +2738,13 @@ public sealed class FranchiseSession
         // Clear players from lineup/rotation slots
         foreach (var outgoingPlayerId in uniqueOfferedIds)
         {
-            ClearPlayerFromSlots(selectedTeamState.LineupSlots, outgoingPlayerId);
+            ClearPlayerFromAllLineupSlots(selectedTeamState, selectedTeamName, outgoingPlayerId);
             ClearPlayerFromSlots(selectedTeamState.RotationSlots, outgoingPlayerId);
         }
 
-        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(targetTeamState, targetTeamName, targetPlayerId);
         ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
-        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(selectedTeamState, selectedTeamName, targetPlayerId);
         ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
 
         // Move contracts
@@ -2850,9 +2878,9 @@ public sealed class FranchiseSession
         InitializeRotationSlots(targetTeamState, targetTeamName);
 
         var firstOfferedPlayerId = uniqueOfferedIds[0];
-        var incomingLineupIndex = FindPlayerSlotIndex(selectedTeamState.LineupSlots, firstOfferedPlayerId);
+        var incomingLineupAssignments = CaptureLineupSlotAssignments(selectedTeamState, selectedTeamName, firstOfferedPlayerId);
         var incomingRotationIndex = FindPlayerSlotIndex(selectedTeamState.RotationSlots, firstOfferedPlayerId);
-        var targetLineupIndex = FindPlayerSlotIndex(targetTeamState.LineupSlots, targetPlayerId);
+        var targetLineupAssignments = CaptureLineupSlotAssignments(targetTeamState, targetTeamName, targetPlayerId);
         var targetRotationIndex = FindPlayerSlotIndex(targetTeamState.RotationSlots, targetPlayerId);
 
         _saveState.PlayerAssignments[targetPlayerId] = selectedTeamName;
@@ -2861,27 +2889,27 @@ public sealed class FranchiseSession
             _saveState.PlayerAssignments[offeredPlayerId] = targetTeamName;
         }
 
-        ClearPlayerFromSlots(selectedTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(selectedTeamState, selectedTeamName, targetPlayerId);
         ClearPlayerFromSlots(selectedTeamState.RotationSlots, targetPlayerId);
-        ClearPlayerFromSlots(targetTeamState.LineupSlots, targetPlayerId);
+        ClearPlayerFromAllLineupSlots(targetTeamState, targetTeamName, targetPlayerId);
         ClearPlayerFromSlots(targetTeamState.RotationSlots, targetPlayerId);
 
         foreach (var offeredPlayerId in uniqueOfferedIds)
         {
-            ClearPlayerFromSlots(selectedTeamState.LineupSlots, offeredPlayerId);
+            ClearPlayerFromAllLineupSlots(selectedTeamState, selectedTeamName, offeredPlayerId);
             ClearPlayerFromSlots(selectedTeamState.RotationSlots, offeredPlayerId);
-            ClearPlayerFromSlots(targetTeamState.LineupSlots, offeredPlayerId);
+            ClearPlayerFromAllLineupSlots(targetTeamState, targetTeamName, offeredPlayerId);
             ClearPlayerFromSlots(targetTeamState.RotationSlots, offeredPlayerId);
         }
 
-        TryAssignPlayerToPreviousSlots(selectedTeamState, targetPlayerId, targetPlayer.PrimaryPosition, incomingLineupIndex, incomingRotationIndex);
+        TryAssignPlayerToPreviousSlots(selectedTeamState, selectedTeamName, targetPlayerId, targetPlayer.PrimaryPosition, incomingLineupAssignments, incomingRotationIndex);
 
         for (var i = 0; i < offeredPlayers.Count; i++)
         {
             var offeredPlayer = offeredPlayers[i];
-            var lineupIndex = i == 0 ? targetLineupIndex : -1;
+            var lineupAssignments = i == 0 ? targetLineupAssignments : default;
             var rotationIndex = i == 0 ? targetRotationIndex : -1;
-            TryAssignPlayerToPreviousSlots(targetTeamState, offeredPlayer.PlayerId, offeredPlayer.PrimaryPosition, lineupIndex, rotationIndex);
+            TryAssignPlayerToPreviousSlots(targetTeamState, targetTeamName, offeredPlayer.PlayerId, offeredPlayer.PrimaryPosition, lineupAssignments, rotationIndex);
         }
 
         MovePlayerContract(targetPlayerId, targetTeamState.Economy, selectedTeamState.Economy, targetPlayer.FullName);
@@ -3202,7 +3230,7 @@ public sealed class FranchiseSession
         return SelectedTeam != null && !IsRegularSeasonComplete() && !IsSeasonAdvanceBlockedByPendingDraftWork();
     }
 
-    public bool SimulateToEndOfSeason(out string statusMessage)
+    public bool SimulateToEndOfSeason(out string statusMessage, Action<AsyncOperationProgressView>? reportProgress = null)
     {
         if (SelectedTeam == null)
         {
@@ -3229,6 +3257,9 @@ public sealed class FranchiseSession
         var selectedTeamGames = 0;
         var totalLeagueGames = 0;
         var practiceDays = 0;
+        var totalDaysToSimulate = Math.Max(1, (seasonEnd - startDate).Days + 1);
+
+        ReportAsyncOperationProgress(reportProgress, "Simming Season", $"Preparing to sim from {startDate:MMM d} through {seasonEnd:MMM d}.", 0d);
 
         while (GetCurrentFranchiseDate().Date <= seasonEnd)
         {
@@ -3244,6 +3275,13 @@ public sealed class FranchiseSession
                 practiceDays++;
             }
 
+            var progressValue = Math.Clamp(daysSimulated / (double)totalDaysToSimulate, 0d, 0.98d);
+            ReportAsyncOperationProgress(
+                reportProgress,
+                "Simming Season",
+                $"{currentDate:MMM d}: {todaysGames.Count} league game(s), {selectedTeamGames} {selectedTeamName} game(s) counted so far, {practiceDays} practice / recovery day(s).",
+                progressValue);
+
             if (!SimulateCurrentDayInternal(saveAfterAdvance: false, out statusMessage))
             {
                 return false;
@@ -3257,11 +3295,13 @@ public sealed class FranchiseSession
             }
         }
 
+        ReportAsyncOperationProgress(reportProgress, "Simming Season", "Saving the completed season simulation.", 0.99d);
         ClearLiveMatchState(LiveMatchMode.Franchise);
         Save();
         statusMessage = IsSeasonAdvanceBlockedByPendingDraftWork()
             ? $"Simmed from {startDate:MMM d} through season end: {daysSimulated} day(s), {selectedTeamGames} {selectedTeamName} game(s), {totalLeagueGames} league game(s), and {practiceDays} practice / recovery day(s). {GetNextSeasonBlockerMessage()}"
             : $"Simmed from {startDate:MMM d} through season end: {daysSimulated} day(s), {selectedTeamGames} {selectedTeamName} game(s), {totalLeagueGames} league game(s), and {practiceDays} practice / recovery day(s).";
+        ReportAsyncOperationProgress(reportProgress, "Simming Season", statusMessage, 1d);
         return true;
     }
 
@@ -3708,8 +3748,8 @@ public sealed class FranchiseSession
 
         var useFranchiseSelectionsForAway = SelectedTeam != null && string.Equals(SelectedTeam.Name, awayTeam.Name, StringComparison.OrdinalIgnoreCase);
         var useFranchiseSelectionsForHome = SelectedTeam != null && string.Equals(SelectedTeam.Name, homeTeam.Name, StringComparison.OrdinalIgnoreCase);
-        var awaySnapshot = BuildTeamSnapshot(awayTeam, useFranchiseSelectionsForAway);
-        var homeSnapshot = BuildTeamSnapshot(homeTeam, useFranchiseSelectionsForHome);
+        var awaySnapshot = BuildTeamSnapshot(awayTeam, homeTeam.Name, useFranchiseSelectionsForAway);
+        var homeSnapshot = BuildTeamSnapshot(homeTeam, awayTeam.Name, useFranchiseSelectionsForHome);
 
         preparedGame = new PreparedGameSimulation(scheduledGame, awaySnapshot, homeSnapshot, awayTeam.Abbreviation, homeTeam.Abbreviation);
         summary = string.Empty;
@@ -3875,21 +3915,21 @@ public sealed class FranchiseSession
         RecordRecentGameStats(finalState);
     }
 
-    public IReadOnlyList<FranchiseRosterEntry> GetSelectedTeamRoster()
+    public IReadOnlyList<FranchiseRosterEntry> GetSelectedTeamRoster(LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
     {
-        return SelectedTeam == null ? [] : GetTeamRoster(SelectedTeam.Name);
+        return SelectedTeam == null ? [] : GetTeamRoster(SelectedTeam.Name, lineupPresetType);
     }
 
-    public IReadOnlyList<FranchiseRosterEntry> GetLineupPlayers()
+    public IReadOnlyList<FranchiseRosterEntry> GetLineupPlayers(LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
     {
-        return GetSelectedTeamRoster()
+        return GetSelectedTeamRoster(lineupPresetType)
             .Where(entry => entry.LineupSlot.HasValue)
             .OrderBy(entry => entry.LineupSlot)
             .ThenBy(entry => entry.PlayerName)
             .ToList();
     }
 
-    public LineupValidationView GetSelectedTeamLineupValidation()
+    public LineupValidationView GetSelectedTeamLineupValidation(LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
     {
         if (SelectedTeam == null)
         {
@@ -3900,12 +3940,23 @@ public sealed class FranchiseSession
                 BuildEmptyLineupPositionAssignments(["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH"]));
         }
 
-        return BuildLineupValidation(GetLineupPlayers());
+        return BuildLineupValidation(GetLineupPlayers(lineupPresetType));
     }
 
-    public IReadOnlyList<FranchiseRosterEntry> GetBenchPlayers()
+    public LineupPresetType GetSelectedTeamPregameLineupPreset()
     {
-        return GetSelectedTeamRoster()
+        var opposingStarter = GetSelectedTeamPregameOpposingStarter();
+        return ResolveLineupPresetType(opposingStarter?.Throws ?? Handedness.Right);
+    }
+
+    public LineupValidationView GetSelectedTeamPregameLineupValidation()
+    {
+        return GetSelectedTeamLineupValidation(GetSelectedTeamPregameLineupPreset());
+    }
+
+    public IReadOnlyList<FranchiseRosterEntry> GetBenchPlayers(LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
+    {
+        return GetSelectedTeamRoster(lineupPresetType)
             .Where(entry => !entry.LineupSlot.HasValue && entry.PrimaryPosition is not "SP" and not "RP")
             .OrderBy(entry => entry.PrimaryPosition)
             .ThenBy(entry => entry.PlayerName)
@@ -3940,7 +3991,38 @@ public sealed class FranchiseSession
         return SelectStartingPitcher(GetTeamRoster(teamName), teamName);
     }
 
-    public void AssignLineupSlot(Guid playerId, int slotNumber)
+    private FranchiseRosterEntry? GetSelectedTeamPregameOpposingStarter()
+    {
+        if (SelectedTeam == null)
+        {
+            return null;
+        }
+
+        var nextGame = GetNextScheduledGame();
+        if (nextGame == null)
+        {
+            return null;
+        }
+
+        var opponentTeamName = string.Equals(nextGame.HomeTeamName, SelectedTeam.Name, StringComparison.OrdinalIgnoreCase)
+            ? nextGame.AwayTeamName
+            : nextGame.HomeTeamName;
+        return GetScheduledStartingPitcher(opponentTeamName);
+    }
+
+    private LineupPresetType GetLineupPresetForOpponent(string opposingTeamName)
+    {
+        return ResolveLineupPresetType(GetScheduledStartingPitcher(opposingTeamName)?.Throws ?? Handedness.Right);
+    }
+
+    private static LineupPresetType ResolveLineupPresetType(Handedness pitcherThrows)
+    {
+        return pitcherThrows == Handedness.Left
+            ? LineupPresetType.VsLeftHandedPitcher
+            : LineupPresetType.VsRightHandedPitcher;
+    }
+
+    public void AssignLineupSlot(Guid playerId, int slotNumber, LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
     {
         if (SelectedTeam == null || slotNumber < 1 || slotNumber > 9)
         {
@@ -3949,11 +4031,12 @@ public sealed class FranchiseSession
 
         var teamState = GetOrCreateTeamState(SelectedTeam.Name);
         InitializeLineupSlots(teamState, SelectedTeam.Name);
-        AssignPlayerToSlotWithSwap(teamState.LineupSlots, playerId, slotNumber - 1);
+        AssignPlayerToSlotWithSwap(GetLineupSlotsForPreset(teamState, SelectedTeam.Name, lineupPresetType), playerId, slotNumber - 1);
+        SanitizeDesignatedHitterForPreset(teamState, SelectedTeam.Name, lineupPresetType);
         Save();
     }
 
-    public void ClearLineupSlot(int slotNumber)
+    public void ClearLineupSlot(int slotNumber, LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
     {
         if (SelectedTeam == null || slotNumber < 1 || slotNumber > 9)
         {
@@ -3962,8 +4045,45 @@ public sealed class FranchiseSession
 
         var teamState = GetOrCreateTeamState(SelectedTeam.Name);
         InitializeLineupSlots(teamState, SelectedTeam.Name);
-        teamState.LineupSlots[slotNumber - 1] = null;
+        var lineupSlots = GetLineupSlotsForPreset(teamState, SelectedTeam.Name, lineupPresetType);
+        lineupSlots[slotNumber - 1] = null;
+        SanitizeDesignatedHitterForPreset(teamState, SelectedTeam.Name, lineupPresetType);
         Save();
+    }
+
+    public void SetSelectedTeamDesignatedHitter(Guid playerId, LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
+    {
+        if (SelectedTeam == null)
+        {
+            return;
+        }
+
+        var teamState = GetOrCreateTeamState(SelectedTeam.Name);
+        InitializeLineupSlots(teamState, SelectedTeam.Name);
+        var lineupSlots = GetLineupSlotsForPreset(teamState, SelectedTeam.Name, lineupPresetType);
+        if (!lineupSlots.Contains(playerId))
+        {
+            return;
+        }
+
+        SetDesignatedHitterPlayerIdForPreset(teamState, lineupPresetType, playerId);
+        Save();
+    }
+
+    public FranchiseRosterEntry? GetSelectedTeamDesignatedHitter(LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
+    {
+        if (SelectedTeam == null)
+        {
+            return null;
+        }
+
+        var designatedHitterPlayerId = GetDesignatedHitterPlayerId(SelectedTeam.Name, lineupPresetType);
+        if (!designatedHitterPlayerId.HasValue)
+        {
+            return null;
+        }
+
+        return GetSelectedTeamRoster(lineupPresetType).FirstOrDefault(player => player.PlayerId == designatedHitterPlayerId.Value);
     }
 
     public void AssignRotationSlot(Guid playerId, int slotNumber)
@@ -4109,7 +4229,12 @@ public sealed class FranchiseSession
     {
         if (string.Equals(position, "DH", StringComparison.OrdinalIgnoreCase))
         {
-            return true;
+            return player.IsDesignatedHitter;
+        }
+
+        if (player.IsDesignatedHitter)
+        {
+            return false;
         }
 
         return PositionMatchesLineupRole(player.PrimaryPosition, position)
@@ -4714,13 +4839,17 @@ public sealed class FranchiseSession
         return teamState;
     }
 
-    private IReadOnlyList<FranchiseRosterEntry> GetTeamRoster(string teamName)
+    private IReadOnlyList<FranchiseRosterEntry> GetTeamRoster(string teamName, LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
     {
+        var teamState = GetOrCreateTeamState(teamName);
+        InitializeLineupSlots(teamState, teamName);
+        InitializeRotationSlots(teamState, teamName);
         var rostersByPlayerId = _leagueData.Rosters
             .GroupBy(roster => roster.PlayerId)
             .ToDictionary(group => group.Key, group => group.First());
-        var lineupSlots = BuildLineupSlots(teamName);
-        var rotationSlots = BuildRotationSlots(teamName);
+        var lineupSlots = GetLineupSlotsForPreset(teamState, teamName, lineupPresetType);
+        var rotationSlots = teamState.RotationSlots;
+        var designatedHitterPlayerId = GetDesignatedHitterPlayerIdForPreset(teamState, lineupPresetType);
         var lineupMap = BuildSlotMap(lineupSlots);
         var rotationMap = BuildSlotMap(rotationSlots);
 
@@ -4741,7 +4870,9 @@ public sealed class FranchiseSession
                     secondaryPosition,
                     player.Age,
                     lineupMap.TryGetValue(player.PlayerId, out var lineupSlot) ? lineupSlot : null,
-                    rotationMap.TryGetValue(player.PlayerId, out var rotationSlot) ? rotationSlot : null);
+                    rotationMap.TryGetValue(player.PlayerId, out var rotationSlot) ? rotationSlot : null,
+                    BattingProfileFactory.ParseThrows(player.Throws),
+                        designatedHitterPlayerId == player.PlayerId);
             })
             .OrderBy(entry => entry.PlayerName)
             .ToList();
@@ -4759,11 +4890,11 @@ public sealed class FranchiseSession
             && IsPlayerOnFortyMan(playerId);
     }
 
-    private List<Guid?> BuildLineupSlots(string teamName)
+    private List<Guid?> BuildLineupSlots(string teamName, LineupPresetType lineupPresetType = LineupPresetType.VsRightHandedPitcher)
     {
         var teamState = GetOrCreateTeamState(teamName);
         InitializeLineupSlots(teamState, teamName);
-        return teamState.LineupSlots;
+        return GetLineupSlotsForPreset(teamState, teamName, lineupPresetType);
     }
 
     private List<Guid?> BuildRotationSlots(string teamName)
@@ -5397,12 +5528,7 @@ public sealed class FranchiseSession
                 continue;
             }
 
-            var firstTeam = teamPlayers
-                .OrderByDescending(GetMajorLeagueReadinessScore)
-                .ThenByDescending(player => player.Age)
-                .ThenBy(player => player.FullName, StringComparer.OrdinalIgnoreCase)
-                .Take(Math.Min(FirstTeamRosterSize, teamPlayers.Count))
-                .ToList();
+            var firstTeam = SelectInitialFirstTeamPlayers(teamPlayers);
 
             foreach (var player in firstTeam)
             {
@@ -5441,11 +5567,7 @@ public sealed class FranchiseSession
                 continue;
             }
 
-            var firstTeam = teamPlayers
-                .OrderByDescending(GetMajorLeagueReadinessScore)
-                .ThenByDescending(player => player.Age)
-                .Take(Math.Min(FirstTeamRosterSize, teamPlayers.Count))
-                .ToList();
+            var firstTeam = SelectInitialFirstTeamPlayers(teamPlayers);
 
             foreach (var player in firstTeam)
             {
@@ -5467,6 +5589,75 @@ public sealed class FranchiseSession
         }
 
         return fortyManRoster;
+    }
+
+    private List<PlayerImportDto> SelectInitialFirstTeamPlayers(IReadOnlyList<PlayerImportDto> teamPlayers)
+    {
+        var orderedPlayers = teamPlayers
+            .OrderByDescending(GetMajorLeagueReadinessScore)
+            .ThenByDescending(player => player.Age)
+            .ThenBy(player => player.FullName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var selectedPlayers = new List<PlayerImportDto>();
+        var selectedPlayerIds = new HashSet<Guid>();
+
+        AddInitialFirstTeamPlayers(selectedPlayers, selectedPlayerIds, orderedPlayers.Where(player => IsPitcherPosition(player.PrimaryPosition)), 13);
+        AddInitialFirstTeamPlayers(selectedPlayers, selectedPlayerIds, orderedPlayers.Where(IsImportedCatcher), 2);
+        AddInitialFirstTeamPlayers(selectedPlayers, selectedPlayerIds, orderedPlayers.Where(IsImportedInfielder), 6);
+        AddInitialFirstTeamPlayers(selectedPlayers, selectedPlayerIds, orderedPlayers.Where(IsImportedOutfielder), 5);
+        AddInitialFirstTeamPlayers(selectedPlayers, selectedPlayerIds, orderedPlayers, FirstTeamRosterSize - selectedPlayers.Count);
+
+        return selectedPlayers;
+    }
+
+    private static void AddInitialFirstTeamPlayers(
+        List<PlayerImportDto> selectedPlayers,
+        HashSet<Guid> selectedPlayerIds,
+        IEnumerable<PlayerImportDto> candidates,
+        int playerCount)
+    {
+        if (playerCount <= 0)
+        {
+            return;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (selectedPlayers.Count >= FirstTeamRosterSize || playerCount <= 0 || !selectedPlayerIds.Add(candidate.PlayerId))
+            {
+                continue;
+            }
+
+            selectedPlayers.Add(candidate);
+            playerCount--;
+        }
+    }
+
+    private static bool IsImportedCatcher(PlayerImportDto player)
+    {
+        return HasPosition(player, "C");
+    }
+
+    private static bool IsImportedInfielder(PlayerImportDto player)
+    {
+        return HasAnyPosition(player, ["1B", "2B", "3B", "SS", "IF"]);
+    }
+
+    private static bool IsImportedOutfielder(PlayerImportDto player)
+    {
+        return HasAnyPosition(player, ["LF", "CF", "RF", "OF"]);
+    }
+
+    private static bool HasAnyPosition(PlayerImportDto player, IReadOnlyList<string> positions)
+    {
+        return positions.Any(position => HasPosition(player, position));
+    }
+
+    private static bool HasPosition(PlayerImportDto player, string position)
+    {
+        return string.Equals(player.PrimaryPosition, position, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(player.SecondaryPosition, position, StringComparison.OrdinalIgnoreCase);
     }
 
     private void AssignAffiliateTier(
@@ -6738,18 +6929,53 @@ public sealed class FranchiseSession
 
     private void InitializeLineupSlots(TeamFranchiseState teamState, string teamName)
     {
-        if (teamState.LineupSlots.Count != 9)
+        var seededConfiguration = teamState.LineupSlots.Count == 9
+            ? new LineupPresetConfiguration(
+                CloneSlots(teamState.LineupSlots),
+                ResolveDesignatedHitterPlayerId(teamName, teamState.LineupSlots, teamState.DesignatedHitterPlayerId))
+            : BuildDefaultLineupConfiguration(teamName);
+
+        if (teamState.VsLeftHandedPitcherLineupSlots.Count != 9)
         {
-            teamState.LineupSlots = Enumerable.Repeat<Guid?>(null, 9).ToList();
-            foreach (var roster in _leagueData.Rosters.Where(roster =>
-                         string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) &&
-                         roster.LineupSlot is >= 1 and <= 9))
-            {
-                teamState.LineupSlots[roster.LineupSlot!.Value - 1] = roster.PlayerId;
-            }
+            teamState.VsLeftHandedPitcherLineupSlots = CloneSlots(seededConfiguration.Slots);
         }
 
-        SanitizeSlotsForCurrentRoster(teamState.LineupSlots, teamName);
+        if (!teamState.VsLeftHandedPitcherDesignatedHitterPlayerId.HasValue)
+        {
+            teamState.VsLeftHandedPitcherDesignatedHitterPlayerId = seededConfiguration.DesignatedHitterPlayerId;
+        }
+
+        if (teamState.VsRightHandedPitcherLineupSlots.Count != 9)
+        {
+            teamState.VsRightHandedPitcherLineupSlots = CloneSlots(seededConfiguration.Slots);
+        }
+
+        if (!teamState.VsRightHandedPitcherDesignatedHitterPlayerId.HasValue)
+        {
+            teamState.VsRightHandedPitcherDesignatedHitterPlayerId = seededConfiguration.DesignatedHitterPlayerId;
+        }
+
+        SanitizeSlotsForCurrentRoster(teamState.VsLeftHandedPitcherLineupSlots, teamName);
+        SanitizeSlotsForCurrentRoster(teamState.VsRightHandedPitcherLineupSlots, teamName);
+        SanitizeDesignatedHitterForPreset(teamState, teamName, LineupPresetType.VsLeftHandedPitcher);
+        SanitizeDesignatedHitterForPreset(teamState, teamName, LineupPresetType.VsRightHandedPitcher);
+
+        if (!BuildLineupValidation(teamName, teamState.VsLeftHandedPitcherLineupSlots, teamState.VsLeftHandedPitcherDesignatedHitterPlayerId).IsValid)
+        {
+            var autoConfiguration = BuildAutoLineupConfiguration(teamName);
+            teamState.VsLeftHandedPitcherLineupSlots = CloneSlots(autoConfiguration.Slots);
+            teamState.VsLeftHandedPitcherDesignatedHitterPlayerId = autoConfiguration.DesignatedHitterPlayerId;
+        }
+
+        if (!BuildLineupValidation(teamName, teamState.VsRightHandedPitcherLineupSlots, teamState.VsRightHandedPitcherDesignatedHitterPlayerId).IsValid)
+        {
+            var autoConfiguration = BuildAutoLineupConfiguration(teamName);
+            teamState.VsRightHandedPitcherLineupSlots = CloneSlots(autoConfiguration.Slots);
+            teamState.VsRightHandedPitcherDesignatedHitterPlayerId = autoConfiguration.DesignatedHitterPlayerId;
+        }
+
+        teamState.LineupSlots = CloneSlots(teamState.VsRightHandedPitcherLineupSlots);
+        teamState.DesignatedHitterPlayerId = teamState.VsRightHandedPitcherDesignatedHitterPlayerId;
     }
 
     private void InitializeRotationSlots(TeamFranchiseState teamState, string teamName)
@@ -6792,7 +7018,67 @@ public sealed class FranchiseSession
         }
     }
 
-    private void TryAssignPlayerToPreviousSlots(TeamFranchiseState teamState, Guid playerId, string primaryPosition, int lineupIndex, int rotationIndex)
+    private static List<Guid?> CloneSlots(IReadOnlyList<Guid?> sourceSlots)
+    {
+        return sourceSlots.Take(9).Concat(Enumerable.Repeat<Guid?>(null, Math.Max(0, 9 - sourceSlots.Count))).Take(9).ToList();
+    }
+
+    private LineupPresetConfiguration BuildDefaultLineupConfiguration(string teamName)
+    {
+        var slots = Enumerable.Repeat<Guid?>(null, 9).ToList();
+        Guid? designatedHitterPlayerId = null;
+        foreach (var roster in _leagueData.Rosters.Where(roster =>
+                     string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase) &&
+                     roster.LineupSlot is >= 1 and <= 9))
+        {
+            slots[roster.LineupSlot!.Value - 1] = roster.PlayerId;
+            if (string.Equals(roster.DefensivePosition, "DH", StringComparison.OrdinalIgnoreCase))
+            {
+                designatedHitterPlayerId = roster.PlayerId;
+            }
+        }
+
+        designatedHitterPlayerId = ResolveDesignatedHitterPlayerId(teamName, slots, designatedHitterPlayerId);
+        var importedConfiguration = new LineupPresetConfiguration(slots, designatedHitterPlayerId);
+        return BuildLineupValidation(teamName, importedConfiguration.Slots, importedConfiguration.DesignatedHitterPlayerId).IsValid
+            ? importedConfiguration
+            : BuildAutoLineupConfiguration(teamName);
+    }
+
+    private List<Guid?> GetLineupSlotsForPreset(TeamFranchiseState teamState, string teamName, LineupPresetType lineupPresetType)
+    {
+        return lineupPresetType == LineupPresetType.VsLeftHandedPitcher
+            ? teamState.VsLeftHandedPitcherLineupSlots
+            : teamState.VsRightHandedPitcherLineupSlots;
+    }
+
+    private LineupSlotAssignments CaptureLineupSlotAssignments(TeamFranchiseState teamState, string teamName, Guid playerId)
+    {
+        var vsLeftSlots = GetLineupSlotsForPreset(teamState, teamName, LineupPresetType.VsLeftHandedPitcher);
+        var vsRightSlots = GetLineupSlotsForPreset(teamState, teamName, LineupPresetType.VsRightHandedPitcher);
+        return new LineupSlotAssignments(
+            FindPlayerSlotIndex(vsLeftSlots, playerId),
+            FindPlayerSlotIndex(vsRightSlots, playerId),
+            teamState.VsLeftHandedPitcherDesignatedHitterPlayerId == playerId,
+            teamState.VsRightHandedPitcherDesignatedHitterPlayerId == playerId);
+    }
+
+    private void ClearPlayerFromAllLineupSlots(TeamFranchiseState teamState, string teamName, Guid playerId)
+    {
+        ClearPlayerFromSlots(GetLineupSlotsForPreset(teamState, teamName, LineupPresetType.VsLeftHandedPitcher), playerId);
+        ClearPlayerFromSlots(GetLineupSlotsForPreset(teamState, teamName, LineupPresetType.VsRightHandedPitcher), playerId);
+        if (teamState.VsLeftHandedPitcherDesignatedHitterPlayerId == playerId)
+        {
+            teamState.VsLeftHandedPitcherDesignatedHitterPlayerId = null;
+        }
+
+        if (teamState.VsRightHandedPitcherDesignatedHitterPlayerId == playerId)
+        {
+            teamState.VsRightHandedPitcherDesignatedHitterPlayerId = null;
+        }
+    }
+
+    private void TryAssignPlayerToPreviousSlots(TeamFranchiseState teamState, string teamName, Guid playerId, string primaryPosition, LineupSlotAssignments lineupAssignments, int rotationIndex)
     {
         var isPitcher = primaryPosition is "SP" or "RP";
 
@@ -6813,17 +7099,263 @@ public sealed class FranchiseSession
             return;
         }
 
+        AssignPlayerToPreviousLineupSlot(GetLineupSlotsForPreset(teamState, teamName, LineupPresetType.VsLeftHandedPitcher), playerId, lineupAssignments.VsLeftHandedPitcherIndex);
+        AssignPlayerToPreviousLineupSlot(GetLineupSlotsForPreset(teamState, teamName, LineupPresetType.VsRightHandedPitcher), playerId, lineupAssignments.VsRightHandedPitcherIndex);
+        if (lineupAssignments.IsVsLeftHandedPitcherDesignatedHitter)
+        {
+            SetDesignatedHitterPlayerIdForPreset(teamState, LineupPresetType.VsLeftHandedPitcher, playerId);
+        }
+
+        if (lineupAssignments.IsVsRightHandedPitcherDesignatedHitter)
+        {
+            SetDesignatedHitterPlayerIdForPreset(teamState, LineupPresetType.VsRightHandedPitcher, playerId);
+        }
+    }
+
+    private static void AssignPlayerToPreviousLineupSlot(List<Guid?> lineupSlots, Guid playerId, int lineupIndex)
+    {
         if (lineupIndex >= 0)
         {
-            AssignPlayerToSlotWithSwap(teamState.LineupSlots, playerId, lineupIndex);
+            AssignPlayerToSlotWithSwap(lineupSlots, playerId, lineupIndex);
             return;
         }
 
-        var firstOpenLineup = teamState.LineupSlots.FindIndex(slot => !slot.HasValue);
+        var firstOpenLineup = lineupSlots.FindIndex(slot => !slot.HasValue);
         if (firstOpenLineup >= 0)
         {
-            AssignPlayerToSlotWithSwap(teamState.LineupSlots, playerId, firstOpenLineup);
+            AssignPlayerToSlotWithSwap(lineupSlots, playerId, firstOpenLineup);
         }
+    }
+
+    private Guid? GetDesignatedHitterPlayerId(string teamName, LineupPresetType lineupPresetType)
+    {
+        var teamState = GetOrCreateTeamState(teamName);
+        InitializeLineupSlots(teamState, teamName);
+        return GetDesignatedHitterPlayerIdForPreset(teamState, lineupPresetType);
+    }
+
+    private bool IsDesignatedHitter(string teamName, LineupPresetType lineupPresetType, Guid playerId)
+    {
+        return GetDesignatedHitterPlayerId(teamName, lineupPresetType) == playerId;
+    }
+
+    private Guid? GetDesignatedHitterPlayerIdForPreset(TeamFranchiseState teamState, LineupPresetType lineupPresetType)
+    {
+        return lineupPresetType == LineupPresetType.VsLeftHandedPitcher
+            ? teamState.VsLeftHandedPitcherDesignatedHitterPlayerId
+            : teamState.VsRightHandedPitcherDesignatedHitterPlayerId;
+    }
+
+    private void SetDesignatedHitterPlayerIdForPreset(TeamFranchiseState teamState, LineupPresetType lineupPresetType, Guid? playerId)
+    {
+        if (lineupPresetType == LineupPresetType.VsLeftHandedPitcher)
+        {
+            teamState.VsLeftHandedPitcherDesignatedHitterPlayerId = playerId;
+            return;
+        }
+
+        teamState.VsRightHandedPitcherDesignatedHitterPlayerId = playerId;
+        teamState.DesignatedHitterPlayerId = playerId;
+    }
+
+    private void SanitizeDesignatedHitterForPreset(TeamFranchiseState teamState, string teamName, LineupPresetType lineupPresetType)
+    {
+        var lineupSlots = GetLineupSlotsForPreset(teamState, teamName, lineupPresetType);
+        var designatedHitterPlayerId = ResolveDesignatedHitterPlayerId(teamName, lineupSlots, GetDesignatedHitterPlayerIdForPreset(teamState, lineupPresetType));
+        SetDesignatedHitterPlayerIdForPreset(teamState, lineupPresetType, designatedHitterPlayerId);
+    }
+
+    private Guid? ResolveDesignatedHitterPlayerId(string teamName, IReadOnlyList<Guid?> lineupSlots, Guid? designatedHitterPlayerId)
+    {
+        var validPlayerIds = lineupSlots
+            .Where(playerId => playerId.HasValue)
+            .Select(playerId => playerId!.Value)
+            .ToHashSet();
+
+        if (designatedHitterPlayerId.HasValue && validPlayerIds.Contains(designatedHitterPlayerId.Value))
+        {
+            return designatedHitterPlayerId;
+        }
+
+        var importedDesignatedHitter = _leagueData.Rosters.FirstOrDefault(roster =>
+            string.Equals(roster.TeamName, teamName, StringComparison.OrdinalIgnoreCase)
+            && roster.LineupSlot is >= 1 and <= 9
+            && validPlayerIds.Contains(roster.PlayerId)
+            && string.Equals(roster.DefensivePosition, "DH", StringComparison.OrdinalIgnoreCase));
+        if (importedDesignatedHitter != null)
+        {
+            return importedDesignatedHitter.PlayerId;
+        }
+
+        return GetAllPlayers()
+            .Where(player => validPlayerIds.Contains(player.PlayerId))
+            .OrderByDescending(player => string.Equals(player.PrimaryPosition, "DH", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(player => string.Equals(player.SecondaryPosition, "DH", StringComparison.OrdinalIgnoreCase))
+            .Select(player => (Guid?)player.PlayerId)
+            .FirstOrDefault();
+    }
+
+    private LineupPresetConfiguration BuildAutoLineupConfiguration(string teamName)
+    {
+        var rosterImportsByPlayerId = _leagueData.Rosters
+            .GroupBy(roster => roster.PlayerId)
+            .ToDictionary(group => group.Key, group => group.First());
+
+        var candidates = GetAllPlayers()
+            .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Where(player => IsPlayerOnActiveTeamRoster(player.PlayerId))
+            .Where(player => player.PrimaryPosition is not "SP" and not "RP")
+            .Select(player =>
+            {
+                rosterImportsByPlayerId.TryGetValue(player.PlayerId, out var rosterImport);
+                var primaryPosition = string.IsNullOrWhiteSpace(rosterImport?.PrimaryPosition) ? player.PrimaryPosition : rosterImport.PrimaryPosition;
+                var secondaryPosition = string.IsNullOrWhiteSpace(rosterImport?.SecondaryPosition) ? player.SecondaryPosition : rosterImport.SecondaryPosition;
+                var ratings = GetPlayerRatings(player.PlayerId, player.FullName, primaryPosition, secondaryPosition, player.Age);
+                return new DefaultLineupCandidate(
+                    player.PlayerId,
+                    player.FullName,
+                    primaryPosition,
+                    secondaryPosition,
+                    player.Age,
+                    ratings.OverallRating,
+                    ratings.EffectiveContactRating,
+                    ratings.EffectivePowerRating,
+                    ratings.EffectiveDisciplineRating,
+                    ratings.EffectiveSpeedRating);
+            })
+            .OrderByDescending(candidate => candidate.OverallRating)
+            .ThenBy(candidate => candidate.PlayerName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            return new LineupPresetConfiguration(Enumerable.Repeat<Guid?>(null, 9).ToList(), null);
+        }
+
+        var selectedPlayers = new List<DefaultLineupCandidate>();
+        var selectedPlayerIds = new HashSet<Guid>();
+        foreach (var position in new[] { "C", "SS", "CF", "2B", "3B", "1B", "LF", "RF" })
+        {
+            var bestCandidate = candidates
+                .Where(candidate => !selectedPlayerIds.Contains(candidate.PlayerId))
+                .Select(candidate => new { Candidate = candidate, Score = GetLineupDefenseFitScore(candidate, position) })
+                .Where(entry => entry.Score > 0)
+                .OrderByDescending(entry => entry.Score)
+                .ThenByDescending(entry => entry.Candidate.OverallRating)
+                .ThenBy(entry => entry.Candidate.PlayerName, StringComparer.OrdinalIgnoreCase)
+                .Select(entry => entry.Candidate)
+                .FirstOrDefault();
+            if (bestCandidate == null)
+            {
+                continue;
+            }
+
+            selectedPlayers.Add(bestCandidate);
+            selectedPlayerIds.Add(bestCandidate.PlayerId);
+        }
+
+        var designatedHitter = candidates
+            .Where(candidate => !selectedPlayerIds.Contains(candidate.PlayerId))
+            .OrderByDescending(GetDesignatedHitterScore)
+            .ThenBy(candidate => candidate.PlayerName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        if (designatedHitter != null)
+        {
+            selectedPlayers.Add(designatedHitter);
+            selectedPlayerIds.Add(designatedHitter.PlayerId);
+        }
+
+        foreach (var remainingCandidate in candidates)
+        {
+            if (selectedPlayers.Count >= 9 || !selectedPlayerIds.Add(remainingCandidate.PlayerId))
+            {
+                continue;
+            }
+
+            selectedPlayers.Add(remainingCandidate);
+        }
+
+        var battingOrder = selectedPlayers
+            .Take(9)
+            .OrderByDescending(GetBattingOrderScore)
+            .ThenBy(candidate => candidate.PlayerName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new LineupPresetConfiguration(
+            battingOrder.Select(candidate => (Guid?)candidate.PlayerId).Concat(Enumerable.Repeat<Guid?>(null, Math.Max(0, 9 - battingOrder.Count))).Take(9).ToList(),
+            designatedHitter?.PlayerId);
+    }
+
+    private LineupValidationView BuildLineupValidation(string teamName, IReadOnlyList<Guid?> lineupSlots, Guid? designatedHitterPlayerId)
+    {
+        var rosterImportsByPlayerId = _leagueData.Rosters
+            .GroupBy(roster => roster.PlayerId)
+            .ToDictionary(group => group.Key, group => group.First());
+        var playersById = GetAllPlayers()
+            .Where(player => string.Equals(GetAssignedTeamName(player.PlayerId, player.TeamName), teamName, StringComparison.OrdinalIgnoreCase))
+            .Where(player => IsPlayerOnActiveTeamRoster(player.PlayerId))
+            .ToDictionary(player => player.PlayerId, player => player);
+
+        var lineupPlayers = lineupSlots
+            .Select((playerId, index) => new { PlayerId = playerId, Slot = index + 1 })
+            .Where(entry => entry.PlayerId.HasValue && playersById.ContainsKey(entry.PlayerId.Value))
+            .Select(entry =>
+            {
+                var player = playersById[entry.PlayerId!.Value];
+                rosterImportsByPlayerId.TryGetValue(player.PlayerId, out var rosterImport);
+                var primaryPosition = string.IsNullOrWhiteSpace(rosterImport?.PrimaryPosition) ? player.PrimaryPosition : rosterImport.PrimaryPosition;
+                var secondaryPosition = string.IsNullOrWhiteSpace(rosterImport?.SecondaryPosition) ? player.SecondaryPosition : rosterImport.SecondaryPosition;
+                return new FranchiseRosterEntry(
+                    player.PlayerId,
+                    player.FullName,
+                    primaryPosition,
+                    secondaryPosition,
+                    player.Age,
+                    entry.Slot,
+                    null,
+                    BattingProfileFactory.ParseThrows(player.Throws),
+                    designatedHitterPlayerId == player.PlayerId);
+            })
+            .ToList();
+
+        return BuildLineupValidation(lineupPlayers);
+    }
+
+    private static int GetLineupDefenseFitScore(DefaultLineupCandidate candidate, string position)
+    {
+        if (string.Equals(candidate.PrimaryPosition, position, StringComparison.OrdinalIgnoreCase))
+        {
+            return 300;
+        }
+
+        if (string.Equals(candidate.SecondaryPosition, position, StringComparison.OrdinalIgnoreCase))
+        {
+            return 220;
+        }
+
+        return position switch
+        {
+            "LF" or "CF" or "RF" when string.Equals(candidate.PrimaryPosition, "OF", StringComparison.OrdinalIgnoreCase) => 180,
+            "LF" or "CF" or "RF" when string.Equals(candidate.SecondaryPosition, "OF", StringComparison.OrdinalIgnoreCase) => 140,
+            "1B" or "2B" or "3B" or "SS" when string.Equals(candidate.PrimaryPosition, "IF", StringComparison.OrdinalIgnoreCase) => 180,
+            "1B" or "2B" or "3B" or "SS" when string.Equals(candidate.SecondaryPosition, "IF", StringComparison.OrdinalIgnoreCase) => 140,
+            _ => 0
+        };
+    }
+
+    private static int GetDesignatedHitterScore(DefaultLineupCandidate candidate)
+    {
+        var dhBonus = string.Equals(candidate.PrimaryPosition, "DH", StringComparison.OrdinalIgnoreCase)
+            ? 25
+            : string.Equals(candidate.SecondaryPosition, "DH", StringComparison.OrdinalIgnoreCase)
+                ? 10
+                : 0;
+        return (candidate.ContactRating * 4) + (candidate.PowerRating * 4) + (candidate.DisciplineRating * 2) + dhBonus;
+    }
+
+    private static int GetBattingOrderScore(DefaultLineupCandidate candidate)
+    {
+        return (candidate.ContactRating * 4) + (candidate.PowerRating * 4) + (candidate.DisciplineRating * 2) + candidate.SpeedRating;
     }
 
     private void AddTransferRecord(string teamName, string description)
@@ -7774,12 +8306,12 @@ public sealed class FranchiseSession
         return $"{(latestWonGame ? "W" : "L")}{streakCount}";
     }
 
-    public MatchTeamState CreateMatchTeamState(TeamImportDto team, bool preferFranchiseSelections)
+    public MatchTeamState CreateMatchTeamState(TeamImportDto team, string opposingTeamName, bool preferFranchiseSelections)
     {
-        return BuildTeamSnapshot(team, preferFranchiseSelections);
+        return BuildTeamSnapshot(team, opposingTeamName, preferFranchiseSelections);
     }
 
-    private MatchTeamState BuildTeamSnapshot(TeamImportDto team, bool preferFranchiseSelections)
+    private MatchTeamState BuildTeamSnapshot(TeamImportDto team, string opposingTeamName, bool preferFranchiseSelections)
     {
         List<MatchPlayerSnapshot> lineup;
         List<MatchPlayerSnapshot> bench;
@@ -7788,8 +8320,9 @@ public sealed class FranchiseSession
 
         if (preferFranchiseSelections)
         {
-            lineup = BuildSelectedTeamLineup();
-            bench = BuildSelectedTeamBench(lineup);
+            var lineupPresetType = GetLineupPresetForOpponent(opposingTeamName);
+            lineup = BuildSelectedTeamLineup(lineupPresetType);
+            bench = BuildSelectedTeamBench(lineup, lineupPresetType);
             bullpen = BuildSelectedTeamBullpen();
             pitcher = BuildSelectedTeamPitcher();
         }
@@ -7812,29 +8345,40 @@ public sealed class FranchiseSession
         return new MatchTeamState(team.Name, team.Abbreviation, lineup, pitcher, bench, bullpen);
     }
 
-    private List<MatchPlayerSnapshot> BuildSelectedTeamLineup()
+    private List<MatchPlayerSnapshot> BuildSelectedTeamLineup(LineupPresetType lineupPresetType)
     {
-        var lineup = GetLineupPlayers()
+        var lineupPlayers = GetLineupPlayers(lineupPresetType)
             .Where(player => !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
-            .OrderBy(player => player.LineupSlot)
-            .Select(player => CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age))
             .ToList();
 
-        var remainingPlayers = GetSelectedTeamRoster()
-            .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
+        var remainingPlayers = GetSelectedTeamRoster(lineupPresetType)
+            .Where(player => lineupPlayers.All(existing => existing.PlayerId != player.PlayerId) && player.PrimaryPosition is not "SP" and not "RP")
             .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
             .ThenBy(player => player.PlayerName)
             .ToList();
 
         foreach (var player in remainingPlayers)
         {
-            if (lineup.Count >= 9)
+            if (lineupPlayers.Count >= 9)
             {
                 break;
             }
 
-            lineup.Add(CreatePlayerSnapshot(player.PlayerId, player.PlayerName, player.PrimaryPosition, player.SecondaryPosition, player.Age));
+            lineupPlayers.Add(player);
         }
+
+        var defensiveAssignments = BuildLineupDefensiveAssignments(lineupPlayers);
+        var lineup = lineupPlayers
+            .OrderBy(player => player.LineupSlot ?? 99)
+            .ThenBy(player => player.PlayerName)
+            .Select(player => CreatePlayerSnapshot(
+                player.PlayerId,
+                player.PlayerName,
+                player.PrimaryPosition,
+                player.SecondaryPosition,
+                player.Age,
+                defensiveAssignments.GetValueOrDefault(player.PlayerId, player.IsDesignatedHitter ? "DH" : player.PrimaryPosition)))
+            .ToList();
 
         while (lineup.Count < 9)
         {
@@ -7857,9 +8401,9 @@ public sealed class FranchiseSession
             : CreatePlayerSnapshot(pitcher.PlayerId, pitcher.PlayerName, pitcher.PrimaryPosition, pitcher.SecondaryPosition, pitcher.Age);
     }
 
-    private List<MatchPlayerSnapshot> BuildSelectedTeamBench(IReadOnlyList<MatchPlayerSnapshot> lineup)
+    private List<MatchPlayerSnapshot> BuildSelectedTeamBench(IReadOnlyList<MatchPlayerSnapshot> lineup, LineupPresetType lineupPresetType)
     {
-        return GetBenchPlayers()
+        return GetBenchPlayers(lineupPresetType)
             .Where(player => lineup.All(existing => existing.Id != player.PlayerId) && !ShouldRestPlayer(player.PlayerId, player.PrimaryPosition))
             .OrderBy(player => GetAvailabilityPriority(player.PlayerId, player.PrimaryPosition))
             .ThenBy(player => player.PlayerName)
@@ -7907,7 +8451,16 @@ public sealed class FranchiseSession
         return BuildAiManagedTeamPlan(teamName).StartingPitcher;
     }
 
-    private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age)
+    private IReadOnlyDictionary<Guid, string> BuildLineupDefensiveAssignments(IReadOnlyList<FranchiseRosterEntry> lineupPlayers)
+    {
+        return BuildLineupValidation(lineupPlayers)
+            .PositionAssignments
+            .Where(assignment => assignment.PlayerId.HasValue)
+            .GroupBy(assignment => assignment.PlayerId!.Value)
+            .ToDictionary(group => group.Key, group => group.First().Position);
+    }
+
+    private MatchPlayerSnapshot CreatePlayerSnapshot(Guid playerId, string name, string primaryPosition, string secondaryPosition, int age, string? defensivePosition = null)
     {
         var ratings = GetPlayerRatings(playerId, name, primaryPosition, secondaryPosition, age);
         var importedPlayer = FindPlayerImport(playerId);
@@ -7920,6 +8473,7 @@ public sealed class FranchiseSession
             name,
             primaryPosition,
             secondaryPosition,
+            string.IsNullOrWhiteSpace(defensivePosition) ? primaryPosition : defensivePosition,
             age,
             ratings.EffectiveContactRating,
             ratings.EffectivePowerRating,
@@ -9517,6 +10071,11 @@ public sealed class FranchiseSession
     private void Save()
     {
         _stateStore.Save(_saveState);
+    }
+
+    private static void ReportAsyncOperationProgress(Action<AsyncOperationProgressView>? reportProgress, string title, string status, double progressValue)
+    {
+        reportProgress?.Invoke(new AsyncOperationProgressView(title, status, progressValue));
     }
 
     private readonly record struct ExpiringPlayerContract(string TeamName, PlayerImportDto Player, decimal AnnualSalary);

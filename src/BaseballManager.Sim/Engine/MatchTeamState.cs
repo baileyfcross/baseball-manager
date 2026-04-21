@@ -113,6 +113,7 @@ public sealed class MatchTeamState
         }
 
         var exactMatch = Lineup.FirstOrDefault(player =>
+            string.Equals(player.DefensivePosition, positionLabel, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(player.PrimaryPosition, positionLabel, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(player.SecondaryPosition, positionLabel, StringComparison.OrdinalIgnoreCase));
         if (exactMatch != null)
@@ -122,9 +123,9 @@ public sealed class MatchTeamState
 
         return positionLabel.ToUpperInvariant() switch
         {
-            "LF" or "CF" or "RF" => Lineup.FirstOrDefault(player => player.PrimaryPosition is "OF" or "LF" or "CF" or "RF"),
-            "1B" or "2B" or "3B" or "SS" => Lineup.FirstOrDefault(player => player.PrimaryPosition is "IF" or "1B" or "2B" or "3B" or "SS"),
-            "C" => Lineup.FirstOrDefault(player => string.Equals(player.PrimaryPosition, "C", StringComparison.OrdinalIgnoreCase)),
+            "LF" or "CF" or "RF" => Lineup.FirstOrDefault(player => player.DefensivePosition is "OF" or "LF" or "CF" or "RF" || player.PrimaryPosition is "OF" or "LF" or "CF" or "RF"),
+            "1B" or "2B" or "3B" or "SS" => Lineup.FirstOrDefault(player => player.DefensivePosition is "IF" or "1B" or "2B" or "3B" or "SS" || player.PrimaryPosition is "IF" or "1B" or "2B" or "3B" or "SS"),
+            "C" => Lineup.FirstOrDefault(player => string.Equals(player.DefensivePosition, "C", StringComparison.OrdinalIgnoreCase) || string.Equals(player.PrimaryPosition, "C", StringComparison.OrdinalIgnoreCase)),
             _ => Lineup.FirstOrDefault()
         };
     }
@@ -199,6 +200,7 @@ public sealed class MatchTeamState
             name,
             position,
             string.Empty,
+            position,
             27,
             52,
             50,

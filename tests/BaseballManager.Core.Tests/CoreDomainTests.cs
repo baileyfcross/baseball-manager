@@ -98,4 +98,34 @@ public sealed class CoreDomainTests
 
         Assert.False(isValid);
     }
+
+    [Fact]
+    public void InitializeFromDefault_CopiesTheLegacyLineupIntoBothPresetSlots()
+    {
+        var defaultLineup = new Lineup { TeamId = Guid.NewGuid() };
+        defaultLineup.BattingOrder.AddRange(Enumerable.Range(1, 9).Select(_ => Guid.NewGuid()));
+        var presets = new TeamLineupPresets();
+
+        presets.InitializeFromDefault(defaultLineup);
+
+        Assert.Equal(defaultLineup.BattingOrder, presets.VsLeftHandedPitcher.BattingOrder);
+        Assert.Equal(defaultLineup.BattingOrder, presets.VsRightHandedPitcher.BattingOrder);
+        Assert.NotSame(presets.VsLeftHandedPitcher, presets.VsRightHandedPitcher);
+    }
+
+    [Fact]
+    public void GetForPitcherHand_ReturnsTheLeftPresetAgainstLeftHandedPitchers()
+    {
+        var leftPreset = new Lineup { TeamId = Guid.NewGuid() };
+        var rightPreset = new Lineup { TeamId = Guid.NewGuid() };
+        var presets = new TeamLineupPresets
+        {
+            VsLeftHandedPitcher = leftPreset,
+            VsRightHandedPitcher = rightPreset
+        };
+
+        var selectedPreset = presets.GetForPitcherHand(Handedness.Left);
+
+        Assert.Same(leftPreset, selectedPreset);
+    }
 }

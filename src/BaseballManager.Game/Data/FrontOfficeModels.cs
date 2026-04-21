@@ -33,6 +33,18 @@ public sealed record PlayerProfileView(
     IReadOnlyList<string> DetailLines,
     IReadOnlyList<string> SummaryLines);
 
+public sealed record AsyncOperationProgressView(
+    string Title,
+    string Status,
+    double ProgressValue)
+{
+    public static AsyncOperationProgressView Idle { get; } = new(string.Empty, string.Empty, 0d);
+
+    public double ClampedProgressValue => Math.Clamp(ProgressValue, 0d, 1d);
+
+    public int PercentComplete => (int)Math.Round(ClampedProgressValue * 100d, MidpointRounding.AwayFromZero);
+}
+
 public sealed record CoachProfileView(
     string Role,
     string Name,

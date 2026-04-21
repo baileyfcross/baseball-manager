@@ -200,7 +200,7 @@ public sealed class FranchiseHubScreen : GameScreen
             return;
         }
 
-        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
+        var lineupValidation = _franchiseSession.GetSelectedTeamPregameLineupValidation();
         if (!lineupValidation.IsValid)
         {
             _statusMessage = lineupValidation.Summary;

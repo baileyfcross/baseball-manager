@@ -1,3 +1,5 @@
+using BaseballManager.Core.Players;
+
 namespace BaseballManager.Game.Data;
 
 public sealed record FranchiseRosterEntry(
@@ -7,4 +9,6 @@ public sealed record FranchiseRosterEntry(
     string SecondaryPosition,
     int Age,
     int? LineupSlot,
-    int? RotationSlot);
+    int? RotationSlot,
+    Handedness Throws,
+    bool IsDesignatedHitter);

@@ -49,6 +49,7 @@ internal static class MatchStateFactory
             name,
             primaryPosition,
             secondaryPosition,
+            primaryPosition,
             27,
             contactRating,
             powerRating,

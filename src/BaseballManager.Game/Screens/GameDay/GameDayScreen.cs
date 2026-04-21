@@ -33,7 +33,7 @@ public sealed class GameDayScreen : GameScreen
     public override void OnEnter()
     {
         _ignoreClicksUntilRelease = true;
-        _statusMessage = _franchiseSession.GetSelectedTeamLineupValidation().Summary;
+        _statusMessage = _franchiseSession.GetSelectedTeamPregameLineupValidation().Summary;
     }
 
     public override void Update(GameTime gameTime, InputManager inputManager)
@@ -90,7 +90,7 @@ public sealed class GameDayScreen : GameScreen
     {
         var viewport = uiRenderer.Viewport;
         var nextGame = _franchiseSession.GetNextScheduledGame();
-        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
+        var lineupValidation = _franchiseSession.GetSelectedTeamPregameLineupValidation();
         var canStartGame = nextGame != null && lineupValidation.IsValid;
         var panelBounds = new Rectangle(140, 110, Math.Max(900, viewport.Width - 280), Math.Max(520, viewport.Height - 220));
         var cardWidth = (panelBounds.Width - 88) / 2;
@@ -175,7 +175,7 @@ public sealed class GameDayScreen : GameScreen
             return;
         }
 
-        var lineupValidation = _franchiseSession.GetSelectedTeamLineupValidation();
+        var lineupValidation = _franchiseSession.GetSelectedTeamPregameLineupValidation();
         if (!lineupValidation.IsValid)
         {
             _statusMessage = lineupValidation.Summary;

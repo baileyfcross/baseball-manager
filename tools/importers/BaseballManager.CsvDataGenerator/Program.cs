@@ -361,12 +361,14 @@ internal static class Program
             foreach (var player in teamPlayers)
             {
                 int? lineupSlot = null;
+                var defensivePosition = string.Empty;
                 int? rotationSlot = null;
 
                 var lineupIndex = lineupCandidates.FindIndex(p => p.PlayerId == player.PlayerId);
                 if (lineupIndex >= 0)
                 {
                     lineupSlot = lineupIndex + 1;
+                    defensivePosition = player.PrimaryPosition;
                 }
 
                 var rotationIndex = rotationCandidates.FindIndex(p => p.PlayerId == player.PlayerId);
@@ -382,6 +384,7 @@ internal static class Program
                     player.PrimaryPosition,
                     player.SecondaryPosition,
                     lineupSlot,
+                    defensivePosition,
                     rotationSlot));
             }
         }
@@ -503,8 +506,8 @@ internal static class Program
 
     private static void WriteRostersCsv(string path, List<RosterRow> rosters)
     {
-        var lines = new List<string> { "Player ID,Team,Player,Primary Position,Secondary Position,Lineup Slot,Rotation Slot" };
-        lines.AddRange(rosters.Select(roster => string.Join(',', Escape(roster.PlayerId.ToString()), Escape(roster.TeamName), Escape(roster.PlayerName), Escape(roster.PrimaryPosition), Escape(roster.SecondaryPosition), Escape(roster.LineupSlot?.ToString(CultureInfo.InvariantCulture) ?? string.Empty), Escape(roster.RotationSlot?.ToString(CultureInfo.InvariantCulture) ?? string.Empty))));
+        var lines = new List<string> { "Player ID,Team,Player,Primary Position,Secondary Position,Lineup Slot,Defensive Position,Rotation Slot" };
+        lines.AddRange(rosters.Select(roster => string.Join(',', Escape(roster.PlayerId.ToString()), Escape(roster.TeamName), Escape(roster.PlayerName), Escape(roster.PrimaryPosition), Escape(roster.SecondaryPosition), Escape(roster.LineupSlot?.ToString(CultureInfo.InvariantCulture) ?? string.Empty), Escape(roster.DefensivePosition), Escape(roster.RotationSlot?.ToString(CultureInfo.InvariantCulture) ?? string.Empty))));
         File.WriteAllLines(path, lines, Encoding.UTF8);
     }
 
@@ -590,7 +593,7 @@ internal static class Program
 
     private sealed record TeamRow(string Name, string HexColor, string Abbreviation, string League, string Division, string City, string Ballpark);
     private sealed record PlayerRow(Guid PlayerId, string FullName, string PrimaryPosition, string SecondaryPosition, string TeamName, int Age);
-    private sealed record RosterRow(Guid PlayerId, string TeamName, string PlayerName, string PrimaryPosition, string SecondaryPosition, int? LineupSlot, int? RotationSlot);
+    private sealed record RosterRow(Guid PlayerId, string TeamName, string PlayerName, string PrimaryPosition, string SecondaryPosition, int? LineupSlot, string DefensivePosition, int? RotationSlot);
     private sealed record ScheduleRow(DateOnly Date, string HomeTeamName, string AwayTeamName, int GameNumber, string Venue);
     private sealed record SeriesMatchup(TeamRow HomeTeam, TeamRow AwayTeam);
     private sealed record ImportDefinition(string CsvPath, string JsonPath, string ModelType);
